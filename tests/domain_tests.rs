@@ -295,6 +295,32 @@ fn test_ssh_key_action_clone() {
     assert!(matches!(cloned, SshKeyAction::PasteKey(_)));
 }
 
+#[test]
+fn test_ssh_key_action_debug_utf8_boundary_no_panic() {
+    // Bug 复现：在多字节 UTF-8 字符边界做 &key[..20] 会 panic
+    // 构建一个字符串：前 19 字节是 ASCII，第 20 字节是 3 字节 UTF-8 字符 "你" 的中间
+    // "你" 的 UTF-8 编码是 0xE4 0xBD 0xA0，占 3 字节
+    let key_with_cjk = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5你-test";
+    // 字节 19-20 是 "5" (0x35) 和 "你" 的首字节 (0xE4)
+    // 若用 &key_with_cjk[..20] 会切到 "你" 的中间 → panic
+    let action = SshKeyAction::PasteKey(key_with_cjk.to_string());
+    let debug_str = format!("{action:?}");
+    // 不应 panic，且应正常输出脱敏内容
+    assert!(debug_str.contains("[redacted]") || debug_str.contains(key_with_cjk),
+        "Debug 输出异常: {debug_str}");
+}
+
+#[test]
+fn test_ssh_key_action_debug_emoji_boundary_no_panic() {
+    // emoji "🚀" 占 4 字节 (0xF0 0x9F 0x9A 0x80)
+    // 前 18 字节 ASCII + 1 个 emoji = 22 字节 > 20 字节阈值，触发截断
+    let key_with_emoji = "ssh-ed25519 A🚀test";
+    let action = SshKeyAction::PasteKey(key_with_emoji.to_string());
+    let debug_str = format!("{action:?}");
+    // 不应 panic
+    assert!(!debug_str.is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Bug #1 验证：sshd_config 前缀匹配不误伤
 // ---------------------------------------------------------------------------

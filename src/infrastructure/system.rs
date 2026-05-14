@@ -491,17 +491,20 @@ pub fn get_key_fingerprint(username: &str) -> Option<String> {
     })?;
     let first_key = first_key.trim();
 
-    // 写入临时文件，用 ssh-keygen 读取指纹
-    let temp_path = format!("/tmp/u2secure_key_{username}");
-    let _ = std::fs::write(&temp_path, first_key);
+    // 使用 tempfile 创建安全临时文件（避免 TOCTOU 竞争 & 固定路径风险）
+    use std::io::Write;
+    let mut tmp_file = tempfile::Builder::new()
+        .prefix("u2secure_key_")
+        .tempfile()
+        .ok()?;
+    writeln!(tmp_file, "{first_key}").ok()?;
 
     let output = Command::new("ssh-keygen")
-        .args(["-l", "-f", &temp_path])
+        .args(["-l", "-f"])
+        .arg(tmp_file.path().as_os_str())
         .output()
         .ok()?;
-
-    // 清理临时文件
-    let _ = std::fs::remove_file(&temp_path);
+    // tmp_file 在此处 drop，自动删除临时文件
 
     if !output.status.success() {
         // fallback: 返回公钥类型 + 前 40 字符

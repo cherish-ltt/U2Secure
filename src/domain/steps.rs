@@ -80,9 +80,10 @@ impl fmt::Debug for SshKeyAction {
         match self {
             Self::GenerateNew => write!(f, "GenerateNew"),
             Self::PasteKey(key) => {
-                // 脱敏：只显示前 20 字符
-                let truncated = if key.len() > 20 {
-                    format!("{}... [redacted]", &key[..20])
+                // 脱敏：取前 20 个字符（按 char 边界，避免字节切片 panic）
+                let prefix: String = key.chars().take(20).collect();
+                let truncated = if key.len() > prefix.len() {
+                    format!("{prefix}... [redacted]")
                 } else {
                     key.clone()
                 };
