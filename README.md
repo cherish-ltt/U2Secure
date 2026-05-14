@@ -1,5 +1,7 @@
 # U2Secure — Linux 服务器安全加固 CLI 工具
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 面向 Linux 运维人员的交互式安全加固工具。运行一次即可完成从系统更新、用户创建、SSH 深度加固、防火墙、入侵防御、审计到自动更新的完整安全基线建设。
 
 ## 目录
@@ -273,3 +275,10 @@ getent group sudo
 # 检查 UFW 状态
 ufw status
 ```
+
+## 许可证
+
+[MIT](LICENSE) © 2026 u2secure
+
+本软件按 MIT 许可证开源。使用时需保留版权声明和许可声明。
+
