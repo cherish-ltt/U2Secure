@@ -132,11 +132,11 @@ impl HardeningStep for UserCreationStep {
             )));
         }
 
-        // 注册撤销：创建用户 → 删除用户
+        system::create_system_user(username)?;
+
+        // 注册撤销：创建用户 → 删除用户（在创建成功后注册，避免幽灵撤销）
         let username_undo = username.to_string();
         rollback::register_user_remove(username_undo);
-
-        system::create_system_user(username)?;
 
         if params.lock_password {
             system::lock_user_password(username)?;
@@ -320,18 +320,18 @@ impl HardeningStep for SshKeySetupStep {
             .as_ref()
             .ok_or_else(|| DomainError::PreconditionFailed("未选择密钥操作".into()))?;
 
-        // 注册撤销：密钥操作
         let username_undo = username.to_string();
         match action {
             SshKeyAction::GenerateNew => {
-                // 注册撤销：删除生成的密钥文件
+                let home = system::home_dir(username);
+                // 注册撤销：删除生成的密钥文件（使用动态 home 路径）
                 rollback::register_command_undo(
                     format!("删除 {username_undo} 的密钥文件"),
                     vec![
                         "rm".into(),
                         "-f".into(),
-                        format!("/home/{username_undo}/.ssh/id_ed25519"),
-                        format!("/home/{username_undo}/.ssh/id_ed25519.pub"),
+                        format!("{home}/.ssh/id_ed25519"),
+                        format!("{home}/.ssh/id_ed25519.pub"),
                     ],
                 );
                 let pub_key_path = system::generate_ssh_keypair(username)?;
@@ -381,15 +381,9 @@ impl HardeningStep for UfwStep {
 
     fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
         let port = system::detect_ssh_port();
+        let was_ufw_enabled = system::detect_ufw_enabled();
 
-        // 注册撤销：如果之前未启用，关闭 UFW
-        if !system::detect_ufw_enabled() {
-            rollback::register_command_undo(
-                "关闭 UFW 防火墙".into(),
-                vec!["ufw".into(), "--force".into(), "disable".into()],
-            );
-        }
-
+        // 放行 SSH 端口
         let output = Command::new("ufw")
             .args(["allow", &port.to_string()])
             .output()
@@ -399,7 +393,20 @@ impl HardeningStep for UfwStep {
             return Err(DomainError::SystemCommandFailed(format!("ufw allow 失败: {stderr}")));
         }
 
-        if !system::detect_ufw_enabled() {
+        // 操作成功后注册撤销（先删除端口规则；如果之前未启用则再关闭 UFW）
+        let port_for_undo = port.to_string();
+        rollback::register_command_undo(
+            format!("删除 UFW 端口 {port_for_undo} 规则"),
+            vec!["ufw".into(), "delete".into(), "allow".into(), port_for_undo],
+        );
+        if !was_ufw_enabled {
+            rollback::register_command_undo(
+                "关闭 UFW 防火墙".into(),
+                vec!["ufw".into(), "--force".into(), "disable".into()],
+            );
+        }
+
+        if !was_ufw_enabled {
             let output = Command::new("ufw")
                 .args(["--force", "enable"])
                 .output()
@@ -442,16 +449,6 @@ impl HardeningStep for Fail2banStep {
 
     fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
         if !system::which("fail2ban-server") {
-            // 注册撤销：停止并删除 fail2ban
-            rollback::register_command_undo(
-                "停止 fail2ban 服务".into(),
-                vec!["systemctl".into(), "stop".into(), "fail2ban".into()],
-            );
-            rollback::register_package_remove(
-                "删除 fail2ban".into(),
-                "fail2ban".into(),
-            );
-
             let pm = system::detect_package_manager();
             let (pm_name, install_args): (&str, &[&str]) = match pm {
                 PackageManager::Apt => ("apt", &["install", "-y", "fail2ban"]),
@@ -476,6 +473,16 @@ impl HardeningStep for Fail2banStep {
                     "安装 fail2ban 失败: {stderr}"
                 )));
             }
+
+            // 安装成功后注册撤销
+            rollback::register_command_undo(
+                "停止 fail2ban 服务".into(),
+                vec!["systemctl".into(), "stop".into(), "fail2ban".into()],
+            );
+            rollback::register_package_remove(
+                "删除 fail2ban".into(),
+                "fail2ban".into(),
+            );
         }
 
         // 配置监狱规则（使用 SSH 端口）
@@ -523,16 +530,6 @@ impl HardeningStep for AutoUpdatesStep {
             ));
         }
 
-        // 注册撤销：停止并删除 unattended-upgrades
-        rollback::register_command_undo(
-            "停止 unattended-upgrades 服务".into(),
-            vec!["systemctl".into(), "stop".into(), "unattended-upgrades".into()],
-        );
-        rollback::register_package_remove(
-            "删除 unattended-upgrades".into(),
-            "unattended-upgrades".into(),
-        );
-
         let output = Command::new("apt")
             .args(["install", "-y", "unattended-upgrades"])
             .output()
@@ -545,6 +542,16 @@ impl HardeningStep for AutoUpdatesStep {
                 "安装 unattended-upgrades 失败: {stderr}"
             )));
         }
+
+        // 安装成功后注册撤销
+        rollback::register_command_undo(
+            "停止 unattended-upgrades 服务".into(),
+            vec!["systemctl".into(), "stop".into(), "unattended-upgrades".into()],
+        );
+        rollback::register_package_remove(
+            "删除 unattended-upgrades".into(),
+            "unattended-upgrades".into(),
+        );
 
         // 写入配置：启用自动安全更新
         let auto_config = "APT::Periodic::Update-Package-Lists \"1\";\n\
@@ -587,16 +594,9 @@ impl HardeningStep for SecurityScanStep {
 
     fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
         if !system::which("lynis") {
-            // 注册撤销：卸载 lynis
-            rollback::register_package_remove(
-                "卸载 lynis".into(),
-                "lynis".into(),
-            );
-            // 安装 lynis
             let pm = system::detect_package_manager();
             match pm {
                 PackageManager::Apt => {
-                    // 添加 lynis 仓库并安装
                     let _ = Command::new("sh")
                         .args(["-c", "apt install -y curl && \
                                         curl -fsSL https://packages.cisofy.com/keys/cisofy-software-public.key | \
@@ -619,6 +619,12 @@ impl HardeningStep for SecurityScanStep {
                 }
             }
         }
+
+        // 安装完成后注册撤销（无论成功与否，实际在安装后注册）
+        rollback::register_package_remove(
+            "卸载 lynis".into(),
+            "lynis".into(),
+        );
 
         if !system::which("lynis") {
             return Ok(StepResult {
@@ -681,20 +687,6 @@ impl HardeningStep for LogAuditStep {
     fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
         let mut installed = vec![];
 
-        // 注册撤销：删除安装的包
-        if !system::which("logwatch") {
-            rollback::register_package_remove(
-                "卸载 logwatch".into(),
-                "logwatch".into(),
-            );
-        }
-        if !system::which("aide") {
-            rollback::register_package_remove(
-                "卸载 aide".into(),
-                "aide".into(),
-            );
-        }
-
         // 安装 logwatch
         if !system::which("logwatch") {
             let pm = system::detect_package_manager();
@@ -704,6 +696,11 @@ impl HardeningStep for LogAuditStep {
                 .output();
             if system::which("logwatch") {
                 installed.push("logwatch");
+                // 安装成功后注册撤销
+                rollback::register_package_remove(
+                    "卸载 logwatch".into(),
+                    "logwatch".into(),
+                );
             }
         } else {
             installed.push("logwatch");
@@ -718,6 +715,11 @@ impl HardeningStep for LogAuditStep {
                 .output();
             if system::which("aide") {
                 installed.push("aide");
+                // 安装成功后注册撤销
+                rollback::register_package_remove(
+                    "卸载 aide".into(),
+                    "aide".into(),
+                );
             }
         } else {
             installed.push("aide");

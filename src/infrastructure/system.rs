@@ -531,4 +531,26 @@ pub fn user_exists(username: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 获取用户 home 目录路径
+pub fn home_dir(username: &str) -> String {
+    if username == "root" {
+        "/root".to_string()
+    } else {
+        // 尝试从 /etc/passwd 读取
+        if let Ok(output) = Command::new("getent")
+            .args(["passwd", username])
+            .output()
+            && output.status.success() {
+                let line = String::from_utf8_lossy(&output.stdout);
+                // passwd 格式: username:x:UID:GID:...:HOME:SHELL
+                if let Some(home) = line.trim().split(':').nth(5)
+                    && !home.is_empty() {
+                        return home.to_string();
+                    }
+            }
+        // fallback: 默认 /home/{username}
+        format!("/home/{username}")
+    }
+}
+
 

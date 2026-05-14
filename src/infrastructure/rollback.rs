@@ -13,22 +13,13 @@ pub static UNDO_RUNNING: AtomicBool = AtomicBool::new(false);
 pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 /// 初始化 Ctrl+C 信号处理器
+///
+/// 仅设置 INTERRUPTED 标记，不在此处执行回退。
+/// 实际回退在主线程 `execute_steps` 循环中由业务逻辑触发，
+/// 避免信号上下文的 Mutex 锁竞争和死锁风险。
 pub fn init_signal_handler() {
     ctrlc::set_handler(move || {
         INTERRUPTED.store(true, Ordering::SeqCst);
-
-        // try_lock — 避免信号上下文死锁
-        if let Ok(mut stack) = UNDO_STACK.try_lock()
-            && !UNDO_RUNNING.swap(true, Ordering::SeqCst) {
-                let actions = std::mem::take(&mut *stack);
-                drop(stack); // 尽快释放锁
-
-                for action in actions.into_iter().rev() {
-                    eprintln!("  ⮐  回退: {}", action.description);
-                    action.execute();
-                }
-            }
-        eprintln!("\n⚠️  用户中断，已回退所有已注册的修改。");
     })
     .expect("设置 Ctrl+C 处理器失败");
 }
