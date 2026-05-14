@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::application::steps::AllSteps;
 use crate::domain::audit::AuditReport;
 use crate::domain::errors::DomainError;
-use crate::domain::steps::{StepKind, StepResult};
+use crate::domain::steps::{ExecuteParams, StepKind, StepResult};
 use crate::infrastructure::logger::FileLogger;
 use crate::infrastructure::system;
 
@@ -30,11 +30,12 @@ impl HardeningOrchestrator {
         report
     }
 
-    /// 执行选中的步骤
+    /// 执行选中的步骤，接收用户交互参数
     pub fn execute_steps(
         &self,
         _report: &AuditReport,
         selected: &[StepKind],
+        params: &ExecuteParams,
     ) -> Vec<StepResult> {
         let selected_set: HashSet<StepKind> = selected.iter().copied().collect();
         let all_steps = AllSteps::new();
@@ -46,22 +47,18 @@ impl HardeningOrchestrator {
             }
 
             let kind = step.kind();
-            self.logger
-                .log_operation("开始执行", kind.label());
+            self.logger.log_operation("开始执行", kind.label());
 
-            match step.execute() {
+            match step.execute(params) {
                 Ok(result) => {
-                    self.logger.log_operation(
-                        "完成",
-                        &format!("{}: {}", kind.label(), result.message),
-                    );
+                    let msg = result.message.clone();
+                    self.logger
+                        .log_operation("完成", &format!("{}: {}", kind.label(), msg));
                     results.push(result);
                 }
                 Err(e) => {
-                    self.logger.log_operation(
-                        "失败",
-                        &format!("{}: {e}", kind.label()),
-                    );
+                    let err_msg = format!("{}: {e}", kind.label());
+                    self.logger.log_operation("失败", &err_msg);
                     results.push(StepResult {
                         kind,
                         changes_made: false,

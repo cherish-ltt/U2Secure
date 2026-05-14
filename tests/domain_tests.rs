@@ -1,5 +1,5 @@
 use u2secure::domain::audit::{AuditItem, AuditReport, AuditStatus, PackageManager};
-use u2secure::domain::steps::StepKind;
+use u2secure::domain::steps::{ExecuteParams, SshKeyAction, StepKind};
 
 #[test]
 fn test_audit_status_icons() {
@@ -202,4 +202,95 @@ fn test_step_kind_check_default_status() {
     assert_eq!(StepKind::SystemUpdate.check_default_status(&report), AuditStatus::Safe);
     assert_eq!(StepKind::SshRootLogin.check_default_status(&report), AuditStatus::Missing);
     assert_eq!(StepKind::Fail2ban.check_default_status(&report), AuditStatus::Missing);
+}
+
+// ---------------------------------------------------------------------------
+// ExecuteParams 测试
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_execute_params_default() {
+    let params = ExecuteParams::default();
+    assert!(params.new_username.is_none());
+    assert!(params.lock_password);
+    assert!(params.new_ssh_port.is_none());
+    assert!(params.ssh_key_action.is_none());
+    assert!(params.ssh_key_username.is_none());
+}
+
+#[test]
+fn test_execute_params_user_creation() {
+    let params = ExecuteParams {
+        new_username: Some("deploy".into()),
+        lock_password: true,
+        ..Default::default()
+    };
+    assert_eq!(params.new_username.as_deref(), Some("deploy"));
+    assert!(params.lock_password);
+}
+
+#[test]
+fn test_execute_params_ssh_port() {
+    let params = ExecuteParams {
+        new_ssh_port: Some(2222),
+        ..Default::default()
+    };
+    assert_eq!(params.new_ssh_port, Some(2222));
+}
+
+#[test]
+fn test_execute_params_ssh_key_generate() {
+    let params = ExecuteParams {
+        ssh_key_username: Some("admin".into()),
+        ssh_key_action: Some(SshKeyAction::GenerateNew),
+        ..Default::default()
+    };
+    assert_eq!(params.ssh_key_username.as_deref(), Some("admin"));
+    assert!(matches!(params.ssh_key_action, Some(SshKeyAction::GenerateNew)));
+}
+
+#[test]
+fn test_execute_params_ssh_key_paste() {
+    let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... user@host".to_string();
+    let params = ExecuteParams {
+        ssh_key_username: Some("admin".into()),
+        ssh_key_action: Some(SshKeyAction::PasteKey(key.clone())),
+        ..Default::default()
+    };
+    assert!(matches!(&params.ssh_key_action, Some(SshKeyAction::PasteKey(k)) if k == &key));
+}
+
+#[test]
+fn test_execute_params_all_fields() {
+    let params = ExecuteParams {
+        new_username: Some("deploy".into()),
+        lock_password: false,
+        new_ssh_port: Some(2222),
+        ssh_key_username: Some("deploy".into()),
+        ssh_key_action: Some(SshKeyAction::GenerateNew),
+    };
+    assert_eq!(params.new_username.as_deref(), Some("deploy"));
+    assert!(!params.lock_password);
+    assert_eq!(params.new_ssh_port, Some(2222));
+    assert_eq!(params.ssh_key_username.as_deref(), Some("deploy"));
+}
+
+// ---------------------------------------------------------------------------
+// SshKeyAction 测试
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_ssh_key_action_debug() {
+    let action = SshKeyAction::GenerateNew;
+    assert!(format!("{action:?}").contains("GenerateNew"));
+
+    let action = SshKeyAction::PasteKey("ssh-ed25519 key".into());
+    assert!(format!("{action:?}").contains("PasteKey"));
+}
+
+#[test]
+fn test_ssh_key_action_clone() {
+    let action = SshKeyAction::PasteKey("ssh-ed25519 key".into());
+    let cloned = action.clone();
+    assert!(matches!(cloned, SshKeyAction::PasteKey(_)));
 }

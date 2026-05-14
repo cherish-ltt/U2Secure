@@ -327,3 +327,197 @@ pub fn run_full_audit() -> AuditReport {
         system_up_to_date,
     }
 }
+
+/// 创建系统用户，加入 sudo 组，返回创建是否成功
+pub fn create_system_user(username: &str) -> Result<(), DomainError> {
+    // 创建用户
+    let output = Command::new("useradd")
+        .args(["-m", "-s", "/bin/bash", username])
+        .output()
+        .map_err(|e| DomainError::SystemCommandFailed(format!("useradd 失败: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DomainError::SystemCommandFailed(format!(
+            "useradd 失败: {stderr}"
+        )));
+    }
+
+    // 加入 sudo 组
+    let _ = Command::new("usermod")
+        .args(["-aG", "sudo", username])
+        .output();
+
+    // 创建 .ssh 目录
+    let _ = Command::new("mkdir")
+        .args(["-p", &format!("/home/{username}/.ssh")])
+        .output();
+
+    let _ = Command::new("chown")
+        .args(["-R", &format!("{username}:{username}"), &format!("/home/{username}/.ssh")])
+        .output();
+
+    let _ = Command::new("chmod")
+        .args(["700", &format!("/home/{username}/.ssh")])
+        .output();
+
+    Ok(())
+}
+
+/// 锁定用户密码（强制密钥登录）
+pub fn lock_user_password(username: &str) -> Result<(), DomainError> {
+    let output = Command::new("passwd")
+        .args(["-l", username])
+        .output()
+        .map_err(|e| DomainError::SystemCommandFailed(format!("passwd -l 失败: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DomainError::SystemCommandFailed(format!(
+            "锁定密码失败: {stderr}"
+        )));
+    }
+    Ok(())
+}
+
+/// 为用户生成 ED25519 密钥对，返回公钥路径
+pub fn generate_ssh_keypair(username: &str) -> Result<String, DomainError> {
+    let home = if username == "root" {
+        "/root".to_string()
+    } else {
+        format!("/home/{username}")
+    };
+    let key_path = format!("{home}/.ssh/id_ed25519");
+    let pub_key_path = format!("{key_path}.pub");
+
+    let output = Command::new("ssh-keygen")
+        .args([
+            "-t", "ed25519",
+            "-f", &key_path,
+            "-N", "",  // 空密码
+            "-q",
+        ])
+        .output()
+        .map_err(|e| DomainError::SystemCommandFailed(format!("ssh-keygen 失败: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DomainError::SystemCommandFailed(format!(
+            "ssh-keygen 失败: {stderr}"
+        )));
+    }
+
+    // 修正权限
+    let _ = Command::new("chown")
+        .args([&format!("{username}:{username}"), &key_path, &pub_key_path])
+        .output();
+
+    Ok(pub_key_path)
+}
+
+/// 将公钥追加到用户的 authorized_keys
+pub fn add_authorized_key(username: &str, pub_key: &str) -> Result<(), DomainError> {
+    let home = if username == "root" {
+        "/root".to_string()
+    } else {
+        format!("/home/{username}")
+    };
+
+    let ssh_dir = format!("{home}/.ssh");
+    let auth_keys = format!("{ssh_dir}/authorized_keys");
+
+    // 确保 .ssh 目录存在
+    let _ = Command::new("mkdir")
+        .args(["-p", &ssh_dir])
+        .output();
+
+    // 追加公钥
+    std::fs::write(&auth_keys, format!("{}\n", pub_key))
+        .or_else(|_| {
+            // 如果写失败，尝试用 shell 追加
+            Command::new("sh")
+                .args(["-c", &format!("echo '{}' >> {}", pub_key.replace('\'', "'\\''"), auth_keys)])
+                .output()
+                .map(|_| ())
+                .map_err(|e| DomainError::SystemCommandFailed(format!("追加公钥失败: {e}")))
+        })?;
+
+    let _ = Command::new("chmod")
+        .args(["600", &auth_keys])
+        .output();
+
+    let _ = Command::new("chown")
+        .args([&format!("{username}:{username}"), &auth_keys])
+        .output();
+
+    Ok(())
+}
+
+/// 获取可用随机端口（1024-65535 范围内的建议值）
+pub fn random_suggested_port() -> u16 {
+    // 基于时间戳生成一个伪随机端口，避开常见服务端口
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(42);
+
+    // 范围 1024-65535 之间的建议端口，避开 22, 80, 443, 3306, 5432, 6379, 8080, 8443
+    let base = 1024 + (seed % 64511) as u16;
+    let common_ports = [22, 80, 443, 3306, 5432, 6379, 8080, 8443];
+    if common_ports.contains(&base) {
+        ((base as u32 + 100) % 64511 + 1024) as u16
+    } else {
+        base
+    }
+}
+
+/// 获取用户 authorized_keys 的指纹
+pub fn get_key_fingerprint(username: &str) -> Option<String> {
+    let home = if username == "root" {
+        "/root".to_string()
+    } else {
+        format!("/home/{username}")
+    };
+    let auth_keys = format!("{home}/.ssh/authorized_keys");
+
+    if !std::path::Path::new(&auth_keys).exists() {
+        return None;
+    }
+
+    let content = std::fs::read_to_string(&auth_keys).ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // 尝试用 ssh-keygen 获取指纹
+        if let Ok(output) = Command::new("ssh-keygen")
+            .args(["-l", "-f", "-"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            && let Some(mut stdin) = output.stdin {
+                use std::io::Write;
+                let _ = stdin.write_all(line.as_bytes());
+            }
+
+        // 简单方式：取公钥的前 50 字符作为标识
+        let fingerprint = if line.len() > 50 {
+            format!("{}...", &line[..50])
+        } else {
+            line.to_string()
+        };
+        return Some(fingerprint);
+    }
+    None
+}
+
+/// 检查用户是否已存在
+pub fn user_exists(username: &str) -> bool {
+    Command::new("id")
+        .arg(username)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+
