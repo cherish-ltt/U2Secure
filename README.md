@@ -1,8 +1,27 @@
-# U2Secure — Linux 服务器安全加固 CLI 工具
+<div align="center">
+<h1>U2Secure</h1>
+<h3>Linux 服务器安全加固 CLI 工具</h3>
+<p>
+  <a href="https://github.com/cherish-ltt/u2secure/actions/workflows/rust-ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/cherish-ltt/u2secure/rust-ci.yml?branch=main" alt="Build Status"/>
+  </a>
+  <a href="https://crates.io/crates/u2secure">
+    <img src="https://img.shields.io/crates/v/u2secure.svg" alt="crates.io version"/>
+  </a>
+  <a href="https://docs.rs/u2secure">
+    <img src="https://docs.rs/u2secure/badge.svg" alt="documentation"/>
+  </a>
+  <a href="https://github.com/cherish-ltt/u2secure/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"/>
+  </a>
+  <a href="https://www.rust-lang.org">
+    <img src="https://img.shields.io/badge/rust-1.95.0+-orange.svg" alt="license"/>
+  </a>
+</p>
+</div>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-面向 Linux 运维人员的交互式安全加固工具。运行一次即可完成从系统更新、用户创建、SSH 深度加固、防火墙、入侵防御、审计到自动更新的完整安全基线建设。
+> 🚀 面向 Linux 运维人员的交互式安全加固工具。运行一次即可完成从系统更新、用户创建、SSH 深度加固、防火墙、入侵防御、审计到自动更新的完整安全基线建设。
 
 ## 目录
 
@@ -286,3 +305,9 @@ ufw status
 
 本软件按 MIT 许可证开源。使用时需保留版权声明和许可声明。
 
+
+---
+
+<div align="center">
+  <sub>Built with ❤️ by the u2secure team</sub>
+</div>
