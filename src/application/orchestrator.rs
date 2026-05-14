@@ -5,6 +5,7 @@ use crate::domain::audit::AuditReport;
 use crate::domain::errors::DomainError;
 use crate::domain::steps::{ExecuteParams, StepKind, StepResult};
 use crate::infrastructure::logger::FileLogger;
+use crate::infrastructure::rollback;
 use crate::infrastructure::system;
 
 /// 应用服务 —— 编排整个加固流程
@@ -30,7 +31,8 @@ impl HardeningOrchestrator {
         report
     }
 
-    /// 执行选中的步骤，接收用户交互参数
+    /// 执行选中的步骤，接收用户交互参数。
+    /// 每步执行前检查 Ctrl+C 中断标记，失败时自动回退全部已注册的修改。
     pub fn execute_steps(
         &self,
         _report: &AuditReport,
@@ -46,13 +48,22 @@ impl HardeningOrchestrator {
                 continue;
             }
 
+            // 检查是否被 Ctrl+C 中断
+            if rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
+                self.logger
+                    .log("[中断] 检测到用户中断，停止执行并回退");
+                break;
+            }
+
             let kind = step.kind();
             self.logger.log_operation("开始执行", kind.label());
 
             match step.execute(params) {
                 Ok(result) => {
-                    self.logger
-                        .log_operation("完成", &format!("{}: {}", kind.label(), result.message));
+                    self.logger.log_operation(
+                        "完成",
+                        &format!("{}: {}", kind.label(), result.message),
+                    );
                     results.push(result);
                 }
                 Err(e) => {
@@ -63,6 +74,11 @@ impl HardeningOrchestrator {
                         changes_made: false,
                         message: format!("失败: {e}"),
                     });
+
+                    // 步骤失败 → 自动回退已完成步骤的修改
+                    self.logger.log("[回退] 步骤失败，自动回退所有已注册的修改");
+                    rollback::undo_all();
+                    break;
                 }
             }
         }
