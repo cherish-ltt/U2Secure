@@ -1,7 +1,12 @@
 [package]
+edition = "2024"
+rust-version = "1.95.0"
 name = "u2secure"
 version = "0.1.0"
-edition = "2024"
+description = "Make your Linux system more secure through interactive CLI | 通过交互式的cli让你的Linux系统更安全"
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/cherish-ltt/U2Secure"
 
 [dependencies]
 dialoguer = "0.11"

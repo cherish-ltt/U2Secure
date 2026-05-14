@@ -62,13 +62,17 @@ src/
 ### 安装
 
 ```bash
-# 克隆并编译
+# github克隆并编译
 git clone <repo-url> u2secure
 cd u2secure
 cargo build --release
 
 # 二进制位于 target/release/u2secure
 sudo cp target/release/u2secure /usr/local/bin/
+```
+```bash
+# crates.io方式(推荐)
+cargo install u2secure --locked
 ```
 
 ### 运行
