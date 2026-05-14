@@ -431,16 +431,15 @@ pub fn add_authorized_key(username: &str, pub_key: &str) -> Result<(), DomainErr
         .args(["-p", &ssh_dir])
         .output();
 
-    // 追加公钥
-    std::fs::write(&auth_keys, format!("{}\n", pub_key))
-        .or_else(|_| {
-            // 如果写失败，尝试用 shell 追加
-            Command::new("sh")
-                .args(["-c", &format!("echo '{}' >> {}", pub_key.replace('\'', "'\\''"), auth_keys)])
-                .output()
-                .map(|_| ())
-                .map_err(|e| DomainError::SystemCommandFailed(format!("追加公钥失败: {e}")))
-        })?;
+    // 追加公钥（不覆盖已有密钥）
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&auth_keys)
+        .map_err(|e| DomainError::SystemCommandFailed(format!("打开 authorized_keys 失败: {e}")))?;
+    writeln!(file, "{}", pub_key)
+        .map_err(|e| DomainError::SystemCommandFailed(format!("追加公钥失败: {e}")))?;
 
     let _ = Command::new("chmod")
         .args(["600", &auth_keys])
@@ -471,7 +470,7 @@ pub fn random_suggested_port() -> u16 {
     }
 }
 
-/// 获取用户 authorized_keys 的指纹
+/// 获取用户 authorized_keys 中第一条公钥的 SHA256 指纹
 pub fn get_key_fingerprint(username: &str) -> Option<String> {
     let home = if username == "root" {
         "/root".to_string()
@@ -485,30 +484,39 @@ pub fn get_key_fingerprint(username: &str) -> Option<String> {
     }
 
     let content = std::fs::read_to_string(&auth_keys).ok()?;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        // 尝试用 ssh-keygen 获取指纹
-        if let Ok(output) = Command::new("ssh-keygen")
-            .args(["-l", "-f", "-"])
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            && let Some(mut stdin) = output.stdin {
-                use std::io::Write;
-                let _ = stdin.write_all(line.as_bytes());
-            }
+    // 找第一条非注释、非空行
+    let first_key = content.lines().find(|line| {
+        let t = line.trim();
+        !t.is_empty() && !t.starts_with('#')
+    })?;
+    let first_key = first_key.trim();
 
-        // 简单方式：取公钥的前 50 字符作为标识
-        let fingerprint = if line.len() > 50 {
-            format!("{}...", &line[..50])
+    // 写入临时文件，用 ssh-keygen 读取指纹
+    let temp_path = format!("/tmp/u2secure_key_{username}");
+    let _ = std::fs::write(&temp_path, first_key);
+
+    let output = Command::new("ssh-keygen")
+        .args(["-l", "-f", &temp_path])
+        .output()
+        .ok()?;
+
+    // 清理临时文件
+    let _ = std::fs::remove_file(&temp_path);
+
+    if !output.status.success() {
+        // fallback: 返回公钥类型 + 前 40 字符
+        let parts: Vec<&str> = first_key.split_whitespace().collect();
+        let kind = parts.first().unwrap_or(&"unknown");
+        let truncated = if first_key.len() > 47 {
+            format!("{}...", &first_key[..47])
         } else {
-            line.to_string()
+            first_key.to_string()
         };
-        return Some(fingerprint);
+        return Some(format!("({kind}) {truncated}"));
     }
-    None
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() { None } else { Some(stdout) }
 }
 
 /// 检查用户是否已存在

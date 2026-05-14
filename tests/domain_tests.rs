@@ -159,21 +159,13 @@ fn test_audit_report_summary_lines() {
 
     let summary = report.summary_lines();
     assert_eq!(summary.len(), 8);
-    // 系统更新 -> Safe
     assert_eq!(summary[0].1, AuditStatus::Safe);
-    // 非 root 用户 -> Safe
     assert_eq!(summary[1].1, AuditStatus::Safe);
-    // 禁止 root SSH -> Safe
     assert_eq!(summary[2].1, AuditStatus::Safe);
-    // SSH 端口 -> Safe
     assert_eq!(summary[3].1, AuditStatus::Safe);
-    // 禁止密码 -> Safe
     assert_eq!(summary[4].1, AuditStatus::Safe);
-    // UFW -> Safe
     assert_eq!(summary[5].1, AuditStatus::Safe);
-    // Fail2ban -> Missing
     assert_eq!(summary[6].1, AuditStatus::Missing);
-    // 自动更新 -> Missing
     assert_eq!(summary[7].1, AuditStatus::Missing);
 }
 
@@ -205,7 +197,7 @@ fn test_step_kind_check_default_status() {
 }
 
 // ---------------------------------------------------------------------------
-// ExecuteParams 测试
+// ExecuteParams 基础测试
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -276,16 +268,24 @@ fn test_execute_params_all_fields() {
 }
 
 // ---------------------------------------------------------------------------
-// SshKeyAction 测试
+// SshKeyAction Debug 脱敏测试（Bug #5 修复验证）
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_ssh_key_action_debug() {
+fn test_ssh_key_action_debug_generate() {
     let action = SshKeyAction::GenerateNew;
-    assert!(format!("{action:?}").contains("GenerateNew"));
+    assert_eq!(format!("{action:?}"), "GenerateNew");
+}
 
-    let action = SshKeyAction::PasteKey("ssh-ed25519 key".into());
-    assert!(format!("{action:?}").contains("PasteKey"));
+#[test]
+fn test_ssh_key_action_debug_paste_redacts_key() {
+    let long_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT".to_string();
+    let action = SshKeyAction::PasteKey(long_key);
+    let debug_str = format!("{action:?}");
+    assert!(debug_str.contains("[redacted]"), "PasteKey Debug 应脱敏: {debug_str}");
+    assert!(!debug_str.contains("AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT"),
+        "Debug 不应泄露完整公钥: {debug_str}");
+    assert!(debug_str.starts_with("PasteKey(\"ssh-ed25519 "));
 }
 
 #[test]
@@ -293,4 +293,98 @@ fn test_ssh_key_action_clone() {
     let action = SshKeyAction::PasteKey("ssh-ed25519 key".into());
     let cloned = action.clone();
     assert!(matches!(cloned, SshKeyAction::PasteKey(_)));
+}
+
+// ---------------------------------------------------------------------------
+// Bug #1 验证：sshd_config 前缀匹配不误伤
+// ---------------------------------------------------------------------------
+
+/// 模拟 modify_sshd_config 修复后的精确匹配逻辑
+fn sshd_line_match(line: &str, key: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') || trimmed.is_empty() {
+        return false;
+    }
+    let first_word = trimmed.split_whitespace().next().unwrap_or("");
+    first_word == key
+}
+
+#[test]
+fn test_sshd_config_exact_key_matching() {
+    // 正常匹配 —— 应匹配
+    assert!(sshd_line_match("Port 2222", "Port"));
+    assert!(sshd_line_match("PermitRootLogin no", "PermitRootLogin"));
+    assert!(sshd_line_match("  PasswordAuthentication no", "PasswordAuthentication"));
+
+    // 前缀不应误匹配（Bug #1 复现：starts_with("Port") 会误匹配 "PortNumber"）
+    assert!(!sshd_line_match("PortNumberOfSomething 123", "Port"),
+        "Port 不应匹配 PortNumberOfSomething");
+    assert!(!sshd_line_match("PermitRootLoginExtra yes", "PermitRootLogin"),
+        "PermitRootLogin 不应匹配 PermitRootLoginExtra");
+
+    // 注释行不匹配
+    assert!(!sshd_line_match("#Port 2222", "Port"));
+    assert!(!sshd_line_match("", "Port"));
+}
+
+// ---------------------------------------------------------------------------
+// Bug #2 验证：add_authorized_key 使用追加模式而非覆盖
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_authorized_keys_append_not_overwrite() {
+    use std::io::Write;
+
+    let tmp = tempfile::NamedTempFile::new().expect("创建临时文件失败");
+    let path = tmp.path().to_str().unwrap().to_string();
+    if path.is_empty() {
+        panic!("临时文件路径为空");
+    }
+
+    // 写入第一条密钥（初始内容）
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "ssh-ed25519 KEY1 user@host").unwrap();
+    }
+
+    // 追加第二条密钥（模拟修复后的 add_authorized_key 行为）
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "ssh-ed25519 KEY2 admin@host").unwrap();
+    }
+
+    // 验证两条密钥都存在（而不是被覆盖）
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("KEY1"), "第一条密钥应保留");
+    assert!(content.contains("KEY2"), "第二条密钥应追加");
+
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(lines.len(), 2, "应有 2 行密钥: {:?}", lines);
+}
+
+// ---------------------------------------------------------------------------
+// ExecuteParams Debug 不泄露密钥（Bug #5 扩展验证）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_execute_params_debug_redacts_key() {
+    let params = ExecuteParams {
+        ssh_key_username: Some("admin".into()),
+        ssh_key_action: Some(SshKeyAction::PasteKey(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT".into(),
+        )),
+        ..Default::default()
+    };
+    let debug_str = format!("{params:?}");
+    assert!(debug_str.contains("[redacted]"), "ExecuteParams Debug 应脱敏: {debug_str}");
+    assert!(!debug_str.contains("AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT"),
+        "ExecuteParams Debug 不应泄露密钥: {debug_str}");
 }

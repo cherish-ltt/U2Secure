@@ -67,7 +67,7 @@ impl fmt::Display for StepKind {
 }
 
 /// SSH 密钥操作类型
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum SshKeyAction {
     /// 生成新密钥对
     GenerateNew,
@@ -75,8 +75,25 @@ pub enum SshKeyAction {
     PasteKey(String),
 }
 
+impl fmt::Debug for SshKeyAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GenerateNew => write!(f, "GenerateNew"),
+            Self::PasteKey(key) => {
+                // 脱敏：只显示前 20 字符
+                let truncated = if key.len() > 20 {
+                    format!("{}... [redacted]", &key[..20])
+                } else {
+                    key.clone()
+                };
+                write!(f, "PasteKey(\"{}\")", truncated)
+            }
+        }
+    }
+}
+
 /// 用户在执行步骤前的交互参数 —— 领域值对象
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ExecuteParams {
     /// 要创建的管理员用户名
     pub new_username: Option<String>,
@@ -88,6 +105,19 @@ pub struct ExecuteParams {
     pub ssh_key_action: Option<SshKeyAction>,
     /// 目标用户名（密钥设置到哪个用户）
     pub ssh_key_username: Option<String>,
+}
+
+impl fmt::Debug for ExecuteParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // 手动 Debug 以控制 SshKeyAction::PasteKey 的脱敏输出
+        f.debug_struct("ExecuteParams")
+            .field("new_username", &self.new_username)
+            .field("lock_password", &self.lock_password)
+            .field("new_ssh_port", &self.new_ssh_port)
+            .field("ssh_key_action", &self.ssh_key_action)
+            .field("ssh_key_username", &self.ssh_key_username)
+            .finish()
+    }
 }
 
 impl Default for ExecuteParams {

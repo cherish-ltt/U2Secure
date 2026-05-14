@@ -51,9 +51,8 @@ impl HardeningOrchestrator {
 
             match step.execute(params) {
                 Ok(result) => {
-                    let msg = result.message.clone();
                     self.logger
-                        .log_operation("完成", &format!("{}: {}", kind.label(), msg));
+                        .log_operation("完成", &format!("{}: {}", kind.label(), result.message));
                     results.push(result);
                 }
                 Err(e) => {

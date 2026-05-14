@@ -313,9 +313,10 @@ impl HardeningStep for SshKeySetupStep {
             SshKeyAction::GenerateNew => {
                 let pub_key_path = system::generate_ssh_keypair(username)?;
                 let msg = format!(
-                    "ED25519 密钥对已生成\n  私钥: {}\n  公钥: {}.pub\n  请立即复制私钥并安全保存！",
+                    "ED25519 密钥对已生成\n  私钥: {}\n  公钥: {}.pub\n  ⚠️  私钥无密码短语保护，建议手动加密：ssh-keygen -p -f {}\n  请立即复制私钥并安全保存！",
                     pub_key_path.trim_end_matches(".pub"),
-                    pub_key_path
+                    pub_key_path,
+                    pub_key_path.trim_end_matches(".pub"),
                 );
                 Ok(StepResult {
                     kind: StepKind::SshKeySetup,
@@ -773,8 +774,9 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
             if trimmed.starts_with('#') || trimmed.is_empty() {
                 return line.to_string();
             }
-            // 检查是否以 key 开头（忽略空格）
-            if trimmed.starts_with(key) {
+            // 精确匹配第一个单词（避免 Port 误匹配 PortNumber）
+            let first_word = trimmed.split_whitespace().next().unwrap_or("");
+            if first_word == key {
                 found = true;
                 format!("{key} {value}")
             } else {
