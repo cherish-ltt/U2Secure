@@ -64,10 +64,28 @@ fn test_system_update_step_status() {
 fn test_root_login_step_status() {
     let step = SshRootLoginStep;
 
-    let report = make_report(22, false, true, vec!["admin".into()], false, false, false, true);
+    let report = make_report(
+        22,
+        false,
+        true,
+        vec!["admin".into()],
+        false,
+        false,
+        false,
+        true,
+    );
     assert_eq!(step.check_status(&report), AuditStatus::Safe);
 
-    let report = make_report(22, false, false, vec!["admin".into()], false, false, false, true);
+    let report = make_report(
+        22,
+        false,
+        false,
+        vec!["admin".into()],
+        false,
+        false,
+        false,
+        true,
+    );
     assert_eq!(step.check_status(&report), AuditStatus::Missing);
 }
 
@@ -75,10 +93,28 @@ fn test_root_login_step_status() {
 fn test_password_auth_step_status() {
     let step = SshPasswordAuthStep;
 
-    let report = make_report(22, true, false, vec!["admin".into()], false, false, false, true);
+    let report = make_report(
+        22,
+        true,
+        false,
+        vec!["admin".into()],
+        false,
+        false,
+        false,
+        true,
+    );
     assert_eq!(step.check_status(&report), AuditStatus::Safe);
 
-    let report = make_report(22, false, false, vec!["admin".into()], false, false, false, true);
+    let report = make_report(
+        22,
+        false,
+        false,
+        vec!["admin".into()],
+        false,
+        false,
+        false,
+        true,
+    );
     assert_eq!(step.check_status(&report), AuditStatus::Missing);
 }
 

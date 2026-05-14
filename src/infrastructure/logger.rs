@@ -62,7 +62,10 @@ fn sanitize_detail(detail: &str) -> String {
     let mut result = detail.to_string();
     // 替换 ssh-rsa/ssh-ed25519 开头的公钥行
     if let Some(start) = result.find("ssh-ed25519 ") {
-        if let Some(end) = result[start..].find('\n').or_else(|| result[start..].find('\r')) {
+        if let Some(end) = result[start..]
+            .find('\n')
+            .or_else(|| result[start..].find('\r'))
+        {
             let abs_end = start + end;
             result.replace_range(start..abs_end, "ssh-ed25519 [KEY_REDACTED]");
         } else {
@@ -70,7 +73,10 @@ fn sanitize_detail(detail: &str) -> String {
         }
     }
     if let Some(start) = result.find("ssh-rsa ") {
-        if let Some(end) = result[start..].find('\n').or_else(|| result[start..].find('\r')) {
+        if let Some(end) = result[start..]
+            .find('\n')
+            .or_else(|| result[start..].find('\r'))
+        {
             let abs_end = start + end;
             result.replace_range(start..abs_end, "ssh-rsa [KEY_REDACTED]");
         } else {

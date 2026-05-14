@@ -36,7 +36,11 @@ pub struct AuditItem {
 
 impl AuditItem {
     pub fn new(name: &'static str, status: AuditStatus, detail: String) -> Self {
-        Self { name, status, detail }
+        Self {
+            name,
+            status,
+            detail,
+        }
     }
 
     pub fn safe(name: &'static str, detail: String) -> Self {
@@ -136,14 +140,70 @@ impl AuditReport {
     pub fn summary_lines(&self) -> Vec<(&'static str, AuditStatus)> {
         use AuditStatus as S;
         vec![
-            ("系统更新", if self.system_up_to_date { S::Safe } else { S::NeedsUpdate }),
-            ("非 root 用户创建", if self.sudo_users.is_empty() { S::Missing } else { S::Safe }),
-            ("禁止 root SSH 登录", if self.root_login_disabled { S::Safe } else { S::Missing }),
-            ("SSH 端口修改", if self.ssh_port != 22 { S::Safe } else { S::Missing }),
-            ("禁止密码登录", if self.password_auth_disabled { S::Safe } else { S::Missing }),
-            ("UFW 防火墙", if self.ufw_enabled { S::Safe } else { S::Missing }),
-            ("Fail2ban", if self.fail2ban_installed { S::Safe } else { S::Missing }),
-            ("自动安全更新", if self.auto_updates_enabled { S::Safe } else { S::Missing }),
+            (
+                "系统更新",
+                if self.system_up_to_date {
+                    S::Safe
+                } else {
+                    S::NeedsUpdate
+                },
+            ),
+            (
+                "非 root 用户创建",
+                if self.sudo_users.is_empty() {
+                    S::Missing
+                } else {
+                    S::Safe
+                },
+            ),
+            (
+                "禁止 root SSH 登录",
+                if self.root_login_disabled {
+                    S::Safe
+                } else {
+                    S::Missing
+                },
+            ),
+            (
+                "SSH 端口修改",
+                if self.ssh_port != 22 {
+                    S::Safe
+                } else {
+                    S::Missing
+                },
+            ),
+            (
+                "禁止密码登录",
+                if self.password_auth_disabled {
+                    S::Safe
+                } else {
+                    S::Missing
+                },
+            ),
+            (
+                "UFW 防火墙",
+                if self.ufw_enabled {
+                    S::Safe
+                } else {
+                    S::Missing
+                },
+            ),
+            (
+                "Fail2ban",
+                if self.fail2ban_installed {
+                    S::Safe
+                } else {
+                    S::Missing
+                },
+            ),
+            (
+                "自动安全更新",
+                if self.auto_updates_enabled {
+                    S::Safe
+                } else {
+                    S::Missing
+                },
+            ),
         ]
     }
 
@@ -151,32 +211,68 @@ impl AuditReport {
     pub fn status_for(&self, step: StepKind) -> AuditStatus {
         match step {
             StepKind::SystemUpdate => {
-                if self.system_up_to_date { AuditStatus::Safe } else { AuditStatus::NeedsUpdate }
+                if self.system_up_to_date {
+                    AuditStatus::Safe
+                } else {
+                    AuditStatus::NeedsUpdate
+                }
             }
             StepKind::UserCreation => {
-                if self.sudo_users.is_empty() { AuditStatus::Missing } else { AuditStatus::Safe }
+                if self.sudo_users.is_empty() {
+                    AuditStatus::Missing
+                } else {
+                    AuditStatus::Safe
+                }
             }
             StepKind::SshRootLogin => {
-                if self.root_login_disabled { AuditStatus::Safe } else { AuditStatus::Missing }
+                if self.root_login_disabled {
+                    AuditStatus::Safe
+                } else {
+                    AuditStatus::Missing
+                }
             }
             StepKind::SshPortChange => {
-                if self.ssh_port != 22 { AuditStatus::Safe } else { AuditStatus::Missing }
+                if self.ssh_port != 22 {
+                    AuditStatus::Safe
+                } else {
+                    AuditStatus::Missing
+                }
             }
             StepKind::SshPasswordAuth => {
-                if self.password_auth_disabled { AuditStatus::Safe } else { AuditStatus::Missing }
+                if self.password_auth_disabled {
+                    AuditStatus::Safe
+                } else {
+                    AuditStatus::Missing
+                }
             }
             StepKind::SshKeySetup => {
                 // 粗略检查：有 sudo 用户即认为可能已有密钥
-                if self.sudo_users.is_empty() { AuditStatus::Missing } else { AuditStatus::Partial }
+                if self.sudo_users.is_empty() {
+                    AuditStatus::Missing
+                } else {
+                    AuditStatus::Partial
+                }
             }
             StepKind::Ufw => {
-                if self.ufw_enabled { AuditStatus::Safe } else { AuditStatus::Missing }
+                if self.ufw_enabled {
+                    AuditStatus::Safe
+                } else {
+                    AuditStatus::Missing
+                }
             }
             StepKind::Fail2ban => {
-                if self.fail2ban_installed { AuditStatus::Safe } else { AuditStatus::Missing }
+                if self.fail2ban_installed {
+                    AuditStatus::Safe
+                } else {
+                    AuditStatus::Missing
+                }
             }
             StepKind::AutoUpdates => {
-                if self.auto_updates_enabled { AuditStatus::Safe } else { AuditStatus::Missing }
+                if self.auto_updates_enabled {
+                    AuditStatus::Safe
+                } else {
+                    AuditStatus::Missing
+                }
             }
             StepKind::SecurityScan | StepKind::LogAudit | StepKind::RestartSsh => {
                 AuditStatus::Missing

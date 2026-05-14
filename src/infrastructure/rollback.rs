@@ -72,10 +72,7 @@ pub fn register_file_backup(description: String, backup_path: String, original_p
 }
 
 /// 注册包移除撤销操作
-pub fn register_package_remove(
-    description: String,
-    package: String,
-) {
+pub fn register_package_remove(description: String, package: String) {
     register_undo(UndoAction::new(
         description,
         Box::new(move || {
@@ -107,9 +104,7 @@ pub fn register_command_undo(description: String, cmd: Vec<String>) {
         description,
         Box::new(move || {
             if cmd.len() > 1 {
-                let _ = std::process::Command::new(&cmd[0])
-                    .args(&cmd[1..])
-                    .output();
+                let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).output();
             }
         }),
     ));

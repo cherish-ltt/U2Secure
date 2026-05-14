@@ -63,9 +63,10 @@ pub fn sshd_config_get(key: &str) -> Option<String> {
             continue;
         }
         if let Some(stripped) = line.strip_prefix(key)
-            && (stripped.starts_with(' ') || stripped.starts_with('\t')) {
-                value = Some(stripped.trim().to_string());
-            }
+            && (stripped.starts_with(' ') || stripped.starts_with('\t'))
+        {
+            value = Some(stripped.trim().to_string());
+        }
     }
     value
 }
@@ -91,9 +92,7 @@ pub fn detect_password_auth_disabled() -> bool {
 /// 检测是否禁止 root 登录
 pub fn detect_root_login_disabled() -> bool {
     sshd_config_get("PermitRootLogin")
-        .map(|v| {
-            v.eq_ignore_ascii_case("no") || v.eq_ignore_ascii_case("prohibit-password")
-        })
+        .map(|v| v.eq_ignore_ascii_case("no") || v.eq_ignore_ascii_case("prohibit-password"))
         .unwrap_or(false)
 }
 
@@ -208,10 +207,11 @@ pub fn detect_auto_updates_enabled() -> bool {
     // 检查配置文件
     let path = Path::new("/etc/apt/apt.conf.d/20auto-upgrades");
     if path.exists()
-        && let Ok(content) = std::fs::read_to_string(path) {
-            return content.contains("APT::Periodic::Update-Package-Lists \"1\"")
-                || content.contains("APT::Periodic::Unattended-Upgrade \"1\"");
-        }
+        && let Ok(content) = std::fs::read_to_string(path)
+    {
+        return content.contains("APT::Periodic::Update-Package-Lists \"1\"")
+            || content.contains("APT::Periodic::Unattended-Upgrade \"1\"");
+    }
 
     false
 }
@@ -219,19 +219,17 @@ pub fn detect_auto_updates_enabled() -> bool {
 /// 检测系统包列表是否最新（缓存小于 7 天即认为最新）
 pub fn detect_system_up_to_date() -> bool {
     // 对于 apt，检查缓存文件时间戳
-    let cache_paths = [
-        "/var/lib/apt/lists",
-        "/var/cache/apt/pkgcache.bin",
-    ];
+    let cache_paths = ["/var/lib/apt/lists", "/var/cache/apt/pkgcache.bin"];
 
     for path_str in &cache_paths {
         let path = Path::new(path_str);
         if let Ok(metadata) = path.metadata()
             && let Ok(modified) = metadata.modified()
-                && let Ok(elapsed) = modified.elapsed() {
-                    // 7 天 = 604800 秒
-                    return elapsed.as_secs() < 604800;
-                }
+            && let Ok(elapsed) = modified.elapsed()
+        {
+            // 7 天 = 604800 秒
+            return elapsed.as_secs() < 604800;
+        }
     }
 
     // 如果什么也查不到，保守返回 false
@@ -354,7 +352,11 @@ pub fn create_system_user(username: &str) -> Result<(), DomainError> {
         .output();
 
     let _ = Command::new("chown")
-        .args(["-R", &format!("{username}:{username}"), &format!("/home/{username}/.ssh")])
+        .args([
+            "-R",
+            &format!("{username}:{username}"),
+            &format!("/home/{username}/.ssh"),
+        ])
         .output();
 
     let _ = Command::new("chmod")
@@ -392,9 +394,7 @@ pub fn generate_ssh_keypair(username: &str) -> Result<String, DomainError> {
 
     let output = Command::new("ssh-keygen")
         .args([
-            "-t", "ed25519",
-            "-f", &key_path,
-            "-N", "",  // 空密码
+            "-t", "ed25519", "-f", &key_path, "-N", "", // 空密码
             "-q",
         ])
         .output()
@@ -427,9 +427,7 @@ pub fn add_authorized_key(username: &str, pub_key: &str) -> Result<(), DomainErr
     let auth_keys = format!("{ssh_dir}/authorized_keys");
 
     // 确保 .ssh 目录存在
-    let _ = Command::new("mkdir")
-        .args(["-p", &ssh_dir])
-        .output();
+    let _ = Command::new("mkdir").args(["-p", &ssh_dir]).output();
 
     // 追加公钥（不覆盖已有密钥）
     use std::io::Write;
@@ -441,9 +439,7 @@ pub fn add_authorized_key(username: &str, pub_key: &str) -> Result<(), DomainErr
     writeln!(file, "{}", pub_key)
         .map_err(|e| DomainError::SystemCommandFailed(format!("追加公钥失败: {e}")))?;
 
-    let _ = Command::new("chmod")
-        .args(["600", &auth_keys])
-        .output();
+    let _ = Command::new("chmod").args(["600", &auth_keys]).output();
 
     let _ = Command::new("chown")
         .args([&format!("{username}:{username}"), &auth_keys])
@@ -519,7 +515,11 @@ pub fn get_key_fingerprint(username: &str) -> Option<String> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() { None } else { Some(stdout) }
+    if stdout.is_empty() {
+        None
+    } else {
+        Some(stdout)
+    }
 }
 
 /// 检查用户是否已存在
@@ -537,20 +537,18 @@ pub fn home_dir(username: &str) -> String {
         "/root".to_string()
     } else {
         // 尝试从 /etc/passwd 读取
-        if let Ok(output) = Command::new("getent")
-            .args(["passwd", username])
-            .output()
-            && output.status.success() {
-                let line = String::from_utf8_lossy(&output.stdout);
-                // passwd 格式: username:x:UID:GID:...:HOME:SHELL
-                if let Some(home) = line.trim().split(':').nth(5)
-                    && !home.is_empty() {
-                        return home.to_string();
-                    }
+        if let Ok(output) = Command::new("getent").args(["passwd", username]).output()
+            && output.status.success()
+        {
+            let line = String::from_utf8_lossy(&output.stdout);
+            // passwd 格式: username:x:UID:GID:...:HOME:SHELL
+            if let Some(home) = line.trim().split(':').nth(5)
+                && !home.is_empty()
+            {
+                return home.to_string();
             }
+        }
         // fallback: 默认 /home/{username}
         format!("/home/{username}")
     }
 }
-
-

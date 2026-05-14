@@ -69,7 +69,9 @@ impl HardeningStep for SystemUpdateStep {
     fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
         let pm = system::detect_package_manager();
         if pm == PackageManager::Unknown {
-            return Err(DomainError::SystemCommandFailed("无法识别的包管理器".into()));
+            return Err(DomainError::SystemCommandFailed(
+                "无法识别的包管理器".into(),
+            ));
         }
 
         let update_cmd = pm.update_cmd();
@@ -79,7 +81,9 @@ impl HardeningStep for SystemUpdateStep {
             .map_err(|e| DomainError::SystemCommandFailed(format!("update 失败: {e}")))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DomainError::SystemCommandFailed(format!("update 失败: {stderr}")));
+            return Err(DomainError::SystemCommandFailed(format!(
+                "update 失败: {stderr}"
+            )));
         }
 
         let upgrade_cmd = pm.upgrade_cmd();
@@ -89,7 +93,9 @@ impl HardeningStep for SystemUpdateStep {
             .map_err(|e| DomainError::SystemCommandFailed(format!("upgrade 失败: {e}")))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DomainError::SystemCommandFailed(format!("upgrade 失败: {stderr}")));
+            return Err(DomainError::SystemCommandFailed(format!(
+                "upgrade 失败: {stderr}"
+            )));
         }
 
         Ok(StepResult {
@@ -219,9 +225,7 @@ impl HardeningStep for SshPortChangeStep {
             .ok_or_else(|| DomainError::PreconditionFailed("未提供新 SSH 端口".into()))?;
 
         if new_port == 0 {
-            return Err(DomainError::PreconditionFailed(
-                "端口 0 无效".into(),
-            ));
+            return Err(DomainError::PreconditionFailed("端口 0 无效".into()));
         }
 
         let result = modify_sshd_config("Port", &new_port.to_string())?;
@@ -390,7 +394,9 @@ impl HardeningStep for UfwStep {
             .map_err(|e| DomainError::SystemCommandFailed(format!("ufw allow 失败: {e}")))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DomainError::SystemCommandFailed(format!("ufw allow 失败: {stderr}")));
+            return Err(DomainError::SystemCommandFailed(format!(
+                "ufw allow 失败: {stderr}"
+            )));
         }
 
         // 操作成功后注册撤销（先删除端口规则；如果之前未启用则再关闭 UFW）
@@ -455,9 +461,7 @@ impl HardeningStep for Fail2banStep {
                 PackageManager::Yum => ("yum", &["install", "-y", "fail2ban"]),
                 PackageManager::Dnf => ("dnf", &["install", "-y", "fail2ban"]),
                 _ => {
-                    return Err(DomainError::SystemCommandFailed(
-                        "不支持的包管理器".into(),
-                    ));
+                    return Err(DomainError::SystemCommandFailed("不支持的包管理器".into()));
                 }
             };
 
@@ -479,10 +483,7 @@ impl HardeningStep for Fail2banStep {
                 "停止 fail2ban 服务".into(),
                 vec!["systemctl".into(), "stop".into(), "fail2ban".into()],
             );
-            rollback::register_package_remove(
-                "删除 fail2ban".into(),
-                "fail2ban".into(),
-            );
+            rollback::register_package_remove("删除 fail2ban".into(), "fail2ban".into());
         }
 
         // 配置监狱规则（使用 SSH 端口）
@@ -546,7 +547,11 @@ impl HardeningStep for AutoUpdatesStep {
         // 安装成功后注册撤销
         rollback::register_command_undo(
             "停止 unattended-upgrades 服务".into(),
-            vec!["systemctl".into(), "stop".into(), "unattended-upgrades".into()],
+            vec![
+                "systemctl".into(),
+                "stop".into(),
+                "unattended-upgrades".into(),
+            ],
         );
         rollback::register_package_remove(
             "删除 unattended-upgrades".into(),
@@ -621,10 +626,7 @@ impl HardeningStep for SecurityScanStep {
         }
 
         // 安装完成后注册撤销（无论成功与否，实际在安装后注册）
-        rollback::register_package_remove(
-            "卸载 lynis".into(),
-            "lynis".into(),
-        );
+        rollback::register_package_remove("卸载 lynis".into(), "lynis".into());
 
         if !system::which("lynis") {
             return Ok(StepResult {
@@ -643,14 +645,8 @@ impl HardeningStep for SecurityScanStep {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
         // 提取摘要信息
-        let warnings = stdout
-            .lines()
-            .filter(|l| l.contains("Warning"))
-            .count();
-        let suggestions = stdout
-            .lines()
-            .filter(|l| l.contains("Suggestion"))
-            .count();
+        let warnings = stdout.lines().filter(|l| l.contains("Warning")).count();
+        let suggestions = stdout.lines().filter(|l| l.contains("Suggestion")).count();
 
         Ok(StepResult {
             kind: StepKind::SecurityScan,
@@ -697,10 +693,7 @@ impl HardeningStep for LogAuditStep {
             if system::which("logwatch") {
                 installed.push("logwatch");
                 // 安装成功后注册撤销
-                rollback::register_package_remove(
-                    "卸载 logwatch".into(),
-                    "logwatch".into(),
-                );
+                rollback::register_package_remove("卸载 logwatch".into(), "logwatch".into());
             }
         } else {
             installed.push("logwatch");
@@ -716,10 +709,7 @@ impl HardeningStep for LogAuditStep {
             if system::which("aide") {
                 installed.push("aide");
                 // 安装成功后注册撤销
-                rollback::register_package_remove(
-                    "卸载 aide".into(),
-                    "aide".into(),
-                );
+                rollback::register_package_remove("卸载 aide".into(), "aide".into());
             }
         } else {
             installed.push("aide");
@@ -735,9 +725,7 @@ impl HardeningStep for LogAuditStep {
             .output();
 
         // 初始化 aide 数据库
-        let _ = Command::new("aideinit")
-            .args(["--yes"])
-            .output();
+        let _ = Command::new("aideinit").args(["--yes"]).output();
 
         Ok(StepResult {
             kind: StepKind::LogAudit,
@@ -785,9 +773,7 @@ impl HardeningStep for RestartSshStep {
             .args(["restart", "sshd"])
             .output()
             .or_else(|_| Command::new("systemctl").args(["restart", "ssh"]).output())
-            .map_err(|e| {
-                DomainError::SystemCommandFailed(format!("重启 SSH 服务失败: {e}"))
-            })?;
+            .map_err(|e| DomainError::SystemCommandFailed(format!("重启 SSH 服务失败: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -800,7 +786,11 @@ impl HardeningStep for RestartSshStep {
         let status = Command::new("systemctl")
             .args(["is-active", "sshd"])
             .output()
-            .or_else(|_| Command::new("systemctl").args(["is-active", "ssh"]).output());
+            .or_else(|_| {
+                Command::new("systemctl")
+                    .args(["is-active", "ssh"])
+                    .output()
+            });
 
         let status_str = match &status {
             Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),

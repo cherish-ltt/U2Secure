@@ -6,7 +6,7 @@
 //! - infrastructure: 基础设施（系统命令、日志）
 //! - presentation: 表示层（dialoguer 交互式 CLI）
 
-pub mod domain;
 pub mod application;
+pub mod domain;
 pub mod infrastructure;
 pub mod presentation;

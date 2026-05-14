@@ -84,8 +84,14 @@ fn test_audit_report_status_for_all_secure() {
     assert_eq!(report.status_for(StepKind::SystemUpdate), AuditStatus::Safe);
     assert_eq!(report.status_for(StepKind::UserCreation), AuditStatus::Safe);
     assert_eq!(report.status_for(StepKind::SshRootLogin), AuditStatus::Safe);
-    assert_eq!(report.status_for(StepKind::SshPortChange), AuditStatus::Safe);
-    assert_eq!(report.status_for(StepKind::SshPasswordAuth), AuditStatus::Safe);
+    assert_eq!(
+        report.status_for(StepKind::SshPortChange),
+        AuditStatus::Safe
+    );
+    assert_eq!(
+        report.status_for(StepKind::SshPasswordAuth),
+        AuditStatus::Safe
+    );
     assert_eq!(report.status_for(StepKind::Ufw), AuditStatus::Safe);
     assert_eq!(report.status_for(StepKind::Fail2ban), AuditStatus::Safe);
     assert_eq!(report.status_for(StepKind::AutoUpdates), AuditStatus::Safe);
@@ -107,18 +113,45 @@ fn test_audit_report_status_for_all_missing() {
         system_up_to_date: false,
     };
 
-    assert_eq!(report.status_for(StepKind::SystemUpdate), AuditStatus::NeedsUpdate);
-    assert_eq!(report.status_for(StepKind::UserCreation), AuditStatus::Missing);
-    assert_eq!(report.status_for(StepKind::SshRootLogin), AuditStatus::Missing);
-    assert_eq!(report.status_for(StepKind::SshPortChange), AuditStatus::Missing);
-    assert_eq!(report.status_for(StepKind::SshPasswordAuth), AuditStatus::Missing);
-    assert_eq!(report.status_for(StepKind::SshKeySetup), AuditStatus::Missing);
+    assert_eq!(
+        report.status_for(StepKind::SystemUpdate),
+        AuditStatus::NeedsUpdate
+    );
+    assert_eq!(
+        report.status_for(StepKind::UserCreation),
+        AuditStatus::Missing
+    );
+    assert_eq!(
+        report.status_for(StepKind::SshRootLogin),
+        AuditStatus::Missing
+    );
+    assert_eq!(
+        report.status_for(StepKind::SshPortChange),
+        AuditStatus::Missing
+    );
+    assert_eq!(
+        report.status_for(StepKind::SshPasswordAuth),
+        AuditStatus::Missing
+    );
+    assert_eq!(
+        report.status_for(StepKind::SshKeySetup),
+        AuditStatus::Missing
+    );
     assert_eq!(report.status_for(StepKind::Ufw), AuditStatus::Missing);
     assert_eq!(report.status_for(StepKind::Fail2ban), AuditStatus::Missing);
-    assert_eq!(report.status_for(StepKind::AutoUpdates), AuditStatus::Missing);
-    assert_eq!(report.status_for(StepKind::SecurityScan), AuditStatus::Missing);
+    assert_eq!(
+        report.status_for(StepKind::AutoUpdates),
+        AuditStatus::Missing
+    );
+    assert_eq!(
+        report.status_for(StepKind::SecurityScan),
+        AuditStatus::Missing
+    );
     assert_eq!(report.status_for(StepKind::LogAudit), AuditStatus::Missing);
-    assert_eq!(report.status_for(StepKind::RestartSsh), AuditStatus::Missing);
+    assert_eq!(
+        report.status_for(StepKind::RestartSsh),
+        AuditStatus::Missing
+    );
 }
 
 #[test]
@@ -138,7 +171,10 @@ fn test_audit_report_status_for_key_setup_with_sudo_users() {
     };
 
     // 有 sudo 用户 -> Partial（可能有密钥）
-    assert_eq!(report.status_for(StepKind::SshKeySetup), AuditStatus::Partial);
+    assert_eq!(
+        report.status_for(StepKind::SshKeySetup),
+        AuditStatus::Partial
+    );
 }
 
 #[test]
@@ -191,9 +227,18 @@ fn test_step_kind_check_default_status() {
         system_up_to_date: true,
     };
 
-    assert_eq!(StepKind::SystemUpdate.check_default_status(&report), AuditStatus::Safe);
-    assert_eq!(StepKind::SshRootLogin.check_default_status(&report), AuditStatus::Missing);
-    assert_eq!(StepKind::Fail2ban.check_default_status(&report), AuditStatus::Missing);
+    assert_eq!(
+        StepKind::SystemUpdate.check_default_status(&report),
+        AuditStatus::Safe
+    );
+    assert_eq!(
+        StepKind::SshRootLogin.check_default_status(&report),
+        AuditStatus::Missing
+    );
+    assert_eq!(
+        StepKind::Fail2ban.check_default_status(&report),
+        AuditStatus::Missing
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +283,10 @@ fn test_execute_params_ssh_key_generate() {
         ..Default::default()
     };
     assert_eq!(params.ssh_key_username.as_deref(), Some("admin"));
-    assert!(matches!(params.ssh_key_action, Some(SshKeyAction::GenerateNew)));
+    assert!(matches!(
+        params.ssh_key_action,
+        Some(SshKeyAction::GenerateNew)
+    ));
 }
 
 #[test]
@@ -279,12 +327,19 @@ fn test_ssh_key_action_debug_generate() {
 
 #[test]
 fn test_ssh_key_action_debug_paste_redacts_key() {
-    let long_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT".to_string();
+    let long_key =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT"
+            .to_string();
     let action = SshKeyAction::PasteKey(long_key);
     let debug_str = format!("{action:?}");
-    assert!(debug_str.contains("[redacted]"), "PasteKey Debug 应脱敏: {debug_str}");
-    assert!(!debug_str.contains("AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT"),
-        "Debug 不应泄露完整公钥: {debug_str}");
+    assert!(
+        debug_str.contains("[redacted]"),
+        "PasteKey Debug 应脱敏: {debug_str}"
+    );
+    assert!(
+        !debug_str.contains("AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT"),
+        "Debug 不应泄露完整公钥: {debug_str}"
+    );
     assert!(debug_str.starts_with("PasteKey(\"ssh-ed25519 "));
 }
 
@@ -306,8 +361,10 @@ fn test_ssh_key_action_debug_utf8_boundary_no_panic() {
     let action = SshKeyAction::PasteKey(key_with_cjk.to_string());
     let debug_str = format!("{action:?}");
     // 不应 panic，且应正常输出脱敏内容
-    assert!(debug_str.contains("[redacted]") || debug_str.contains(key_with_cjk),
-        "Debug 输出异常: {debug_str}");
+    assert!(
+        debug_str.contains("[redacted]") || debug_str.contains(key_with_cjk),
+        "Debug 输出异常: {debug_str}"
+    );
 }
 
 #[test]
@@ -340,13 +397,20 @@ fn test_sshd_config_exact_key_matching() {
     // 正常匹配 —— 应匹配
     assert!(sshd_line_match("Port 2222", "Port"));
     assert!(sshd_line_match("PermitRootLogin no", "PermitRootLogin"));
-    assert!(sshd_line_match("  PasswordAuthentication no", "PasswordAuthentication"));
+    assert!(sshd_line_match(
+        "  PasswordAuthentication no",
+        "PasswordAuthentication"
+    ));
 
     // 前缀不应误匹配（Bug #1 复现：starts_with("Port") 会误匹配 "PortNumber"）
-    assert!(!sshd_line_match("PortNumberOfSomething 123", "Port"),
-        "Port 不应匹配 PortNumberOfSomething");
-    assert!(!sshd_line_match("PermitRootLoginExtra yes", "PermitRootLogin"),
-        "PermitRootLogin 不应匹配 PermitRootLoginExtra");
+    assert!(
+        !sshd_line_match("PortNumberOfSomething 123", "Port"),
+        "Port 不应匹配 PortNumberOfSomething"
+    );
+    assert!(
+        !sshd_line_match("PermitRootLoginExtra yes", "PermitRootLogin"),
+        "PermitRootLogin 不应匹配 PermitRootLoginExtra"
+    );
 
     // 注释行不匹配
     assert!(!sshd_line_match("#Port 2222", "Port"));
@@ -405,12 +469,18 @@ fn test_execute_params_debug_redacts_key() {
     let params = ExecuteParams {
         ssh_key_username: Some("admin".into()),
         ssh_key_action: Some(SshKeyAction::PasteKey(
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT".into(),
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT"
+                .into(),
         )),
         ..Default::default()
     };
     let debug_str = format!("{params:?}");
-    assert!(debug_str.contains("[redacted]"), "ExecuteParams Debug 应脱敏: {debug_str}");
-    assert!(!debug_str.contains("AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT"),
-        "ExecuteParams Debug 不应泄露密钥: {debug_str}");
+    assert!(
+        debug_str.contains("[redacted]"),
+        "ExecuteParams Debug 应脱敏: {debug_str}"
+    );
+    assert!(
+        !debug_str.contains("AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT"),
+        "ExecuteParams Debug 不应泄露密钥: {debug_str}"
+    );
 }

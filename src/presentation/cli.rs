@@ -98,7 +98,9 @@ fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> ExecutePa
                         if system::user_exists(input) {
                             return Err("用户已存在");
                         }
-                        if !input.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+                        if !input
+                            .chars()
+                            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
                         {
                             return Err("用户名只能包含字母、数字、- 和 _");
                         }
@@ -152,9 +154,11 @@ fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> ExecutePa
                     .unwrap_or_else(|_| "0".into());
 
                 if let Ok(port) = port_str.parse::<u16>()
-                    && port > 0 && port != current_port {
-                        params.new_ssh_port = Some(port);
-                    }
+                    && port > 0
+                    && port != current_port
+                {
+                    params.new_ssh_port = Some(port);
+                }
             }
             StepKind::SshKeySetup => {
                 // 如果已经在 UserCreation 中设置过密钥，跳过
@@ -323,9 +327,6 @@ fn render_summary(results: &[crate::domain::steps::StepResult]) {
         fail_count.to_string().red()
     );
     println!("{}", "=".repeat(50).bright_green());
-    println!(
-        "{} 日志已保存至 /var/log/secure-init.log",
-        "📝".dimmed()
-    );
+    println!("{} 日志已保存至 /var/log/secure-init.log", "📝".dimmed());
     println!();
 }

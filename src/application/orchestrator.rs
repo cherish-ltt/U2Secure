@@ -24,10 +24,8 @@ impl HardeningOrchestrator {
     pub fn audit(&self) -> AuditReport {
         self.logger.log("[审计] 开始环境审计...");
         let report = system::run_full_audit();
-        self.logger.log(&format!(
-            "[审计] 完成，共 {} 项检测",
-            report.items.len()
-        ));
+        self.logger
+            .log(&format!("[审计] 完成，共 {} 项检测", report.items.len()));
         report
     }
 
@@ -50,8 +48,7 @@ impl HardeningOrchestrator {
 
             // 检查是否被 Ctrl+C 中断
             if rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
-                self.logger
-                    .log("[中断] 检测到用户中断，停止执行并回退");
+                self.logger.log("[中断] 检测到用户中断，停止执行并回退");
                 break;
             }
 
@@ -60,10 +57,8 @@ impl HardeningOrchestrator {
 
             match step.execute(params) {
                 Ok(result) => {
-                    self.logger.log_operation(
-                        "完成",
-                        &format!("{}: {}", kind.label(), result.message),
-                    );
+                    self.logger
+                        .log_operation("完成", &format!("{}: {}", kind.label(), result.message));
                     results.push(result);
                 }
                 Err(e) => {
