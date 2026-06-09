@@ -553,7 +553,7 @@ fn execute_batch(
             rollback::INTERRUPTED.store(false, Ordering::SeqCst);
             app.logs.push(LogEntry {
                 icon: "⚠️",
-                message: "用户中断".into(),
+                message: crate::i18n::tr("tui_exec_interrupted").into(),
             });
             app.progress = (i, total);
             terminal.draw(|f| render(f, app))?;
@@ -566,7 +566,7 @@ fn execute_batch(
         mark_step_state(app, kind, StepExecState::Running);
         app.logs.push(LogEntry {
             icon: "▶",
-            message: format!("正在执行: {}", kind.label()),
+            message: crate::i18n::tr("tui_exec_running").replace("{step}", kind.label()),
         });
         app.progress = (i, total);
         terminal.draw(|f| render(f, app))?;
@@ -578,14 +578,14 @@ fn execute_batch(
                     mark_step_state(app, kind, StepExecState::Success);
                     app.logs.push(LogEntry {
                         icon: "✅",
-                        message: format!("已完成: {}", kind.label()),
+                        message: crate::i18n::tr("tui_exec_done").replace("{step}", kind.label()),
                     });
                 } else {
                     // changes_made = false 认为是跳过而非失败
                     mark_step_state(app, kind, StepExecState::Idle);
                     app.logs.push(LogEntry {
                         icon: "⏭",
-                        message: format!("跳过: {}", result.message),
+                        message: crate::i18n::tr("tui_exec_skip").replace("{msg}", &result.message),
                     });
                 }
                 app.results.push(result);
@@ -595,7 +595,7 @@ fn execute_batch(
                 mark_step_state(app, kind, StepExecState::Failure);
                 app.logs.push(LogEntry {
                     icon: "❌",
-                    message: format!("失败: {}", e),
+                    message: crate::i18n::tr("tui_exec_failed").replace("{err}", &format!("{}", e)),
                 });
                 let err_result = StepResult {
                     kind,
@@ -665,13 +665,13 @@ fn execute_single(
                 mark_step_state(app, kind, StepExecState::Success);
                 app.logs.push(LogEntry {
                     icon: "✅",
-                    message: format!("已完成: {}", kind.label()),
+                    message: crate::i18n::tr("tui_exec_done").replace("{step}", kind.label()),
                 });
             } else {
                 mark_step_state(app, kind, StepExecState::Idle);
                 app.logs.push(LogEntry {
                     icon: "⏭",
-                    message: format!("跳过: {}", result.message),
+                    message: crate::i18n::tr("tui_exec_skip").replace("{msg}", &result.message),
                 });
             }
             app.results.push(result);
@@ -680,7 +680,7 @@ fn execute_single(
             mark_step_state(app, kind, StepExecState::Failure);
             app.logs.push(LogEntry {
                 icon: "❌",
-                message: format!("失败: {}", e),
+                message: crate::i18n::tr("tui_exec_failed").replace("{err}", &format!("{}", e)),
             });
             app.results.push(StepResult {
                 kind,
@@ -855,13 +855,14 @@ fn render(frame: &mut Frame, app: &TuiApp) {
 
 fn render_title(frame: &mut Frame, area: ratatui::layout::Rect) {
     let version = env!("CARGO_PKG_VERSION");
+    let title_text = crate::i18n::tr("tui_title");
     let title = Line::from(vec![
         Span::styled(
             format!(" U2Secure v{} ", version),
             Style::default().fg(Color::White).bg(Color::Blue),
         ),
         Span::styled(
-            " — Linux 服务器安全加固工具 ",
+            format!(" — {} ", title_text),
             Style::default().fg(Color::Cyan).bg(Color::Blue),
         ),
     ]);
@@ -877,7 +878,7 @@ fn render_title(frame: &mut Frame, area: ratatui::layout::Rect) {
 
 fn render_audit_summary(frame: &mut Frame, area: ratatui::layout::Rect, report: &AuditReport) {
     let block = Block::default()
-        .title(" 审计报告 ")
+        .title(format!(" {} ", crate::i18n::tr("tui_audit_report")))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .style(Style::default());
@@ -925,7 +926,7 @@ fn render_main_content(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tui
 
 fn render_step_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let block = Block::default()
-        .title(format!(" 加固步骤 ({}) ", app.steps.len()))
+        .title(format!(" {} ", crate::i18n::tr("tui_steps_title").replace("{n}", &app.steps.len().to_string())))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded);
 
@@ -979,7 +980,7 @@ fn render_right_panel(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiA
 /// 选择模式：操作提示
 fn render_right_help(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let block = Block::default()
-        .title(" 操作提示 ")
+        .title(format!(" {} ", crate::i18n::tr("tui_help_title")))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded);
 
@@ -989,35 +990,35 @@ fn render_right_help(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiAp
         Line::from(vec![Span::raw("")]),
         Line::from(vec![
             Span::styled("  ↑↓", Style::default().bold()),
-            Span::raw("  移动光标"),
+            Span::raw(format!("  {}", crate::i18n::tr("tui_help_move"))),
         ]),
         Line::from(vec![
             Span::styled(" Space", Style::default().bold()),
-            Span::raw("  切换选择 / 取消"),
+            Span::raw(format!("  {}", crate::i18n::tr("tui_help_toggle"))),
         ]),
         Line::from(vec![
             Span::styled(" Enter", Style::default().bold()),
-            Span::raw("  批量执行选中的步骤"),
+            Span::raw(format!("  {}", crate::i18n::tr("tui_help_batch"))),
         ]),
         Line::from(vec![
             Span::styled(" e", Style::default().bold()),
-            Span::raw("  立即执行当前步骤"),
+            Span::raw(format!("  {}", crate::i18n::tr("tui_help_single"))),
         ]),
         Line::from(vec![
             Span::styled(" r", Style::default().bold()),
-            Span::raw("  重新审计"),
+            Span::raw(format!("  {}", crate::i18n::tr("tui_help_reauth"))),
         ]),
         Line::from(vec![
             Span::styled(" q", Style::default().bold()),
-            Span::raw("  退出"),
+            Span::raw(format!("  {}", crate::i18n::tr("tui_help_quit"))),
         ]),
         Line::from(vec![Span::raw("")]),
         Line::from(vec![Span::styled(
-            format!(" 已勾选 {} 项", selected_count),
+            crate::i18n::tr("tui_selected_count").replace("{n}", &selected_count.to_string()),
             Style::default().fg(Color::Cyan),
         )]),
         Line::from(vec![Span::styled(
-            " 按 e 可强制执行任意单项",
+            crate::i18n::tr("tui_single_hint"),
             Style::default().dim(),
         )]),
     ]);
@@ -1031,7 +1032,7 @@ fn render_right_help(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiAp
 /// 执行中：日志 + 进度条
 fn render_right_executing(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let block = Block::default()
-        .title(" 执行状态 ")
+        .title(format!(" {} ", crate::i18n::tr("tui_exec_title")))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded);
 
@@ -1091,7 +1092,7 @@ fn render_right_executing(frame: &mut Frame, area: ratatui::layout::Rect, app: &
 /// 摘要模式：执行结果
 fn render_right_summary(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let block = Block::default()
-        .title(" 执行结果 ")
+        .title(format!(" {} ", crate::i18n::tr("tui_result_title")))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded);
 
@@ -1152,17 +1153,17 @@ fn render_right_summary(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tu
 fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let (text, style) = match app.mode {
         AppMode::Select => (
-            " ↑↓/jk 移动 | Space 选择 | Enter 批量执行 | e 单项执行 | r 重新审计 | q 退出 ",
+            crate::i18n::tr("tui_footer_select"),
             Style::default().fg(Color::White).bg(Color::Rgb(30, 30, 50)),
         ),
         AppMode::Executing => (
-            " 执行中... 按 Ctrl+C 中断 ",
+            crate::i18n::tr("tui_footer_exec"),
             Style::default()
                 .fg(Color::Yellow)
                 .bg(Color::Rgb(40, 20, 20)),
         ),
         AppMode::Summary => (
-            " 执行完毕 | 按任意键返回步骤列表 ",
+            crate::i18n::tr("tui_footer_summary"),
             Style::default().fg(Color::White).bg(Color::Rgb(20, 40, 20)),
         ),
     };
@@ -1181,52 +1182,52 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     // 统一弹窗尺寸逻辑
     let (title, height, content_lines, hint_line) = match popup {
         Popup::SshKeyUsername { value } => (
-            " 目标用户名 ",
+            format!(" {} ", crate::i18n::tr("tui_popup_username")),
             5,
             render_username_input(value),
-            " Enter 确认  Esc 取消 ",
+            crate::i18n::tr("tui_hint_enter_esc"),
         ),
         Popup::SshKeyUserSelect { users, selected } => (
-            " 选择用户 ",
+            format!(" {} ", crate::i18n::tr("tui_popup_select_user")),
             (users.len() + 4).clamp(5, 16) as u16,
             render_string_list(users, *selected),
-            " ↑↓ 选择  Enter 确认  Esc 取消 ",
+            crate::i18n::tr("tui_hint_updown_enter_esc"),
         ),
         Popup::SshKeyAction { selected, .. } => (
-            " 选择操作 ",
+            format!(" {} ", crate::i18n::tr("tui_popup_select_action")),
             7,
-            render_select_options(&["生成新密钥对", "粘贴已有公钥", "跳过"], *selected),
-            " ↑↓ 选择  Enter 确认  Esc 取消 ",
+            render_select_options(&[crate::i18n::tr("tui_popup_gen_key"), crate::i18n::tr("tui_popup_paste_key"), crate::i18n::tr("tui_popup_skip")], *selected),
+            crate::i18n::tr("tui_hint_updown_enter_esc"),
         ),
         Popup::SshKeyPaste { value, .. } => (
-            " 粘贴公钥 ",
+            format!(" {} ", crate::i18n::tr("tui_popup_paste_title")),
             5,
             render_pubkey_input(value),
-            " Enter 确认  Esc 返回 ",
+            crate::i18n::tr("tui_hint_enter_esc_back"),
         ),
         Popup::SshKeyOverwrite { selected, .. } => (
-            " 密钥已存在 ",
+            format!(" {} ", crate::i18n::tr("tui_popup_overwrite_title")),
             7,
-            render_select_options(&["重新创建 (覆盖现有密钥)", "取消"], *selected),
-            " ↑↓ 选择  Enter 确认  Esc 返回 ",
+            render_select_options(&[crate::i18n::tr("tui_popup_overwrite_yes"), crate::i18n::tr("tui_popup_overwrite_no")], *selected),
+            crate::i18n::tr("tui_hint_updown_enter_esc_back"),
         ),
         Popup::CreateUserUsername { value } => (
-            " 新用户名 ",
+            format!(" {} ", crate::i18n::tr("tui_popup_new_user")),
             5,
             render_username_input(value),
-            " Enter 确认  Esc 取消 ",
+            crate::i18n::tr("tui_hint_enter_esc"),
         ),
         Popup::CreateUserLockPw { lock, .. } => (
-            " 锁定密码 ",
+            format!(" {} ", crate::i18n::tr("tui_popup_lock_title")),
             7,
-            render_select_options(&["是 (锁定密码, 强制密钥登录)", "否 (不锁定密码)"], if *lock { 0 } else { 1 }),
-            " ↑↓ 选择  Enter 确认  Esc 返回 ",
+            render_select_options(&[crate::i18n::tr("tui_popup_lock_yes"), crate::i18n::tr("tui_popup_lock_no")], if *lock { 0 } else { 1 }),
+            crate::i18n::tr("tui_hint_updown_enter_esc_back"),
         ),
         Popup::SshPortInput { value } => (
-            " 新 SSH 端口 ",
+            format!(" {} ", crate::i18n::tr("tui_popup_port_title")),
             5,
             render_port_input(value),
-            " Enter 确认  Esc 取消 ",
+            crate::i18n::tr("tui_hint_enter_esc"),
         ),
     };
 
@@ -1277,7 +1278,7 @@ fn render_username_input(value: &str) -> Vec<Line<'static>> {
             Line::from(vec![Span::raw("")]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("输入用户名...", Style::default().dim().fg(Color::Gray)),
+                Span::styled(crate::i18n::tr("tui_popup_enter_user"), Style::default().dim().fg(Color::Gray)),
                 Span::styled("█", Style::default().fg(Color::Cyan)),
             ]),
         ]

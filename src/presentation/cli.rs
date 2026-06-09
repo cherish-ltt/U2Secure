@@ -15,13 +15,13 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     }
 
     println!(
-        "\n{} U2Secure - Linux 服务器安全加固工具 v{}\n",
+        "\n{} {}\n",
         "🔐".bright_green(),
-        env!("CARGO_PKG_VERSION")
+        crate::i18n::tr("cli_welcome").replace("{ver}", env!("CARGO_PKG_VERSION")),
     );
 
     // ── 步骤 0：环境审计 ──
-    println!("{} 正在执行环境审计...\n", "🔍".bright_blue());
+    println!("{} {}...\n", "🔍".bright_blue(), crate::i18n::tr("cli_auditing"));
     let report = orchestrator.audit();
 
     render_audit_report(&report);
@@ -252,7 +252,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
 
 /// 渲染审计报告
 fn render_audit_report(report: &AuditReport) {
-    println!("{} 环境审计完成：", "📊".bright_cyan());
+    println!("{} {}", "📊".bright_cyan(), crate::i18n::tr("cli_audit_done"));
     println!("{}", "─".repeat(50).dimmed());
 
     for item in &report.items {
@@ -289,12 +289,14 @@ fn step_selection(report: &AuditReport) -> Vec<StepKind> {
         .collect();
 
     println!(
-        "{} 请选择要执行的加固步骤（已安全配置的默认不勾选）：\n",
-        "📋".bright_blue()
+        "{} {}\n",
+        "📋".bright_blue(),
+        crate::i18n::tr("cli_select_steps"),
     );
     println!(
-        "{} 提示：方向键上下移动，空格选择，回车确认\n",
-        "💡".dimmed()
+        "{} {}\n",
+        "💡".dimmed(),
+        crate::i18n::tr("cli_hint_nav"),
     );
 
     let selections = MultiSelect::new()
@@ -314,7 +316,7 @@ fn step_selection(report: &AuditReport) -> Vec<StepKind> {
 /// 渲染执行总结
 fn render_summary(results: &[crate::domain::steps::StepResult]) {
     println!("\n{}", "=".repeat(50).bright_green());
-    println!("{} 本次加固总结报告", "📋".bright_green());
+    println!("{} {}", "📋".bright_green(), crate::i18n::tr("cli_summary_title"));
     println!("{}", "=".repeat(50).bright_green());
 
     let mut success_count = 0;
@@ -344,11 +346,13 @@ fn render_summary(results: &[crate::domain::steps::StepResult]) {
 
     println!("{}", "─".repeat(50).dimmed());
     println!(
-        "  总计: {} 成功, {} 失败/跳过",
-        success_count.to_string().green(),
-        fail_count.to_string().red()
+        "  {}",
+        crate::i18n::tr("cli_summary_total")
+            .replace("{ok}", &success_count.to_string())
+            .replace("{fail}", &fail_count.to_string())
+            .green()
     );
     println!("{}", "=".repeat(50).bright_green());
-    println!("{} 日志已保存至 /var/log/secure-init.log", "📝".dimmed());
+    println!("{} {}", "📝".dimmed(), crate::i18n::tr("cli_log_saved"));
     println!();
 }
