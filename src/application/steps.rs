@@ -432,11 +432,11 @@ impl HardeningStep for UfwStep {
             let output = Command::new("ufw")
                 .args(["--force", "enable"])
                 .output()
-                .map_err(|e| DomainError::SystemCommandFailed(format!("ufw enable 失败: {e}")))?;
+                .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_ufw_enable_failed"))))?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(DomainError::SystemCommandFailed(format!(
-                    "ufw enable 失败: {stderr}"
+                    "{}: {stderr}", crate::i18n::tr("err_ufw_enable_failed")
                 )));
             }
         }
@@ -477,7 +477,7 @@ impl HardeningStep for Fail2banStep {
                 PackageManager::Yum => ("yum", &["install", "-y", "fail2ban"]),
                 PackageManager::Dnf => ("dnf", &["install", "-y", "fail2ban"]),
                 _ => {
-                    return Err(DomainError::SystemCommandFailed("不支持的包管理器".into()));
+                    return Err(DomainError::SystemCommandFailed(crate::i18n::tr("err_unsupported_pkg").into()));
                 }
             };
 
@@ -485,12 +485,13 @@ impl HardeningStep for Fail2banStep {
                 .args(install_args)
                 .output()
                 .map_err(|e| {
-                    DomainError::SystemCommandFailed(format!("安装 fail2ban 失败: {e}"))
+                    DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_install_fail2ban")))
                 })?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(DomainError::SystemCommandFailed(format!(
-                    "安装 fail2ban 失败: {stderr}"
+                    "{}: {stderr}",
+                    crate::i18n::tr("err_install_fail2ban")
                 )));
             }
 
@@ -555,12 +556,13 @@ impl HardeningStep for AutoUpdatesStep {
             .args(["install", "-y", "unattended-upgrades"])
             .output()
             .map_err(|e| {
-                DomainError::SystemCommandFailed(format!("安装 unattended-upgrades 失败: {e}"))
+                DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_install_unattended")))
             })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "安装 unattended-upgrades 失败: {stderr}"
+                "{}: {stderr}",
+                crate::i18n::tr("err_install_unattended")
             )));
         }
 
@@ -639,7 +641,7 @@ impl HardeningStep for SecurityScanStep {
                 }
                 PackageManager::Unknown => {
                     return Err(DomainError::SystemCommandFailed(
-                        "无法确定包管理器，请手动安装 lynis".into(),
+                        crate::i18n::tr("err_unknown_pkg_lynis").into(),
                     ));
                 }
             }
@@ -663,7 +665,7 @@ impl HardeningStep for SecurityScanStep {
         let output = Command::new("lynis")
             .args(["audit", "system", "--quick"])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("lynis 执行失败: {e}")))?;
+            .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_lynis_exec"))))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
@@ -905,7 +907,7 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
     }
 
     std::fs::write(path, result)
-        .map_err(|e| DomainError::SystemCommandFailed(format!("写入失败: {e}")))?;
+        .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_write"))))?;
 
     Ok(StepResult {
         kind: StepKind::SshRootLogin, // 占位 kind，调用方会覆盖
