@@ -101,7 +101,7 @@ impl HardeningStep for SystemUpdateStep {
         Ok(StepResult {
             kind: StepKind::SystemUpdate,
             changes_made: true,
-            message: "系统更新完成".into(),
+            message: crate::i18n::tr("result_sys_updated").into(),
         })
     }
 }
@@ -159,9 +159,7 @@ impl HardeningStep for UserCreationStep {
         Ok(StepResult {
             kind: StepKind::UserCreation,
             changes_made: true,
-            message: format!(
-                "用户 '{username}' 已创建并加入 sudo 组，密钥已设置（私钥: ~/.ssh/id_ed25519）"
-            ),
+            message: crate::i18n::tr("result_user_created").replace("{user}", username),
         })
     }
 }
@@ -235,7 +233,7 @@ impl HardeningStep for SshPortChangeStep {
             // 注册撤销：放行端口 → 删除规则
             let port_for_undo = new_port.to_string();
             rollback::register_command_undo(
-                format!("删除 UFW 端口 {port_for_undo} 放行规则"),
+                crate::i18n::tr("undo_ufw_delete").replace("{port}", &port_for_undo),
                 vec!["ufw".into(), "delete".into(), "allow".into(), port_for_undo],
             );
             let _ = Command::new("ufw")
@@ -246,7 +244,9 @@ impl HardeningStep for SshPortChangeStep {
         Ok(StepResult {
             kind: StepKind::SshPortChange,
             changes_made: true,
-            message: format!("SSH 端口已修改为 {new_port}（{})", result.message),
+            message: crate::i18n::tr("result_ssh_port_set")
+                .replace("{port}", &new_port.to_string())
+                .replace("{msg}", &result.message),
         })
     }
 }
@@ -286,7 +286,7 @@ impl HardeningStep for SshPasswordAuthStep {
         Ok(StepResult {
             kind: StepKind::SshPasswordAuth,
             changes_made: true,
-            message: "密码登录已禁用（仅允许密钥登录）".into(),
+            message: crate::i18n::tr("result_pw_auth_disabled").into(),
         })
     }
 }
@@ -330,7 +330,7 @@ impl HardeningStep for SshKeySetupStep {
                 let home = system::home_dir(username);
                 // 注册撤销：删除生成的密钥文件（使用动态 home 路径）
                 rollback::register_command_undo(
-                    format!("删除 {username_undo} 的密钥文件"),
+                    crate::i18n::tr("undo_key_delete").replace("{user}", &username_undo),
                     vec![
                         "rm".into(),
                         "-f".into(),
@@ -339,12 +339,11 @@ impl HardeningStep for SshKeySetupStep {
                     ],
                 );
                 let pub_key_path = system::generate_ssh_keypair(username)?;
-                let msg = format!(
-                    "ED25519 密钥对已生成\n  私钥: {}\n  公钥: {}.pub\n  ⚠️  私钥无密码短语保护，建议手动加密：ssh-keygen -p -f {}\n  请立即复制私钥并安全保存！",
-                    pub_key_path.trim_end_matches(".pub"),
-                    pub_key_path,
-                    pub_key_path.trim_end_matches(".pub"),
-                );
+                let priv_path = pub_key_path.trim_end_matches(".pub");
+                let msg = crate::i18n::tr("result_key_generated")
+                    .replace("{priv}", priv_path)
+                    .replace("{pub}", &pub_key_path)
+                    .replace("{key}", priv_path);
                 Ok(StepResult {
                     kind: StepKind::SshKeySetup,
                     changes_made: true,
@@ -356,7 +355,7 @@ impl HardeningStep for SshKeySetupStep {
                 Ok(StepResult {
                     kind: StepKind::SshKeySetup,
                     changes_made: true,
-                    message: format!("公钥已添加到 {username} 的 authorized_keys"),
+                    message: crate::i18n::tr("result_key_pasted").replace("{user}", username),
                 })
             }
         }
@@ -402,12 +401,12 @@ impl HardeningStep for UfwStep {
         // 操作成功后注册撤销（先删除端口规则；如果之前未启用则再关闭 UFW）
         let port_for_undo = port.to_string();
         rollback::register_command_undo(
-            format!("删除 UFW 端口 {port_for_undo} 规则"),
+            crate::i18n::tr("undo_ufw_delete").replace("{port}", &port_for_undo),
             vec!["ufw".into(), "delete".into(), "allow".into(), port_for_undo],
         );
         if !was_ufw_enabled {
             rollback::register_command_undo(
-                "关闭 UFW 防火墙".into(),
+                crate::i18n::tr("undo_ufw_disable").into(),
                 vec!["ufw".into(), "--force".into(), "disable".into()],
             );
         }
@@ -428,7 +427,7 @@ impl HardeningStep for UfwStep {
         Ok(StepResult {
             kind: StepKind::Ufw,
             changes_made: true,
-            message: format!("UFW 已启用，SSH 端口 {port} 已放行"),
+            message: crate::i18n::tr("result_ufw_enabled").replace("{port}", &port.to_string()),
         })
     }
 }
@@ -480,10 +479,10 @@ impl HardeningStep for Fail2banStep {
 
             // 安装成功后注册撤销
             rollback::register_command_undo(
-                "停止 fail2ban 服务".into(),
+                crate::i18n::tr("undo_cmd").replace("{desc}", "stop fail2ban").into(),
                 vec!["systemctl".into(), "stop".into(), "fail2ban".into()],
             );
-            rollback::register_package_remove("删除 fail2ban".into(), "fail2ban".into());
+            rollback::register_package_remove(crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "fail2ban").into(), "fail2ban".into());
         }
 
         // 配置监狱规则（使用 SSH 端口）
@@ -498,7 +497,7 @@ impl HardeningStep for Fail2banStep {
         Ok(StepResult {
             kind: StepKind::Fail2ban,
             changes_made: true,
-            message: format!("Fail2ban 已安装并运行，SSH 端口 {port} 已加入监控"),
+            message: crate::i18n::tr("result_fail2ban_installed").replace("{port}", &port.to_string()),
         })
     }
 }
@@ -546,7 +545,7 @@ impl HardeningStep for AutoUpdatesStep {
 
         // 安装成功后注册撤销
         rollback::register_command_undo(
-            "停止 unattended-upgrades 服务".into(),
+            crate::i18n::tr("undo_cmd").replace("{desc}", "stop unattended-upgrades").into(),
             vec![
                 "systemctl".into(),
                 "stop".into(),
@@ -554,7 +553,7 @@ impl HardeningStep for AutoUpdatesStep {
             ],
         );
         rollback::register_package_remove(
-            "删除 unattended-upgrades".into(),
+            crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "unattended-upgrades").into(),
             "unattended-upgrades".into(),
         );
 
@@ -626,7 +625,7 @@ impl HardeningStep for SecurityScanStep {
         }
 
         // 安装完成后注册撤销（无论成功与否，实际在安装后注册）
-        rollback::register_package_remove("卸载 lynis".into(), "lynis".into());
+        rollback::register_package_remove(crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "lynis").into(), "lynis".into());
 
         if !system::which("lynis") {
             return Ok(StepResult {
@@ -693,7 +692,7 @@ impl HardeningStep for LogAuditStep {
             if system::which("logwatch") {
                 installed.push("logwatch");
                 // 安装成功后注册撤销
-                rollback::register_package_remove("卸载 logwatch".into(), "logwatch".into());
+                rollback::register_package_remove(crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "logwatch").into(), "logwatch".into());
             }
         } else {
             installed.push("logwatch");
@@ -709,7 +708,7 @@ impl HardeningStep for LogAuditStep {
             if system::which("aide") {
                 installed.push("aide");
                 // 安装成功后注册撤销
-                rollback::register_package_remove("卸载 aide".into(), "aide".into());
+                rollback::register_package_remove(crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "aide").into(), "aide".into());
             }
         } else {
             installed.push("aide");
@@ -828,7 +827,7 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
     // 注册撤销：从备份恢复原文件
     let original_path = path.to_string_lossy().to_string();
     rollback::register_file_backup(
-        format!("恢复 sshd_config（{key}）"),
+        crate::i18n::tr("undo_file_restore").replace("{key}", key),
         backup.clone(),
         original_path,
     );

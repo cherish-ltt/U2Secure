@@ -589,7 +589,7 @@ fn execute_batch(
                     });
                 }
                 app.results.push(result);
-                orchestrator.logger.log_operation("完成", kind.label());
+                orchestrator.logger.log_operation(crate::i18n::tr("log_step_complete"), kind.label());
             }
             Err(e) => {
                 mark_step_state(app, kind, StepExecState::Failure);
@@ -605,12 +605,12 @@ fn execute_batch(
                 app.results.push(err_result);
                 orchestrator
                     .logger
-                    .log_operation("失败", &format!("{}: {e}", kind.label()));
+                    .log_operation(crate::i18n::tr("log_step_failed"), &format!("{}: {e}", kind.label()));
 
                 // 自动回退
                 orchestrator
                     .logger
-                    .log("[回退] 步骤失败，自动回退所有已注册的修改");
+                    .log(crate::i18n::tr("log_rollback_auto"));
                 rollback::undo_all();
 
                 app.progress = (i + 1, total);
@@ -643,7 +643,7 @@ fn execute_single(
         None => {
             app.logs.push(LogEntry {
                 icon: "❌",
-                message: format!("未找到步骤: {}", kind.label()),
+                message: crate::i18n::tr("tui_exec_failed").replace("{err}", kind.label()),
             });
             return Ok(());
         }

@@ -30,12 +30,12 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     let selected_steps = step_selection(&report);
 
     if selected_steps.is_empty() {
-        println!("\n{} 未选择任何步骤，退出。", "ℹ️".yellow());
+        println!("\n{} {}", "ℹ️".yellow(), crate::i18n::tr("cli_no_selection"));
         return;
     }
 
     // ── 为每个需要交互的步骤收集输入 ──
-    println!("\n{} 开始收集配置参数...\n", "📝".bright_blue());
+    println!("\n{} {}\n", "📝".bright_blue(), crate::i18n::tr("cli_collecting"));
 
     // 确认后再收集交互输入
     println!("\n{} 以下步骤将被执行：", "📋".bright_blue());
@@ -45,7 +45,7 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     }
 
     if !Confirm::new()
-        .with_prompt("是否继续？")
+        .with_prompt(crate::i18n::tr("cli_confirm"))
         .default(false)
         .interact()
         .unwrap_or(false)
@@ -82,7 +82,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 }
 
                 if !Confirm::new()
-                    .with_prompt("是否创建新的管理用户？")
+                    .with_prompt(crate::i18n::tr("cli_create_user"))
                     .default(true)
                     .interact()
                     .unwrap_or(false)
@@ -91,19 +91,19 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 }
 
                 let username: String = Input::new()
-                    .with_prompt("请输入新用户名")
+                    .with_prompt(crate::i18n::tr("cli_username_prompt"))
                     .validate_with(|input: &String| -> Result<(), &str> {
                         if input.is_empty() {
-                            return Err("用户名不能为空");
+                            return Err(crate::i18n::tr("cli_username_empty"));
                         }
                         if system::user_exists(input) {
-                            return Err("用户已存在");
+                            return Err(crate::i18n::tr("cli_username_exists"));
                         }
                         if !input
                             .chars()
                             .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
                         {
-                            return Err("用户名只能包含字母、数字、- 和 _");
+                            return Err(crate::i18n::tr("cli_username_invalid"));
                         }
                         Ok(())
                     })
@@ -111,7 +111,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                     .unwrap_or_else(|_| "admin".into());
 
                 let lock_pw = Confirm::new()
-                    .with_prompt("锁定密码（强制密钥登录）？")
+                    .with_prompt(crate::i18n::tr("cli_lock_pw"))
                     .default(true)
                     .interact()
                     .unwrap_or(true);
@@ -131,7 +131,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                     "{} 当前 SSH 端口: {}",
                     "ℹ️".yellow(),
                     if current_port == 22 {
-                        "22（默认）".red().to_string()
+                        crate::i18n::tr("cli_default_port").red().to_string()
                     } else {
                         current_port.to_string().green().to_string()
                     }
@@ -139,15 +139,15 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 println!("{} 建议端口: {}", "💡".bright_blue(), suggested);
 
                 let port_str: String = Input::new()
-                    .with_prompt("请输入新 SSH 端口（输入 0 跳过）")
+                    .with_prompt(crate::i18n::tr("cli_port_prompt"))
                     .default(suggested.to_string())
                     .validate_with(|input: &String| -> Result<(), &str> {
                         if input == "0" {
                             return Ok(());
                         }
-                        let port: u16 = input.parse().map_err(|_| "请输入有效数字")?;
+                        let port: u16 = input.parse().map_err(|_| crate::i18n::tr("cli_port_invalid"))?;
                         if port == 0 {
-                            return Err("端口 0 无效");
+                            return Err(crate::i18n::tr("cli_port_zero"));
                         }
                         Ok(())
                     })
@@ -175,16 +175,16 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                         "ℹ️".yellow()
                     );
                     let manual: String = Input::new()
-                        .with_prompt("目标用户名")
+                        .with_prompt(crate::i18n::tr("cli_user_prompt"))
                         .validate_with(|input: &String| -> Result<(), &str> {
                             if input.is_empty() {
-                                return Err("用户名不能为空");
+                                return Err(crate::i18n::tr("cli_username_empty"));
                             }
                             if !input
                                 .chars()
                                 .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
                             {
-                                return Err("用户名只能包含字母、数字、- 和 _");
+                                return Err(crate::i18n::tr("cli_username_invalid"));
                             }
                             Ok(())
                         })
@@ -199,7 +199,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                     users[0].clone()
                 } else {
                     let selection = Select::new()
-                        .with_prompt("选择要设置密钥的用户")
+                        .with_prompt(crate::i18n::tr("cli_select_user"))
                         .items(&users)
                         .default(0)
                         .interact()
@@ -231,7 +231,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                     }
                     1 => {
                         let pub_key: String = Input::new()
-                            .with_prompt("请粘贴公钥内容（ssh-ed25519 AAA...）")
+                            .with_prompt(crate::i18n::tr("cli_key_prompt"))
                             .interact()
                             .unwrap_or_default();
 
