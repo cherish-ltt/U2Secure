@@ -647,12 +647,6 @@ impl HardeningStep for SecurityScanStep {
             }
         }
 
-        // 安装完成后注册撤销（无论成功与否，实际在安装后注册）
-        rollback::register_package_remove(
-            crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "lynis"),
-            "lynis".into(),
-        );
-
         if !system::which("lynis") {
             return Ok(StepResult {
                 kind: StepKind::SecurityScan,
@@ -660,6 +654,12 @@ impl HardeningStep for SecurityScanStep {
                 message: crate::i18n::tr("result_lynis_fail").into(),
             });
         }
+
+        // 安装成功后注册撤销
+        rollback::register_package_remove(
+            crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "lynis"),
+            "lynis".into(),
+        );
 
         // 执行 lynis 审计（仅 system audit，不需要交互）
         let output = Command::new("lynis")
