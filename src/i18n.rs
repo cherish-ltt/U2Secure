@@ -178,6 +178,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "err_backup" => "备份失败",
         "err_read" => "读取失败",
         "err_write" => "写入失败",
+        "err_setup_signal" => "无法注册 Ctrl+C 信号处理器",
 
         // ── 应用层（步骤执行结果） ──
         "result_sys_updated" => "系统更新完成",
@@ -863,4 +864,6 @@ fn zh_tw(key: &str) -> Option<&'static str> {
 
         _ => return None,
     })
+}
+})
 }
