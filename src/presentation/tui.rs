@@ -372,12 +372,21 @@ fn run_app(
                                     }
                                     StepKind::SshKeySetup => {
                                         let users = system::detect_sudo_users();
-                                        if users.is_empty() {
+                                        let username = if users.is_empty() {
+                                            // 无 sudo 用户：弹窗让用户输入
                                             app.popup = Some(Popup::SshKeyUsername {
                                                 value: String::new(),
                                             });
                                             continue;
-                                        }
+                                        } else {
+                                            // 有 sudo 用户：自动取第一个，直接到操作选择
+                                            users[0].clone()
+                                        };
+                                        app.popup = Some(Popup::SshKeyAction {
+                                            username,
+                                            selected: 0,
+                                        });
+                                        continue;
                                     }
                                     StepKind::SshPortChange => {
                                         app.popup = Some(Popup::SshPortInput {
