@@ -3,6 +3,9 @@ mod domain;
 mod infrastructure;
 mod presentation;
 
+use u2secure::i18n;
+use u2secure::i18n::{Lang};
+
 use application::orchestrator::HardeningOrchestrator;
 use infrastructure::rollback;
 use presentation::{cli, tui};
@@ -20,7 +23,7 @@ impl ModeChoice {
                 "-c" | "--cli" => return Self::Cli,
                 "-t" | "--tui" => return Self::Tui,
                 other => {
-                    eprintln!("未知参数: {other}，使用 -c (CLI) 或 -t (TUI)");
+                    eprintln!("{}", i18n::translate("unknown_arg").replace("{arg}", other));
                     std::process::exit(1);
                 }
             }
@@ -29,16 +32,30 @@ impl ModeChoice {
     }
 
     fn interactive() -> Self {
-        let options = &["CLI 模式（传统交互式）", "TUI 模式（终端图形界面）"];
-        let selection = dialoguer::Select::new()
-            .with_prompt("请选择启动模式")
-            .items(options)
-            .default(1)
+        // 语言选择
+        let lang_options: Vec<&str> = Lang::all()
+            .iter()
+            .map(|l| l.label())
+            .collect();
+        let lang_sel = dialoguer::Select::new()
+            .with_prompt(i18n::translate("select_language"))
+            .items(&lang_options)
+            .default(0)
             .interact()
-            .unwrap_or(1);
+            .unwrap_or(0);
+        i18n::init(Lang::all()[lang_sel]);
+
+        // 模式选择
+        let options = &[i18n::translate("mode_tui"), i18n::translate("mode_cli")];
+        let selection = dialoguer::Select::new()
+            .with_prompt(i18n::translate("select_mode"))
+            .items(options)
+            .default(0)
+            .interact()
+            .unwrap_or(0);
         match selection {
-            0 => Self::Cli,
-            _ => Self::Tui,
+            0 => Self::Tui,
+            _ => Self::Cli,
         }
     }
 }
@@ -53,7 +70,7 @@ fn main() {
         ModeChoice::Cli => cli::run_interactive(&orchestrator),
         ModeChoice::Tui => {
             if let Err(e) = tui::run_tui(&orchestrator) {
-                eprintln!("\n TUI 错误: {e}");
+                eprintln!("\n TUI {e}");
             }
         }
     }

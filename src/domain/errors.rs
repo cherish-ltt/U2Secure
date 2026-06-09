@@ -19,11 +19,19 @@ pub enum DomainError {
 impl fmt::Display for DomainError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PermissionDenied => write!(f, "需要 root 权限运行"),
-            Self::SystemCommandFailed(msg) => write!(f, "系统命令执行失败: {msg}"),
-            Self::ParseError(msg) => write!(f, "配置解析错误: {msg}"),
-            Self::PreconditionFailed(msg) => write!(f, "前置条件不满足: {msg}"),
-            Self::UserAborted => write!(f, "用户取消操作"),
+            Self::PermissionDenied => write!(f, "{}", crate::i18n::tr("err_permission_denied")),
+            Self::SystemCommandFailed(msg) => {
+                write!(f, "{}", crate::i18n::tr("err_cmd_failed").replace("{msg}", msg))
+            }
+            Self::ParseError(msg) => {
+                write!(f, "{}", crate::i18n::tr("err_parse_error").replace("{msg}", msg))
+            }
+            Self::PreconditionFailed(msg) => write!(
+                f,
+                "{}",
+                crate::i18n::tr("err_precondition_failed").replace("{msg}", msg)
+            ),
+            Self::UserAborted => write!(f, "{}", crate::i18n::tr("err_user_aborted")),
         }
     }
 }
