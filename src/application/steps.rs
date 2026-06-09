@@ -547,7 +547,7 @@ impl HardeningStep for AutoUpdatesStep {
         let pm = system::detect_package_manager();
         if pm != PackageManager::Apt {
             return Err(DomainError::SystemCommandFailed(
-                "自动安全更新仅支持 Debian/Ubuntu".into(),
+                crate::i18n::tr("err_auto_update_only_debian").into(),
             ));
         }
 
@@ -786,12 +786,18 @@ impl HardeningStep for RestartSshStep {
         let check = Command::new("sshd")
             .args(["-t"])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("sshd 语法检查失败: {e}")))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_sshd_check")
+                ))
+            })?;
 
         if !check.status.success() {
             let stderr = String::from_utf8_lossy(&check.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "sshd_config 语法错误，请检查配置: {stderr}"
+                "{}: {stderr}",
+                crate::i18n::tr("err_sshd_syntax")
             )));
         }
 
@@ -800,12 +806,18 @@ impl HardeningStep for RestartSshStep {
             .args(["restart", "sshd"])
             .output()
             .or_else(|_| Command::new("systemctl").args(["restart", "ssh"]).output())
-            .map_err(|e| DomainError::SystemCommandFailed(format!("重启 SSH 服务失败: {e}")))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_ssh_restart")
+                ))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "重启 SSH 服务失败: {stderr}"
+                "{}: {stderr}",
+                crate::i18n::tr("err_ssh_restart")
             )));
         }
 
@@ -839,7 +851,9 @@ impl HardeningStep for RestartSshStep {
 fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError> {
     let path = std::path::Path::new("/etc/ssh/sshd_config");
     if !path.exists() {
-        return Err(DomainError::ParseError("sshd_config 不存在".into()));
+        return Err(DomainError::ParseError(
+            crate::i18n::tr("err_sshd_not_found").into(),
+        ));
     }
 
     // 备份
@@ -847,8 +861,12 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
         "/etc/ssh/sshd_config.bak.{}",
         Local::now().format("%Y%m%d%H%M%S")
     );
-    std::fs::copy(path, &backup)
-        .map_err(|e| DomainError::SystemCommandFailed(format!("备份失败: {e}")))?;
+    std::fs::copy(path, &backup).map_err(|e| {
+        DomainError::SystemCommandFailed(format!(
+            "{}: {e}",
+            crate::i18n::tr("err_backup")
+        ))
+    })?;
 
     // 注册撤销：从备份恢复原文件
     let original_path = path.to_string_lossy().to_string();
@@ -858,8 +876,9 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
         original_path,
     );
 
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| DomainError::ParseError(format!("读取失败: {e}")))?;
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        DomainError::ParseError(format!("{}: {e}", crate::i18n::tr("err_read")))
+    })?;
 
     let mut found = false;
     let new_content: Vec<String> = content
@@ -893,6 +912,11 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
         changes_made: true,
         message: crate::i18n::tr("result_sshd_cfg_set")
             .replace("{key}", key)
+            .replace("{value}", value)
+            .replace("{bak}", &backup),
+    })
+}
+ace("{key}", key)
             .replace("{value}", value)
             .replace("{bak}", &backup),
     })
