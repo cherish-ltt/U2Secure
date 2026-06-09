@@ -76,12 +76,20 @@ struct LogEntry {
 
 /// TUI 弹窗状态（支持多步流程）
 enum Popup {
-    /// 输入用户名
-    UsernameInput { value: String },
-    /// 选择密钥操作
-    KeyActionSelect { username: String, selected: usize },
-    /// 粘贴公钥内容
-    PubKeyInput { username: String, value: String },
+    /// SSH 密钥：输入用户名
+    SshKeyUsername { value: String },
+    /// SSH 密钥：选择操作
+    SshKeyAction { username: String, selected: usize },
+    /// SSH 密钥：粘贴公钥
+    SshKeyPaste { username: String, value: String },
+
+    /// 创建用户：输入用户名
+    CreateUserUsername { value: String },
+    /// 创建用户：是否锁定密码
+    CreateUserLockPw { username: String, lock: bool },
+
+    /// 修改 SSH 端口：输入端口号
+    SshPortInput { value: String },
 }
 
 /// TUI 模式
@@ -176,14 +184,14 @@ fn run_app(
                 && key.kind == KeyEventKind::Press
             {
                 match *p {
-                    Popup::UsernameInput { ref mut value } => match key.code {
+                    Popup::SshKeyUsername { ref mut value } => match key.code {
                         KeyCode::Char(c) => value.push(c),
                         KeyCode::Backspace => {
                             value.pop();
                         }
                         KeyCode::Enter if !value.is_empty() => {
                             let username = value.clone();
-                            app.popup = Some(Popup::KeyActionSelect {
+                            app.popup = Some(Popup::SshKeyAction {
                                 username,
                                 selected: 0,
                             });
@@ -191,7 +199,7 @@ fn run_app(
                         KeyCode::Esc => app.popup = None,
                         _ => {}
                     },
-                    Popup::KeyActionSelect {
+                    Popup::SshKeyAction {
                         ref username,
                         ref mut selected,
                     } => match key.code {
@@ -206,55 +214,99 @@ fn run_app(
                                 let u = username.clone();
                                 app.popup = None;
                                 run_ssh_key_setup(
-                                    app,
-                                    terminal,
-                                    orchestrator,
-                                    u,
+                                    app, terminal, orchestrator, u,
                                     Some(SshKeyAction::GenerateNew),
                                 )?;
                             }
                             1 => {
                                 let u = username.clone();
-                                app.popup = Some(Popup::PubKeyInput {
+                                app.popup = Some(Popup::SshKeyPaste {
                                     username: u,
                                     value: String::new(),
                                 });
                             }
-                            _ => {
-                                // 跳过
-                                app.popup = None;
-                            }
+                            _ => { app.popup = None; }
                         },
                         KeyCode::Esc => app.popup = None,
                         _ => {}
                     },
-                    Popup::PubKeyInput {
+                    Popup::SshKeyPaste {
                         ref username,
                         ref mut value,
                     } => match key.code {
                         KeyCode::Char(c) => value.push(c),
-                        KeyCode::Backspace => {
-                            value.pop();
-                        }
+                        KeyCode::Backspace => { value.pop(); }
                         KeyCode::Enter if !value.is_empty() => {
                             let u = username.clone();
                             let pk = value.clone();
                             app.popup = None;
                             run_ssh_key_setup(
-                                app,
-                                terminal,
-                                orchestrator,
-                                u,
+                                app, terminal, orchestrator, u,
                                 Some(SshKeyAction::PasteKey(pk)),
                             )?;
                         }
                         KeyCode::Esc => {
                             let u = username.clone();
-                            app.popup = Some(Popup::KeyActionSelect {
+                            app.popup = Some(Popup::SshKeyAction {
                                 username: u,
                                 selected: 0,
                             });
                         }
+                        _ => {}
+                    },
+                    // ── 创建用户 ──
+                    Popup::CreateUserUsername { ref mut value } => match key.code {
+                        KeyCode::Char(c) if c.is_alphanumeric() || c == '-' || c == '_' => {
+                            if value.len() < 32 {
+                                value.push(c);
+                            }
+                        }
+                        KeyCode::Backspace => { value.pop(); }
+                        KeyCode::Enter if !value.is_empty() => {
+                            let username = value.clone();
+                            app.popup = Some(Popup::CreateUserLockPw {
+                                username,
+                                lock: true,
+                            });
+                        }
+                        KeyCode::Esc => app.popup = None,
+                        _ => {}
+                    },
+                    Popup::CreateUserLockPw {
+                        ref username,
+                        ref mut lock,
+                    } => match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => *lock = true,
+                        KeyCode::Down | KeyCode::Char('j') => *lock = false,
+                        KeyCode::Enter => {
+                            let u = username.clone();
+                            let l = *lock;
+                            app.popup = None;
+                            run_user_creation(app, terminal, orchestrator, u, l)?;
+                        }
+                        KeyCode::Esc => {
+                            let u = username.clone();
+                            app.popup = Some(Popup::CreateUserUsername { value: u });
+                        }
+                        _ => {}
+                    },
+                    // ── SSH 端口 ──
+                    Popup::SshPortInput { ref mut value } => match key.code {
+                        KeyCode::Char(c) if c.is_ascii_digit() => {
+                            if value.len() < 5 {
+                                value.push(c);
+                            }
+                        }
+                        KeyCode::Backspace => { value.pop(); }
+                        KeyCode::Enter if !value.is_empty() => {
+                            if let Ok(port) = value.parse::<u16>()
+                                && port > 0
+                            {
+                                app.popup = None;
+                                run_ssh_port_change(app, terminal, orchestrator, port)?;
+                            }
+                        }
+                        KeyCode::Esc => app.popup = None,
                         _ => {}
                     },
                 }
@@ -310,15 +362,30 @@ fn run_app(
                             if app.cursor < app.steps.len() {
                                 let kind = app.steps[app.cursor].kind;
 
-                                // SshKeySetup：无 sudo 用户时用 TUI 弹窗
-                                if kind == StepKind::SshKeySetup {
-                                    let users = system::detect_sudo_users();
-                                    if users.is_empty() {
-                                        app.popup = Some(Popup::UsernameInput {
+                                // 单项执行：有交互需求的步骤用 TUI 弹窗
+                                match kind {
+                                    StepKind::UserCreation => {
+                                        app.popup = Some(Popup::CreateUserUsername {
                                             value: String::new(),
                                         });
                                         continue;
                                     }
+                                    StepKind::SshKeySetup => {
+                                        let users = system::detect_sudo_users();
+                                        if users.is_empty() {
+                                            app.popup = Some(Popup::SshKeyUsername {
+                                                value: String::new(),
+                                            });
+                                            continue;
+                                        }
+                                    }
+                                    StepKind::SshPortChange => {
+                                        app.popup = Some(Popup::SshPortInput {
+                                            value: String::new(),
+                                        });
+                                        continue;
+                                    }
+                                    _ => {}
                                 }
 
                                 let params = suspend_for_params(terminal, &[kind], &app.report);
@@ -562,6 +629,56 @@ fn run_ssh_key_setup(
     }
     app.mode = AppMode::Executing;
     execute_single(app, terminal, _orchestrator, StepKind::SshKeySetup, &params)?;
+    app.mode = AppMode::Summary;
+    Ok(())
+}
+
+/// 执行非 root 用户创建（从弹窗流程调用）
+fn run_user_creation(
+    app: &mut TuiApp,
+    terminal: &mut TuiTerminal,
+    _orchestrator: &HardeningOrchestrator,
+    username: String,
+    lock_password: bool,
+) -> anyhow::Result<()> {
+    let params = ExecuteParams {
+        new_username: Some(username.clone()),
+        lock_password,
+        ssh_key_username: Some(username),
+        ssh_key_action: Some(SshKeyAction::GenerateNew),
+        ..Default::default()
+    };
+    app.logs.clear();
+    app.results.clear();
+    app.progress = (0, 1);
+    for s in &mut app.steps {
+        s.state = StepExecState::Idle;
+    }
+    app.mode = AppMode::Executing;
+    execute_single(app, terminal, _orchestrator, StepKind::UserCreation, &params)?;
+    app.mode = AppMode::Summary;
+    Ok(())
+}
+
+/// 执行 SSH 端口修改（从弹窗流程调用）
+fn run_ssh_port_change(
+    app: &mut TuiApp,
+    terminal: &mut TuiTerminal,
+    _orchestrator: &HardeningOrchestrator,
+    port: u16,
+) -> anyhow::Result<()> {
+    let params = ExecuteParams {
+        new_ssh_port: Some(port),
+        ..Default::default()
+    };
+    app.logs.clear();
+    app.results.clear();
+    app.progress = (0, 1);
+    for s in &mut app.steps {
+        s.state = StepExecState::Idle;
+    }
+    app.mode = AppMode::Executing;
+    execute_single(app, terminal, _orchestrator, StepKind::SshPortChange, &params)?;
     app.mode = AppMode::Summary;
     Ok(())
 }
@@ -975,23 +1092,41 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
 
     // 统一弹窗尺寸逻辑
     let (title, height, content_lines, hint_line) = match popup {
-        Popup::UsernameInput { value } => (
+        Popup::SshKeyUsername { value } => (
             " 目标用户名 ",
             5,
             render_username_input(value),
             " Enter 确认  Esc 取消 ",
         ),
-        Popup::KeyActionSelect { selected, .. } => (
+        Popup::SshKeyAction { selected, .. } => (
             " 选择操作 ",
             7,
-            render_action_select(*selected),
+            render_select_options(&["生成新密钥对", "粘贴已有公钥", "跳过"], *selected),
             " ↑↓ 选择  Enter 确认  Esc 取消 ",
         ),
-        Popup::PubKeyInput { value, .. } => (
+        Popup::SshKeyPaste { value, .. } => (
             " 粘贴公钥 ",
             5,
             render_pubkey_input(value),
             " Enter 确认  Esc 返回 ",
+        ),
+        Popup::CreateUserUsername { value } => (
+            " 新用户名 ",
+            5,
+            render_username_input(value),
+            " Enter 确认  Esc 取消 ",
+        ),
+        Popup::CreateUserLockPw { lock, .. } => (
+            " 锁定密码 ",
+            7,
+            render_select_options(&["是 (锁定密码, 强制密钥登录)", "否 (不锁定密码)"], if *lock { 0 } else { 1 }),
+            " ↑↓ 选择  Enter 确认  Esc 返回 ",
+        ),
+        Popup::SshPortInput { value } => (
+            " 新 SSH 端口 ",
+            5,
+            render_port_input(value),
+            " Enter 确认  Esc 取消 ",
         ),
     };
 
@@ -1089,9 +1224,8 @@ fn render_pubkey_input(value: &str) -> Vec<Line<'static>> {
     }
 }
 
-/// 操作选择列表
-fn render_action_select(selected: usize) -> Vec<Line<'static>> {
-    let options = ["生成新密钥对", "粘贴已有公钥", "跳过"];
+/// 通用选项列表渲染
+fn render_select_options(options: &[&'static str], selected: usize) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(vec![Span::raw("")])];
     for (i, opt) in options.iter().enumerate() {
         let prefix = if i == selected { " ▸ " } else { "   " };
@@ -1106,4 +1240,40 @@ fn render_action_select(selected: usize) -> Vec<Line<'static>> {
         ]));
     }
     lines
+}
+
+/// SSH 端口输入框内容
+fn render_port_input(value: &str) -> Vec<Line<'static>> {
+    let current_port = system::detect_ssh_port();
+    if value.is_empty() {
+        vec![
+            Line::from(vec![Span::raw("")]),
+            Line::from(vec![
+                Span::raw("  建议端口: "),
+                Span::styled(
+                    system::random_suggested_port().to_string(),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw("  当前: "),
+                Span::styled(
+                    current_port.to_string(),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("输入 0-65535...", Style::default().dim().fg(Color::Gray)),
+                Span::styled("█", Style::default().fg(Color::Cyan)),
+            ]),
+        ]
+    } else {
+        vec![
+            Line::from(vec![Span::raw("")]),
+            Line::from(vec![
+                Span::raw("  端口: "),
+                Span::styled(value.to_string(), Style::default().fg(Color::White)),
+                Span::styled("█", Style::default().fg(Color::Cyan)),
+            ]),
+        ]
+    }
 }
