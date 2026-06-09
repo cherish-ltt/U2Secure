@@ -4,9 +4,11 @@
 //! - domain: 领域层（纯净，零外部依赖）
 //! - application: 应用层（编排流程）
 //! - infrastructure: 基础设施（系统命令、日志）
-//! - presentation: 表示层（dialoguer 交互式 CLI）
+//! - presentation: 表示层（dialoguer 交互式 CLI / ratatui TUI）
+//! - i18n: 国际化支持
 
 pub mod application;
 pub mod domain;
+pub mod i18n;
 pub mod infrastructure;
 pub mod presentation;

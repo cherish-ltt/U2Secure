@@ -252,63 +252,117 @@ pub fn run_full_audit() -> AuditReport {
     let mut items = vec![];
 
     items.push(if is_root {
-        AuditItem::safe("当前用户权限", "已以 root 运行".into())
+        AuditItem::safe(
+            crate::i18n::tr("audit_root"),
+            crate::i18n::tr("audit_detail_root_ok").into(),
+        )
     } else {
-        AuditItem::missing("当前用户权限", "非 root 用户，需要 root 权限".into())
+        AuditItem::missing(
+            crate::i18n::tr("audit_root"),
+            crate::i18n::tr("audit_detail_root_missing").into(),
+        )
     });
 
     items.push(AuditItem {
-        name: "包管理器",
+        name: crate::i18n::tr("audit_pkg_mgr"),
         status: AuditStatus::Safe,
-        detail: format!("检测到 {}", package_manager.name()),
+        detail: crate::i18n::tr("audit_detail_pkg").replace("{pkg}", package_manager.name()),
     });
 
     items.push(if ssh_port != 22 {
-        AuditItem::safe("SSH 端口", format!("已自定义为 {ssh_port}"))
+        AuditItem::safe(
+            crate::i18n::tr("audit_ssh_port"),
+            crate::i18n::tr("audit_detail_port_safe").replace("{port}", &ssh_port.to_string()),
+        )
     } else {
-        AuditItem::missing("SSH 端口", "默认端口 22".into())
+        AuditItem::missing(
+            crate::i18n::tr("audit_ssh_port"),
+            crate::i18n::tr("audit_detail_port_missing").into(),
+        )
     });
 
     items.push(if password_auth_disabled {
-        AuditItem::safe("密码登录", "已禁用".into())
+        AuditItem::safe(
+            crate::i18n::tr("audit_password_auth"),
+            crate::i18n::tr("audit_detail_pw_disabled").into(),
+        )
     } else {
-        AuditItem::missing("密码登录", "密码登录未禁用".into())
+        AuditItem::missing(
+            crate::i18n::tr("audit_password_auth"),
+            crate::i18n::tr("audit_detail_pw_missing").into(),
+        )
     });
 
     items.push(if root_login_disabled {
-        AuditItem::safe("root 登录", "已禁止".into())
+        AuditItem::safe(
+            crate::i18n::tr("audit_root_login"),
+            crate::i18n::tr("audit_detail_root_disabled").into(),
+        )
     } else {
-        AuditItem::missing("root 登录", "root 登录未禁止".into())
+        AuditItem::missing(
+            crate::i18n::tr("audit_root_login"),
+            crate::i18n::tr("audit_detail_root_missing_cfg").into(),
+        )
     });
 
     items.push(if sudo_users.is_empty() {
-        AuditItem::missing("sudo 用户", "未检测到非 root 管理用户".into())
+        AuditItem::missing(
+            crate::i18n::tr("audit_sudo_users"),
+            crate::i18n::tr("audit_detail_sudo_missing").into(),
+        )
     } else {
-        AuditItem::safe("sudo 用户", format!("已存在: {}", sudo_users.join(", ")))
+        AuditItem::safe(
+            crate::i18n::tr("audit_sudo_users"),
+            crate::i18n::tr("audit_detail_sudo_ok").replace("{users}", &sudo_users.join(", ")),
+        )
     });
 
     items.push(if fail2ban_installed {
-        AuditItem::safe("Fail2ban", "已安装".into())
+        AuditItem::safe(
+            crate::i18n::tr("audit_fail2ban"),
+            crate::i18n::tr("audit_detail_fb_installed").into(),
+        )
     } else {
-        AuditItem::missing("Fail2ban", "未安装".into())
+        AuditItem::missing(
+            crate::i18n::tr("audit_fail2ban"),
+            crate::i18n::tr("audit_detail_fb_missing").into(),
+        )
     });
 
     items.push(if ufw_enabled {
-        AuditItem::safe("UFW 防火墙", "已启用".into())
+        AuditItem::safe(
+            crate::i18n::tr("audit_ufw"),
+            crate::i18n::tr("audit_detail_ufw_enabled").into(),
+        )
     } else {
-        AuditItem::missing("UFW 防火墙", "未启用".into())
+        AuditItem::missing(
+            crate::i18n::tr("audit_ufw"),
+            crate::i18n::tr("audit_detail_ufw_missing").into(),
+        )
     });
 
     items.push(if auto_updates_enabled {
-        AuditItem::safe("自动安全更新", "已启用".into())
+        AuditItem::safe(
+            crate::i18n::tr("audit_auto_updates"),
+            crate::i18n::tr("audit_detail_au_enabled").into(),
+        )
     } else {
-        AuditItem::missing("自动安全更新", "未启用".into())
+        AuditItem::missing(
+            crate::i18n::tr("audit_auto_updates"),
+            crate::i18n::tr("audit_detail_au_missing").into(),
+        )
     });
 
     items.push(if system_up_to_date {
-        AuditItem::safe("系统更新状态", "缓存未过期".into())
+        AuditItem::safe(
+            crate::i18n::tr("audit_sys_update"),
+            crate::i18n::tr("audit_detail_sys_uptodate").into(),
+        )
     } else {
-        AuditItem::needs_update("系统更新状态", "缓存已过期，建议更新".into())
+        AuditItem::needs_update(
+            crate::i18n::tr("audit_sys_update"),
+            crate::i18n::tr("audit_detail_sys_needs_update").into(),
+        )
     });
 
     AuditReport {

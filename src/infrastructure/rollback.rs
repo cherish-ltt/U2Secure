@@ -21,7 +21,7 @@ pub fn init_signal_handler() {
     ctrlc::set_handler(move || {
         INTERRUPTED.store(true, Ordering::SeqCst);
     })
-    .expect("设置 Ctrl+C 处理器失败");
+    .unwrap_or_else(|_| panic!("{}", crate::i18n::tr("err_setup_signal")));
 }
 
 /// 注册一个撤销操作
@@ -45,7 +45,7 @@ pub fn undo_all() {
     if let Some(mut actions) = actions {
         actions.reverse();
         for action in actions {
-            eprintln!("  ⮐  回退: {}", action.description);
+            eprintln!("  ⮐ {}", action.description);
             action.execute();
         }
     }
@@ -89,7 +89,7 @@ pub fn register_package_remove(description: String, package: String) {
 /// 注册用户删除撤销操作
 pub fn register_user_remove(username: String) {
     register_undo(UndoAction::new(
-        format!("删除用户 '{username}'"),
+        crate::i18n::tr("undo_user_remove").replace("{user}", &username),
         Box::new(move || {
             let _ = std::process::Command::new("userdel")
                 .args(["-r", &username])

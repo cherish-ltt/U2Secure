@@ -23,18 +23,18 @@ pub enum StepKind {
 impl StepKind {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::SystemUpdate => "系统更新",
-            Self::UserCreation => "非 root 用户创建",
-            Self::SshRootLogin => "禁止 root SSH 登录",
-            Self::SshPortChange => "SSH 端口修改",
-            Self::SshPasswordAuth => "禁止密码登录",
-            Self::SshKeySetup => "ED25519 密钥设置",
-            Self::Ufw => "UFW 防火墙配置",
-            Self::Fail2ban => "Fail2ban 安装配置",
-            Self::AutoUpdates => "自动安全更新",
-            Self::SecurityScan => "安全扫描",
-            Self::LogAudit => "日志与审计增强",
-            Self::RestartSsh => "SSH 服务重启与验证",
+            Self::SystemUpdate => crate::i18n::tr("step_system_update"),
+            Self::UserCreation => crate::i18n::tr("step_user_creation"),
+            Self::SshRootLogin => crate::i18n::tr("step_ssh_root_login"),
+            Self::SshPortChange => crate::i18n::tr("step_ssh_port_change"),
+            Self::SshPasswordAuth => crate::i18n::tr("step_ssh_password_auth"),
+            Self::SshKeySetup => crate::i18n::tr("step_ssh_key_setup"),
+            Self::Ufw => crate::i18n::tr("step_ufw"),
+            Self::Fail2ban => crate::i18n::tr("step_fail2ban"),
+            Self::AutoUpdates => crate::i18n::tr("step_auto_updates"),
+            Self::SecurityScan => crate::i18n::tr("step_security_scan"),
+            Self::LogAudit => crate::i18n::tr("step_log_audit"),
+            Self::RestartSsh => crate::i18n::tr("step_restart_ssh"),
         }
     }
 

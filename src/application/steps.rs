@@ -70,7 +70,7 @@ impl HardeningStep for SystemUpdateStep {
         let pm = system::detect_package_manager();
         if pm == PackageManager::Unknown {
             return Err(DomainError::SystemCommandFailed(
-                "无法识别的包管理器".into(),
+                crate::i18n::tr("err_unknown_pkg_mgr").into(),
             ));
         }
 
@@ -78,11 +78,17 @@ impl HardeningStep for SystemUpdateStep {
         let output = Command::new(update_cmd[0])
             .args(&update_cmd[1..])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("update 失败: {e}")))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_update_failed")
+                ))
+            })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "update 失败: {stderr}"
+                "{}: {stderr}",
+                crate::i18n::tr("err_update_failed")
             )));
         }
 
@@ -90,18 +96,24 @@ impl HardeningStep for SystemUpdateStep {
         let output = Command::new(upgrade_cmd[0])
             .args(&upgrade_cmd[1..])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("upgrade 失败: {e}")))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_upgrade_failed")
+                ))
+            })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "upgrade 失败: {stderr}"
+                "{}: {stderr}",
+                crate::i18n::tr("err_upgrade_failed")
             )));
         }
 
         Ok(StepResult {
             kind: StepKind::SystemUpdate,
             changes_made: true,
-            message: "系统更新完成".into(),
+            message: crate::i18n::tr("result_sys_updated").into(),
         })
     }
 }
@@ -127,15 +139,14 @@ impl HardeningStep for UserCreationStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        let username = params
-            .new_username
-            .as_deref()
-            .ok_or_else(|| DomainError::PreconditionFailed("未提供用户名".into()))?;
+        let username = params.new_username.as_deref().ok_or_else(|| {
+            DomainError::PreconditionFailed(crate::i18n::tr("err_no_username").into())
+        })?;
 
         if system::user_exists(username) {
-            return Err(DomainError::PreconditionFailed(format!(
-                "用户 '{username}' 已存在"
-            )));
+            return Err(DomainError::PreconditionFailed(
+                crate::i18n::tr("err_user_exists").replace("{user}", username),
+            ));
         }
 
         system::create_system_user(username)?;
@@ -159,9 +170,7 @@ impl HardeningStep for UserCreationStep {
         Ok(StepResult {
             kind: StepKind::UserCreation,
             changes_made: true,
-            message: format!(
-                "用户 '{username}' 已创建并加入 sudo 组，密钥已设置（私钥: ~/.ssh/id_ed25519）"
-            ),
+            message: crate::i18n::tr("result_user_created").replace("{user}", username),
         })
     }
 }
@@ -191,7 +200,7 @@ impl HardeningStep for SshRootLoginStep {
         let sudo_users = system::detect_sudo_users();
         if sudo_users.is_empty() {
             return Err(DomainError::PreconditionFailed(
-                "禁止 root 登录前请先创建 sudo 用户".into(),
+                crate::i18n::tr("err_no_sudo_before_root").into(),
             ));
         }
 
@@ -220,12 +229,14 @@ impl HardeningStep for SshPortChangeStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        let new_port = params
-            .new_ssh_port
-            .ok_or_else(|| DomainError::PreconditionFailed("未提供新 SSH 端口".into()))?;
+        let new_port = params.new_ssh_port.ok_or_else(|| {
+            DomainError::PreconditionFailed(crate::i18n::tr("err_no_ssh_port").into())
+        })?;
 
         if new_port == 0 {
-            return Err(DomainError::PreconditionFailed("端口 0 无效".into()));
+            return Err(DomainError::PreconditionFailed(
+                crate::i18n::tr("err_port_zero").into(),
+            ));
         }
 
         let result = modify_sshd_config("Port", &new_port.to_string())?;
@@ -235,7 +246,7 @@ impl HardeningStep for SshPortChangeStep {
             // 注册撤销：放行端口 → 删除规则
             let port_for_undo = new_port.to_string();
             rollback::register_command_undo(
-                format!("删除 UFW 端口 {port_for_undo} 放行规则"),
+                crate::i18n::tr("undo_ufw_delete").replace("{port}", &port_for_undo),
                 vec!["ufw".into(), "delete".into(), "allow".into(), port_for_undo],
             );
             let _ = Command::new("ufw")
@@ -246,7 +257,9 @@ impl HardeningStep for SshPortChangeStep {
         Ok(StepResult {
             kind: StepKind::SshPortChange,
             changes_made: true,
-            message: format!("SSH 端口已修改为 {new_port}（{})", result.message),
+            message: crate::i18n::tr("result_ssh_port_set")
+                .replace("{port}", &new_port.to_string())
+                .replace("{msg}", &result.message),
         })
     }
 }
@@ -276,7 +289,7 @@ impl HardeningStep for SshPasswordAuthStep {
         let sudo_users = system::detect_sudo_users();
         if sudo_users.is_empty() {
             return Err(DomainError::PreconditionFailed(
-                "禁止密码登录前请先创建 sudo 用户".into(),
+                crate::i18n::tr("err_no_sudo_before_pw").into(),
             ));
         }
 
@@ -286,7 +299,7 @@ impl HardeningStep for SshPasswordAuthStep {
         Ok(StepResult {
             kind: StepKind::SshPasswordAuth,
             changes_made: true,
-            message: "密码登录已禁用（仅允许密钥登录）".into(),
+            message: crate::i18n::tr("result_pw_auth_disabled").into(),
         })
     }
 }
@@ -314,15 +327,13 @@ impl HardeningStep for SshKeySetupStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        let username = params
-            .ssh_key_username
-            .as_deref()
-            .ok_or_else(|| DomainError::PreconditionFailed("未提供目标用户名".into()))?;
+        let username = params.ssh_key_username.as_deref().ok_or_else(|| {
+            DomainError::PreconditionFailed(crate::i18n::tr("err_no_target_user").into())
+        })?;
 
-        let action = params
-            .ssh_key_action
-            .as_ref()
-            .ok_or_else(|| DomainError::PreconditionFailed("未选择密钥操作".into()))?;
+        let action = params.ssh_key_action.as_ref().ok_or_else(|| {
+            DomainError::PreconditionFailed(crate::i18n::tr("err_no_key_action").into())
+        })?;
 
         let username_undo = username.to_string();
         match action {
@@ -330,7 +341,7 @@ impl HardeningStep for SshKeySetupStep {
                 let home = system::home_dir(username);
                 // 注册撤销：删除生成的密钥文件（使用动态 home 路径）
                 rollback::register_command_undo(
-                    format!("删除 {username_undo} 的密钥文件"),
+                    crate::i18n::tr("undo_key_delete").replace("{user}", &username_undo),
                     vec![
                         "rm".into(),
                         "-f".into(),
@@ -339,12 +350,11 @@ impl HardeningStep for SshKeySetupStep {
                     ],
                 );
                 let pub_key_path = system::generate_ssh_keypair(username)?;
-                let msg = format!(
-                    "ED25519 密钥对已生成\n  私钥: {}\n  公钥: {}.pub\n  ⚠️  私钥无密码短语保护，建议手动加密：ssh-keygen -p -f {}\n  请立即复制私钥并安全保存！",
-                    pub_key_path.trim_end_matches(".pub"),
-                    pub_key_path,
-                    pub_key_path.trim_end_matches(".pub"),
-                );
+                let priv_path = pub_key_path.trim_end_matches(".pub");
+                let msg = crate::i18n::tr("result_key_generated")
+                    .replace("{priv}", priv_path)
+                    .replace("{pub}", &pub_key_path)
+                    .replace("{key}", priv_path);
                 Ok(StepResult {
                     kind: StepKind::SshKeySetup,
                     changes_made: true,
@@ -356,7 +366,7 @@ impl HardeningStep for SshKeySetupStep {
                 Ok(StepResult {
                     kind: StepKind::SshKeySetup,
                     changes_made: true,
-                    message: format!("公钥已添加到 {username} 的 authorized_keys"),
+                    message: crate::i18n::tr("result_key_pasted").replace("{user}", username),
                 })
             }
         }
@@ -391,23 +401,29 @@ impl HardeningStep for UfwStep {
         let output = Command::new("ufw")
             .args(["allow", &port.to_string()])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("ufw allow 失败: {e}")))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_ufw_allow_failed")
+                ))
+            })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "ufw allow 失败: {stderr}"
+                "{}: {stderr}",
+                crate::i18n::tr("err_ufw_allow_failed")
             )));
         }
 
         // 操作成功后注册撤销（先删除端口规则；如果之前未启用则再关闭 UFW）
         let port_for_undo = port.to_string();
         rollback::register_command_undo(
-            format!("删除 UFW 端口 {port_for_undo} 规则"),
+            crate::i18n::tr("undo_ufw_delete").replace("{port}", &port_for_undo),
             vec!["ufw".into(), "delete".into(), "allow".into(), port_for_undo],
         );
         if !was_ufw_enabled {
             rollback::register_command_undo(
-                "关闭 UFW 防火墙".into(),
+                crate::i18n::tr("undo_ufw_disable").into(),
                 vec!["ufw".into(), "--force".into(), "disable".into()],
             );
         }
@@ -416,11 +432,17 @@ impl HardeningStep for UfwStep {
             let output = Command::new("ufw")
                 .args(["--force", "enable"])
                 .output()
-                .map_err(|e| DomainError::SystemCommandFailed(format!("ufw enable 失败: {e}")))?;
+                .map_err(|e| {
+                    DomainError::SystemCommandFailed(format!(
+                        "{}: {e}",
+                        crate::i18n::tr("err_ufw_enable_failed")
+                    ))
+                })?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(DomainError::SystemCommandFailed(format!(
-                    "ufw enable 失败: {stderr}"
+                    "{}: {stderr}",
+                    crate::i18n::tr("err_ufw_enable_failed")
                 )));
             }
         }
@@ -428,7 +450,7 @@ impl HardeningStep for UfwStep {
         Ok(StepResult {
             kind: StepKind::Ufw,
             changes_made: true,
-            message: format!("UFW 已启用，SSH 端口 {port} 已放行"),
+            message: crate::i18n::tr("result_ufw_enabled").replace("{port}", &port.to_string()),
         })
     }
 }
@@ -461,7 +483,9 @@ impl HardeningStep for Fail2banStep {
                 PackageManager::Yum => ("yum", &["install", "-y", "fail2ban"]),
                 PackageManager::Dnf => ("dnf", &["install", "-y", "fail2ban"]),
                 _ => {
-                    return Err(DomainError::SystemCommandFailed("不支持的包管理器".into()));
+                    return Err(DomainError::SystemCommandFailed(
+                        crate::i18n::tr("err_unsupported_pkg").into(),
+                    ));
                 }
             };
 
@@ -469,21 +493,28 @@ impl HardeningStep for Fail2banStep {
                 .args(install_args)
                 .output()
                 .map_err(|e| {
-                    DomainError::SystemCommandFailed(format!("安装 fail2ban 失败: {e}"))
+                    DomainError::SystemCommandFailed(format!(
+                        "{}: {e}",
+                        crate::i18n::tr("err_install_fail2ban")
+                    ))
                 })?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(DomainError::SystemCommandFailed(format!(
-                    "安装 fail2ban 失败: {stderr}"
+                    "{}: {stderr}",
+                    crate::i18n::tr("err_install_fail2ban")
                 )));
             }
 
             // 安装成功后注册撤销
             rollback::register_command_undo(
-                "停止 fail2ban 服务".into(),
+                crate::i18n::tr("undo_cmd").replace("{desc}", "stop fail2ban"),
                 vec!["systemctl".into(), "stop".into(), "fail2ban".into()],
             );
-            rollback::register_package_remove("删除 fail2ban".into(), "fail2ban".into());
+            rollback::register_package_remove(
+                crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "fail2ban"),
+                "fail2ban".into(),
+            );
         }
 
         // 配置监狱规则（使用 SSH 端口）
@@ -498,7 +529,8 @@ impl HardeningStep for Fail2banStep {
         Ok(StepResult {
             kind: StepKind::Fail2ban,
             changes_made: true,
-            message: format!("Fail2ban 已安装并运行，SSH 端口 {port} 已加入监控"),
+            message: crate::i18n::tr("result_fail2ban_installed")
+                .replace("{port}", &port.to_string()),
         })
     }
 }
@@ -527,7 +559,7 @@ impl HardeningStep for AutoUpdatesStep {
         let pm = system::detect_package_manager();
         if pm != PackageManager::Apt {
             return Err(DomainError::SystemCommandFailed(
-                "自动安全更新仅支持 Debian/Ubuntu".into(),
+                crate::i18n::tr("err_auto_update_only_debian").into(),
             ));
         }
 
@@ -535,18 +567,22 @@ impl HardeningStep for AutoUpdatesStep {
             .args(["install", "-y", "unattended-upgrades"])
             .output()
             .map_err(|e| {
-                DomainError::SystemCommandFailed(format!("安装 unattended-upgrades 失败: {e}"))
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_install_unattended")
+                ))
             })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "安装 unattended-upgrades 失败: {stderr}"
+                "{}: {stderr}",
+                crate::i18n::tr("err_install_unattended")
             )));
         }
 
         // 安装成功后注册撤销
         rollback::register_command_undo(
-            "停止 unattended-upgrades 服务".into(),
+            crate::i18n::tr("undo_cmd").replace("{desc}", "stop unattended-upgrades"),
             vec![
                 "systemctl".into(),
                 "stop".into(),
@@ -554,7 +590,7 @@ impl HardeningStep for AutoUpdatesStep {
             ],
         );
         rollback::register_package_remove(
-            "删除 unattended-upgrades".into(),
+            crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "unattended-upgrades"),
             "unattended-upgrades".into(),
         );
 
@@ -572,7 +608,7 @@ impl HardeningStep for AutoUpdatesStep {
         Ok(StepResult {
             kind: StepKind::AutoUpdates,
             changes_made: true,
-            message: "自动安全更新已启用（每日检查，自动安装安全补丁）".into(),
+            message: crate::i18n::tr("result_auto_updates_enabled").into(),
         })
     }
 }
@@ -619,28 +655,36 @@ impl HardeningStep for SecurityScanStep {
                 }
                 PackageManager::Unknown => {
                     return Err(DomainError::SystemCommandFailed(
-                        "无法确定包管理器，请手动安装 lynis".into(),
+                        crate::i18n::tr("err_unknown_pkg_lynis").into(),
                     ));
                 }
             }
         }
 
-        // 安装完成后注册撤销（无论成功与否，实际在安装后注册）
-        rollback::register_package_remove("卸载 lynis".into(), "lynis".into());
-
         if !system::which("lynis") {
             return Ok(StepResult {
                 kind: StepKind::SecurityScan,
                 changes_made: false,
-                message: "lynis 无法自动安装，请手动安装后重新运行".into(),
+                message: crate::i18n::tr("result_lynis_fail").into(),
             });
         }
+
+        // 安装成功后注册撤销
+        rollback::register_package_remove(
+            crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "lynis"),
+            "lynis".into(),
+        );
 
         // 执行 lynis 审计（仅 system audit，不需要交互）
         let output = Command::new("lynis")
             .args(["audit", "system", "--quick"])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("lynis 执行失败: {e}")))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_lynis_exec")
+                ))
+            })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
@@ -651,9 +695,9 @@ impl HardeningStep for SecurityScanStep {
         Ok(StepResult {
             kind: StepKind::SecurityScan,
             changes_made: true,
-            message: format!(
-                "lynis 安全扫描完成（{warnings} 个警告, {suggestions} 个建议）\n  详细报告: /var/log/lynis.log"
-            ),
+            message: crate::i18n::tr("result_lynis_ok")
+                .replace("{warns}", &warnings.to_string())
+                .replace("{suggs}", &suggestions.to_string()),
         })
     }
 }
@@ -693,7 +737,10 @@ impl HardeningStep for LogAuditStep {
             if system::which("logwatch") {
                 installed.push("logwatch");
                 // 安装成功后注册撤销
-                rollback::register_package_remove("卸载 logwatch".into(), "logwatch".into());
+                rollback::register_package_remove(
+                    crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "logwatch"),
+                    "logwatch".into(),
+                );
             }
         } else {
             installed.push("logwatch");
@@ -709,7 +756,10 @@ impl HardeningStep for LogAuditStep {
             if system::which("aide") {
                 installed.push("aide");
                 // 安装成功后注册撤销
-                rollback::register_package_remove("卸载 aide".into(), "aide".into());
+                rollback::register_package_remove(
+                    crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "aide"),
+                    "aide".into(),
+                );
             }
         } else {
             installed.push("aide");
@@ -730,10 +780,8 @@ impl HardeningStep for LogAuditStep {
         Ok(StepResult {
             kind: StepKind::LogAudit,
             changes_made: true,
-            message: format!(
-                "日志与审计增强完成\n  已安装/配置: {}\n  logwatch: 每日邮件报告\n  aide: 文件完整性检查已初始化",
-                installed.join(", ")
-            ),
+            message: crate::i18n::tr("result_logwatch_installed")
+                .replace("{installed}", &installed.join(", ")),
         })
     }
 }
@@ -756,15 +804,15 @@ impl HardeningStep for RestartSshStep {
 
     fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
         // 先验证 sshd_config 语法
-        let check = Command::new("sshd")
-            .args(["-t"])
-            .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("sshd 语法检查失败: {e}")))?;
+        let check = Command::new("sshd").args(["-t"]).output().map_err(|e| {
+            DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_sshd_check")))
+        })?;
 
         if !check.status.success() {
             let stderr = String::from_utf8_lossy(&check.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "sshd_config 语法错误，请检查配置: {stderr}"
+                "{}: {stderr}",
+                crate::i18n::tr("err_sshd_syntax")
             )));
         }
 
@@ -773,12 +821,18 @@ impl HardeningStep for RestartSshStep {
             .args(["restart", "sshd"])
             .output()
             .or_else(|_| Command::new("systemctl").args(["restart", "ssh"]).output())
-            .map_err(|e| DomainError::SystemCommandFailed(format!("重启 SSH 服务失败: {e}")))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_ssh_restart")
+                ))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "重启 SSH 服务失败: {stderr}"
+                "{}: {stderr}",
+                crate::i18n::tr("err_ssh_restart")
             )));
         }
 
@@ -800,9 +854,7 @@ impl HardeningStep for RestartSshStep {
         Ok(StepResult {
             kind: StepKind::RestartSsh,
             changes_made: true,
-            message: format!(
-                "SSH 服务已重启（状态: {status_str}）\n  ⚠️  请在另一终端验证连接后再关闭当前会话！\n  🔄 如需回滚：systemctl restart sshd 或恢复备份 /etc/ssh/sshd_config.bak.*"
-            ),
+            message: crate::i18n::tr("result_ssh_restarted").replace("{status}", &status_str),
         })
     }
 }
@@ -814,7 +866,9 @@ impl HardeningStep for RestartSshStep {
 fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError> {
     let path = std::path::Path::new("/etc/ssh/sshd_config");
     if !path.exists() {
-        return Err(DomainError::ParseError("sshd_config 不存在".into()));
+        return Err(DomainError::ParseError(
+            crate::i18n::tr("err_sshd_not_found").into(),
+        ));
     }
 
     // 备份
@@ -822,19 +876,20 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
         "/etc/ssh/sshd_config.bak.{}",
         Local::now().format("%Y%m%d%H%M%S")
     );
-    std::fs::copy(path, &backup)
-        .map_err(|e| DomainError::SystemCommandFailed(format!("备份失败: {e}")))?;
+    std::fs::copy(path, &backup).map_err(|e| {
+        DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_backup")))
+    })?;
 
     // 注册撤销：从备份恢复原文件
     let original_path = path.to_string_lossy().to_string();
     rollback::register_file_backup(
-        format!("恢复 sshd_config（{key}）"),
+        crate::i18n::tr("undo_file_restore").replace("{key}", key),
         backup.clone(),
         original_path,
     );
 
     let content = std::fs::read_to_string(path)
-        .map_err(|e| DomainError::ParseError(format!("读取失败: {e}")))?;
+        .map_err(|e| DomainError::ParseError(format!("{}: {e}", crate::i18n::tr("err_read"))))?;
 
     let mut found = false;
     let new_content: Vec<String> = content
@@ -860,12 +915,16 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
         result.push_str(&format!("\n{key} {value}\n"));
     }
 
-    std::fs::write(path, result)
-        .map_err(|e| DomainError::SystemCommandFailed(format!("写入失败: {e}")))?;
+    std::fs::write(path, result).map_err(|e| {
+        DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_write")))
+    })?;
 
     Ok(StepResult {
         kind: StepKind::SshRootLogin, // 占位 kind，调用方会覆盖
         changes_made: true,
-        message: format!("{key} 已设置为 {value}（备份: {backup}）"),
+        message: crate::i18n::tr("result_sshd_cfg_set")
+            .replace("{key}", key)
+            .replace("{value}", value)
+            .replace("{bak}", &backup),
     })
 }
