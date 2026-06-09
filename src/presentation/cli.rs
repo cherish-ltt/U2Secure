@@ -10,7 +10,7 @@ use crate::infrastructure::system;
 pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     // ── 权限检查 ──
     if let Err(e) = orchestrator.check_root() {
-        eprintln!("{} 错误: {e}", "[!]".red());
+        eprintln!("{} {}", "[!]".red(), e);
         std::process::exit(1);
     }
 
@@ -38,7 +38,7 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     println!("\n{} {}\n", "📝".bright_blue(), crate::i18n::tr("cli_collecting"));
 
     // 确认后再收集交互输入
-    println!("\n{} 以下步骤将被执行：", "📋".bright_blue());
+    println!("\n{} {}", "📋".bright_blue(), crate::i18n::tr("cli_will_execute"));
     for s in &selected_steps {
         let status = s.check_default_status(&report);
         println!("  {} {}", status.icon(), s.label());
@@ -50,7 +50,7 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
         .interact()
         .unwrap_or(false)
     {
-        println!("\n{} 用户取消。", "ℹ️".yellow());
+        println!("\n{} {}", "ℹ️".yellow(), crate::i18n::tr("cli_cancelled"));
         return;
     }
 
@@ -58,7 +58,7 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     let params = collect_step_params(&selected_steps, &report);
 
     // ── 执行 ──
-    println!("\n{} 开始执行加固步骤...\n", "⚙️".bright_green());
+    println!("\n{} {}\n", "⚙️".bright_green(), crate::i18n::tr("cli_executing"));
     let results = orchestrator.execute_steps(&report, &selected_steps, &params);
 
     // ── 总结报告 ──
@@ -75,9 +75,10 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 // 列出已有 sudo 用户
                 if !report.sudo_users.is_empty() {
                     println!(
-                        "{} 已有 sudo 用户: {}",
+                        "{} {}",
                         "ℹ️".yellow(),
-                        report.sudo_users.join(", ")
+                        crate::i18n::tr("cli_existing_sudo")
+                            .replace("{users}", &report.sudo_users.join(", "))
                     );
                 }
 
@@ -128,15 +129,21 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 let suggested = system::random_suggested_port();
 
                 println!(
-                    "{} 当前 SSH 端口: {}",
+                    "{} {}",
                     "ℹ️".yellow(),
-                    if current_port == 22 {
-                        crate::i18n::tr("cli_default_port").red().to_string()
-                    } else {
-                        current_port.to_string().green().to_string()
-                    }
+                    crate::i18n::tr("cli_current_port")
+                        .replace("{port}", &if current_port == 22 {
+                            crate::i18n::tr("cli_default_port").to_string()
+                        } else {
+                            current_port.to_string()
+                        })
                 );
-                println!("{} 建议端口: {}", "💡".bright_blue(), suggested);
+                println!(
+                    "{} {}",
+                    "💡".bright_blue(),
+                    crate::i18n::tr("cli_suggest_port")
+                        .replace("{port}", &suggested.to_string())
+                );
 
                 let port_str: String = Input::new()
                     .with_prompt(crate::i18n::tr("cli_port_prompt"))
@@ -171,8 +178,9 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 let users = system::detect_sudo_users();
                 let target_user = if users.is_empty() {
                     println!(
-                        "{} 未检测到 sudo 用户，请输入要设置密钥的目标用户名",
-                        "ℹ️".yellow()
+                        "{} {}",
+                        "ℹ️".yellow(),
+                        crate::i18n::tr("cli_manual_user")
                     );
                     let manual: String = Input::new()
                         .with_prompt(crate::i18n::tr("cli_user_prompt"))
@@ -191,7 +199,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                         .interact()
                         .unwrap_or_else(|_| String::new());
                     if manual.is_empty() {
-                        println!("{} 未输入用户名，跳过密钥设置", "⚠️".yellow());
+                        println!("{} {}", "⚠️".yellow(), crate::i18n::tr("cli_no_input"));
                         continue;
                     }
                     manual
@@ -210,15 +218,17 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 // 检查已有密钥
                 if let Some(fingerprint) = system::get_key_fingerprint(&target_user) {
                     println!(
-                        "{} 用户 {target_user} 已有公钥: {}",
+                        "{} {}",
                         "🔑".yellow(),
-                        fingerprint.dimmed()
+                        crate::i18n::tr("cli_key_found")
+                            .replace("{user}", &target_user)
+                            .replace("{fp}", &fingerprint)
                     );
                 }
 
-                let action_options = &["生成新密钥对", "粘贴已有公钥", "跳过"];
+                let action_options = &[crate::i18n::tr("cli_key_generate"), crate::i18n::tr("cli_key_paste"), crate::i18n::tr("cli_key_skip")];
                 let selection = Select::new()
-                    .with_prompt(format!("为 {target_user} 设置 SSH 密钥"))
+                    .with_prompt(crate::i18n::tr("cli_key_action").replace("{user}", &target_user))
                     .items(action_options)
                     .default(0)
                     .interact()
