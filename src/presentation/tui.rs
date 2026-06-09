@@ -753,10 +753,23 @@ fn render_right_summary(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tu
         } else {
             ("❌", Color::Red)
         };
-        lines.push(Line::from(vec![
-            Span::styled(format!(" {} ", icon), Style::default().fg(fg)),
-            Span::styled(r.kind.label(), Style::default()),
-        ]));
+        if r.changes_made {
+            // 成功：只显示步骤名
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {} ", icon), Style::default().fg(fg)),
+                Span::styled(r.kind.label(), Style::default()),
+            ]));
+        } else {
+            // 失败/跳过：显示原因
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {} ", icon), Style::default().fg(fg)),
+                Span::styled(r.kind.label(), Style::default()),
+                Span::styled(
+                    format!(": {}", r.message),
+                    Style::default().dim(),
+                ),
+            ]));
+        }
     }
 
     lines.push(Line::from(vec![Span::raw("")]));
