@@ -15,8 +15,9 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     }
 
     println!(
-        "\n{} U2Secure - Linux 服务器安全加固工具 v0.1.0\n",
-        "🔐".bright_green()
+        "\n{} U2Secure - Linux 服务器安全加固工具 v{}\n",
+        "🔐".bright_green(),
+        env!("CARGO_PKG_VERSION")
     );
 
     // ── 步骤 0：环境审计 ──
@@ -65,7 +66,7 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
 }
 
 /// 收集所有需要交互的步骤的用户输入
-fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> ExecuteParams {
+pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> ExecuteParams {
     let mut params = ExecuteParams::default();
 
     for step in selected {
