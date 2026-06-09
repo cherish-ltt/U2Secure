@@ -432,11 +432,17 @@ impl HardeningStep for UfwStep {
             let output = Command::new("ufw")
                 .args(["--force", "enable"])
                 .output()
-                .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_ufw_enable_failed"))))?;
+                .map_err(|e| {
+                    DomainError::SystemCommandFailed(format!(
+                        "{}: {e}",
+                        crate::i18n::tr("err_ufw_enable_failed")
+                    ))
+                })?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(DomainError::SystemCommandFailed(format!(
-                    "{}: {stderr}", crate::i18n::tr("err_ufw_enable_failed")
+                    "{}: {stderr}",
+                    crate::i18n::tr("err_ufw_enable_failed")
                 )));
             }
         }
@@ -477,7 +483,9 @@ impl HardeningStep for Fail2banStep {
                 PackageManager::Yum => ("yum", &["install", "-y", "fail2ban"]),
                 PackageManager::Dnf => ("dnf", &["install", "-y", "fail2ban"]),
                 _ => {
-                    return Err(DomainError::SystemCommandFailed(crate::i18n::tr("err_unsupported_pkg").into()));
+                    return Err(DomainError::SystemCommandFailed(
+                        crate::i18n::tr("err_unsupported_pkg").into(),
+                    ));
                 }
             };
 
@@ -485,7 +493,10 @@ impl HardeningStep for Fail2banStep {
                 .args(install_args)
                 .output()
                 .map_err(|e| {
-                    DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_install_fail2ban")))
+                    DomainError::SystemCommandFailed(format!(
+                        "{}: {e}",
+                        crate::i18n::tr("err_install_fail2ban")
+                    ))
                 })?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -556,7 +567,10 @@ impl HardeningStep for AutoUpdatesStep {
             .args(["install", "-y", "unattended-upgrades"])
             .output()
             .map_err(|e| {
-                DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_install_unattended")))
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_install_unattended")
+                ))
             })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -665,7 +679,12 @@ impl HardeningStep for SecurityScanStep {
         let output = Command::new("lynis")
             .args(["audit", "system", "--quick"])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_lynis_exec"))))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_lynis_exec")
+                ))
+            })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
@@ -785,15 +804,9 @@ impl HardeningStep for RestartSshStep {
 
     fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
         // 先验证 sshd_config 语法
-        let check = Command::new("sshd")
-            .args(["-t"])
-            .output()
-            .map_err(|e| {
-                DomainError::SystemCommandFailed(format!(
-                    "{}: {e}",
-                    crate::i18n::tr("err_sshd_check")
-                ))
-            })?;
+        let check = Command::new("sshd").args(["-t"]).output().map_err(|e| {
+            DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_sshd_check")))
+        })?;
 
         if !check.status.success() {
             let stderr = String::from_utf8_lossy(&check.stderr);
@@ -864,10 +877,7 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
         Local::now().format("%Y%m%d%H%M%S")
     );
     std::fs::copy(path, &backup).map_err(|e| {
-        DomainError::SystemCommandFailed(format!(
-            "{}: {e}",
-            crate::i18n::tr("err_backup")
-        ))
+        DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_backup")))
     })?;
 
     // 注册撤销：从备份恢复原文件
@@ -878,9 +888,8 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
         original_path,
     );
 
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        DomainError::ParseError(format!("{}: {e}", crate::i18n::tr("err_read")))
-    })?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| DomainError::ParseError(format!("{}: {e}", crate::i18n::tr("err_read"))))?;
 
     let mut found = false;
     let new_content: Vec<String> = content
@@ -906,19 +915,15 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
         result.push_str(&format!("\n{key} {value}\n"));
     }
 
-    std::fs::write(path, result)
-        .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_write"))))?;
+    std::fs::write(path, result).map_err(|e| {
+        DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_write")))
+    })?;
 
     Ok(StepResult {
         kind: StepKind::SshRootLogin, // 占位 kind，调用方会覆盖
         changes_made: true,
         message: crate::i18n::tr("result_sshd_cfg_set")
             .replace("{key}", key)
-            .replace("{value}", value)
-            .replace("{bak}", &backup),
-    })
-}
-ace("{key}", key)
             .replace("{value}", value)
             .replace("{bak}", &backup),
     })

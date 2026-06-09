@@ -865,5 +865,3 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
-})
-}
