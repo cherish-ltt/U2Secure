@@ -17,9 +17,9 @@
   <a href="https://www.rust-lang.org">
     <img src="https://img.shields.io/badge/rust-1.95.0+-orange.svg" alt="license"/>
   </a>
+  <img src="https://github.com/cherish-ltt/U2Secure/blob/main/doc/show-tui.png" width="720"/>
 </p>
 </div>
-
 
 > 🚀 面向 Linux 运维人员的交互式安全加固工具。支持 **TUI 终端图形界面**与**传统 CLI** 双模式。运行一次即可完成从系统更新、用户创建、SSH 深度加固、防火墙、入侵防御、审计到自动更新的完整安全基线建设。
 
