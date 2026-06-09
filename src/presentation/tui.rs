@@ -74,10 +74,22 @@ struct LogEntry {
     message: String,
 }
 
-/// TUI 输入弹窗状态
-struct InputPopup {
-    prompt: &'static str,
-    value: String,
+/// TUI 弹窗状态（支持多步流程）
+enum Popup {
+    /// 输入用户名
+    UsernameInput {
+        value: String,
+    },
+    /// 选择密钥操作
+    KeyActionSelect {
+        username: String,
+        selected: usize,
+    },
+    /// 粘贴公钥内容
+    PubKeyInput {
+        username: String,
+        value: String,
+    },
 }
 
 /// TUI 模式
@@ -102,8 +114,8 @@ struct TuiApp {
     results: Vec<StepResult>,
     /// 当前执行进度
     progress: (usize, usize), // (current, total)
-    /// TUI 输入弹窗（激活时覆盖主界面）
-    input_popup: Option<InputPopup>,
+    /// TUI 弹窗（激活时覆盖主界面）
+    popup: Option<Popup>,
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +144,7 @@ pub fn run_tui(orchestrator: &HardeningOrchestrator) -> anyhow::Result<()> {
         logs: vec![],
         results: vec![],
         progress: (0, 0),
-        input_popup: None,
+        popup: None,
     };
 
     // 运行主循环
@@ -166,47 +178,89 @@ fn run_app(
         // 处理事件
         let event = event::read()?;
 
-        // ── 输入弹窗激活时，优先处理 ──
-        if let Some(ref mut popup) = app.input_popup {
+        // ── 弹窗激活时，优先处理 ──
+        if let Some(ref mut p) = app.popup {
             if let Event::Key(key) = event
                 && key.kind == KeyEventKind::Press
             {
-                match key.code {
-                        KeyCode::Char(c) => popup.value.push(c),
+                match *p {
+                    Popup::UsernameInput { ref mut value } => match key.code {
+                        KeyCode::Char(c) => value.push(c),
                         KeyCode::Backspace => {
-                            popup.value.pop();
+                            value.pop();
                         }
-                        KeyCode::Enter => {
-                            if !popup.value.is_empty() {
-                                let username = popup.value.clone();
-                                app.input_popup = None;
-                                // 自动生成密钥
-                                let params = ExecuteParams {
-                                    ssh_key_username: Some(username),
-                                    ssh_key_action: Some(SshKeyAction::GenerateNew),
-                                    ..Default::default()
-                                };
-                                app.logs.clear();
-                                app.results.clear();
-                                app.progress = (0, 1);
-                                for s in &mut app.steps {
-                                    s.state = StepExecState::Idle;
-                                }
-                                app.mode = AppMode::Executing;
-                                execute_single(
-                                    app, terminal, orchestrator,
-                                    StepKind::SshKeySetup, &params,
+                        KeyCode::Enter if !value.is_empty() => {
+                            let username = value.clone();
+                            app.popup = Some(Popup::KeyActionSelect {
+                                username,
+                                selected: 0,
+                            });
+                        }
+                        KeyCode::Esc => app.popup = None,
+                        _ => {}
+                    },
+                    Popup::KeyActionSelect {
+                        ref username,
+                        ref mut selected,
+                    } => match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            *selected = selected.saturating_sub(1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            *selected = selected.saturating_add(1).min(2);
+                        }
+                        KeyCode::Enter => match *selected {
+                            0 => {
+                                let u = username.clone();
+                                app.popup = None;
+                                run_ssh_key_setup(
+                                    app, terminal, orchestrator, u,
+                                    Some(SshKeyAction::GenerateNew),
                                 )?;
-                                app.mode = AppMode::Summary;
                             }
+                            1 => {
+                                let u = username.clone();
+                                app.popup = Some(Popup::PubKeyInput {
+                                    username: u,
+                                    value: String::new(),
+                                });
+                            }
+                            _ => {
+                                // 跳过
+                                app.popup = None;
+                            }
+                        },
+                        KeyCode::Esc => app.popup = None,
+                        _ => {}
+                    },
+                    Popup::PubKeyInput {
+                        ref username,
+                        ref mut value,
+                    } => match key.code {
+                        KeyCode::Char(c) => value.push(c),
+                        KeyCode::Backspace => {
+                            value.pop();
+                        }
+                        KeyCode::Enter if !value.is_empty() => {
+                            let u = username.clone();
+                            let pk = value.clone();
+                            app.popup = None;
+                            run_ssh_key_setup(
+                                app, terminal, orchestrator, u,
+                                Some(SshKeyAction::PasteKey(pk)),
+                            )?;
                         }
                         KeyCode::Esc => {
-                            app.input_popup = None;
+                            let u = username.clone();
+                            app.popup = Some(Popup::KeyActionSelect {
+                                username: u,
+                                selected: 0,
+                            });
                         }
                         _ => {}
-                    }
+                    },
                 }
-
+            }
             terminal.draw(|f| render(f, app))?;
             continue;
         }
@@ -262,8 +316,7 @@ fn run_app(
                                 if kind == StepKind::SshKeySetup {
                                     let users = system::detect_sudo_users();
                                     if users.is_empty() {
-                                        app.input_popup = Some(InputPopup {
-                                            prompt: "目标用户名",
+                                        app.popup = Some(Popup::UsernameInput {
                                             value: String::new(),
                                         });
                                         continue;
@@ -490,6 +543,31 @@ fn execute_single(
     Ok(())
 }
 
+/// 执行 SSH 密钥设置（从弹窗流程调用）
+fn run_ssh_key_setup(
+    app: &mut TuiApp,
+    terminal: &mut TuiTerminal,
+    _orchestrator: &HardeningOrchestrator,
+    username: String,
+    action: Option<SshKeyAction>,
+) -> anyhow::Result<()> {
+    let params = ExecuteParams {
+        ssh_key_username: Some(username),
+        ssh_key_action: action,
+        ..Default::default()
+    };
+    app.logs.clear();
+    app.results.clear();
+    app.progress = (0, 1);
+    for s in &mut app.steps {
+        s.state = StepExecState::Idle;
+    }
+    app.mode = AppMode::Executing;
+    execute_single(app, terminal, _orchestrator, StepKind::SshKeySetup, &params)?;
+    app.mode = AppMode::Summary;
+    Ok(())
+}
+
 /// 标记某个步骤的执行状态
 fn mark_step_state(app: &mut TuiApp, kind: StepKind, state: StepExecState) {
     if let Some(item) = app.steps.iter_mut().find(|s| s.kind == kind) {
@@ -562,9 +640,9 @@ fn render(frame: &mut Frame, app: &TuiApp) {
     render_main_content(frame, vert[2], app);
     render_footer(frame, vert[3], app);
 
-    // 输入弹窗（叠加在最上层）
-    if app.input_popup.is_some() {
-        render_input_popup(frame, area, app);
+    // 弹窗（叠加在最上层）
+    if app.popup.is_some() {
+        render_popup(frame, area, app);
     }
 }
 
@@ -894,26 +972,44 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
 }
 
 // ---------------------------------------------------------------------------
-// 输入弹窗（叠加层）
+// 弹窗渲染（叠加层）
 // ---------------------------------------------------------------------------
 
-/// 在界面顶层渲染输入弹窗
-fn render_input_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
-    let popup = app.input_popup.as_ref().unwrap();
+/// 在界面顶层渲染弹窗（输入 / 选择 / 粘贴）
+fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
+    let popup = app.popup.as_ref().unwrap();
 
-    // 弹窗尺寸：水平居中 50%，垂直居中 5 行
-    let width = area.width.clamp(30, 60);
-    let height = 5;
+    // 统一弹窗尺寸逻辑
+    let (title, height, content_lines, hint_line) = match popup {
+        Popup::UsernameInput { value } => (
+            " 目标用户名 ",
+            5,
+            render_username_input(value),
+            " Enter 确认  Esc 取消 ",
+        ),
+        Popup::KeyActionSelect { selected, .. } => (
+            " 选择操作 ",
+            7,
+            render_action_select(*selected),
+            " ↑↓ 选择  Enter 确认  Esc 取消 ",
+        ),
+        Popup::PubKeyInput { value, .. } => (
+            " 粘贴公钥 ",
+            5,
+            render_pubkey_input(value),
+            " Enter 确认  Esc 返回 ",
+        ),
+    };
+
+    let width = area.width.clamp(36, 64);
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let popup_area = ratatui::layout::Rect { x, y, width, height };
 
-    // 清空弹窗区域（透出半透明效果）
     frame.render_widget(Clear, popup_area);
 
-    // 弹窗边框
     let block = Block::default()
-        .title(format!(" {}", popup.prompt))
+        .title(title)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .style(Style::default().bg(Color::Rgb(25, 25, 45)));
@@ -921,34 +1017,97 @@ fn render_input_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiA
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    // 输入框内容（带闪烁光标模拟）
-    let display = if popup.value.is_empty() {
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled("输入用户名...", Style::default().dim().fg(Color::Gray)),
-            Span::styled("█", Style::default().fg(Color::Cyan)),
-        ])
-    } else {
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(&popup.value, Style::default().fg(Color::White)),
-            Span::styled("█", Style::default().fg(Color::Cyan)),
-        ])
-    };
-    frame.render_widget(Paragraph::new(display), inner);
+    // 内容区
+    frame.render_widget(
+        Paragraph::new(Text::from(content_lines)).wrap(Wrap { trim: false }),
+        inner,
+    );
 
     // 底部提示
-    let hint = ratatui::layout::Rect {
+    let hint_area = ratatui::layout::Rect {
         x: inner.x,
         y: inner.y + inner.height.saturating_sub(1),
         width: inner.width,
         height: 1,
     };
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" Enter 确认  ", Style::default().dim().fg(Color::Green)),
-            Span::styled("Esc 取消", Style::default().dim().fg(Color::Red)),
-        ])),
-        hint,
+        Paragraph::new(Line::from(Span::styled(
+            hint_line,
+            Style::default().dim(),
+        ))),
+        hint_area,
     );
+}
+
+/// 用户名输入框内容
+fn render_username_input(value: &str) -> Vec<Line<'static>> {
+    if value.is_empty() {
+        vec![
+            Line::from(vec![Span::raw("")]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("输入用户名...", Style::default().dim().fg(Color::Gray)),
+                Span::styled("█", Style::default().fg(Color::Cyan)),
+            ]),
+        ]
+    } else {
+        vec![
+            Line::from(vec![Span::raw("")]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(value.to_string(), Style::default().fg(Color::White)),
+                Span::styled("█", Style::default().fg(Color::Cyan)),
+            ]),
+        ]
+    }
+}
+
+/// 公钥粘贴框内容
+fn render_pubkey_input(value: &str) -> Vec<Line<'static>> {
+    if value.is_empty() {
+        vec![
+            Line::from(vec![Span::raw("")]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    "粘贴 ssh-ed25519 / ssh-rsa 公钥内容...",
+                    Style::default().dim().fg(Color::Gray),
+                ),
+                Span::styled("█", Style::default().fg(Color::Cyan)),
+            ]),
+        ]
+    } else {
+        // 显示开头部分+光标
+        let display = if value.len() > 50 {
+            format!("{}...█", &value[..50])
+        } else {
+            format!("{}█", value)
+        };
+        vec![
+            Line::from(vec![Span::raw("")]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(display, Style::default().fg(Color::White)),
+            ]),
+        ]
+    }
+}
+
+/// 操作选择列表
+fn render_action_select(selected: usize) -> Vec<Line<'static>> {
+    let options = ["生成新密钥对", "粘贴已有公钥", "跳过"];
+    let mut lines = vec![Line::from(vec![Span::raw("")])];
+    for (i, opt) in options.iter().enumerate() {
+        let prefix = if i == selected { " ▸ " } else { "   " };
+        let style = if i == selected {
+            Style::default().fg(Color::Cyan).bold()
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(*opt, style),
+        ]));
+    }
+    lines
 }
