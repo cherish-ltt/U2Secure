@@ -519,14 +519,8 @@ fn run_app(
                 }
             }
             AppMode::Executing => {
-                // 执行中不响应按键，仅允许 Ctrl+C（已在信号处理器中处理）
-                if let Event::Key(key) = event
-                    && key.kind == KeyEventKind::Press
-                    && let KeyCode::Esc = key.code
-                {
-                    // 紧急返回（极少使用）
-                    app.mode = AppMode::Select;
-                }
+                // 执行期间事件循环被同步执行阻塞，不会到达此处
+                // Ctrl+C 中断由信号处理器通过 INTERRUPTED 标志处理
             }
             AppMode::Summary => {
                 if let Event::Key(key) = event
