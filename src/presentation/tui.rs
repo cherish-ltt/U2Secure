@@ -1188,7 +1188,7 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         ),
         Popup::SshKeyUserSelect { users, selected } => (
             " 选择用户 ",
-            (users.len() + 2).clamp(5, 12) as u16,
+            (users.len() + 4).clamp(5, 16) as u16,
             render_string_list(users, *selected),
             " ↑↓ 选择  Enter 确认  Esc 取消 ",
         ),
