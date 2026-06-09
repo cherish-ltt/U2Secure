@@ -169,12 +169,33 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
 
                 // 确定目标用户
                 let users = system::detect_sudo_users();
-                if users.is_empty() {
-                    println!("{} 没有可用的 sudo 用户，跳过密钥设置", "⚠️".yellow());
-                    continue;
-                }
-
-                let target_user = if users.len() == 1 {
+                let target_user = if users.is_empty() {
+                    println!(
+                        "{} 未检测到 sudo 用户，请输入要设置密钥的目标用户名",
+                        "ℹ️".yellow()
+                    );
+                    let manual: String = Input::new()
+                        .with_prompt("目标用户名")
+                        .validate_with(|input: &String| -> Result<(), &str> {
+                            if input.is_empty() {
+                                return Err("用户名不能为空");
+                            }
+                            if !input
+                                .chars()
+                                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+                            {
+                                return Err("用户名只能包含字母、数字、- 和 _");
+                            }
+                            Ok(())
+                        })
+                        .interact()
+                        .unwrap_or_else(|_| String::new());
+                    if manual.is_empty() {
+                        println!("{} 未输入用户名，跳过密钥设置", "⚠️".yellow());
+                        continue;
+                    }
+                    manual
+                } else if users.len() == 1 {
                     users[0].clone()
                 } else {
                     let selection = Select::new()
