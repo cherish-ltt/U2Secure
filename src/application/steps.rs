@@ -70,7 +70,7 @@ impl HardeningStep for SystemUpdateStep {
         let pm = system::detect_package_manager();
         if pm == PackageManager::Unknown {
             return Err(DomainError::SystemCommandFailed(
-                "无法识别的包管理器".into(),
+                crate::i18n::tr("err_unknown_pkg_mgr").into(),
             ));
         }
 
@@ -78,11 +78,11 @@ impl HardeningStep for SystemUpdateStep {
         let output = Command::new(update_cmd[0])
             .args(&update_cmd[1..])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("update 失败: {e}")))?;
+            .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_update_failed"))))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "update 失败: {stderr}"
+                "{}: {stderr}", crate::i18n::tr("err_update_failed")
             )));
         }
 
@@ -90,11 +90,11 @@ impl HardeningStep for SystemUpdateStep {
         let output = Command::new(upgrade_cmd[0])
             .args(&upgrade_cmd[1..])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("upgrade 失败: {e}")))?;
+            .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_upgrade_failed"))))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "upgrade 失败: {stderr}"
+                "{}: {stderr}", crate::i18n::tr("err_upgrade_failed")
             )));
         }
 
@@ -130,12 +130,12 @@ impl HardeningStep for UserCreationStep {
         let username = params
             .new_username
             .as_deref()
-            .ok_or_else(|| DomainError::PreconditionFailed("未提供用户名".into()))?;
+            .ok_or_else(|| DomainError::PreconditionFailed(crate::i18n::tr("err_no_username").into()))?;
 
         if system::user_exists(username) {
-            return Err(DomainError::PreconditionFailed(format!(
-                "用户 '{username}' 已存在"
-            )));
+            return Err(DomainError::PreconditionFailed(
+                crate::i18n::tr("err_user_exists").replace("{user}", username)
+            ));
         }
 
         system::create_system_user(username)?;
@@ -189,7 +189,7 @@ impl HardeningStep for SshRootLoginStep {
         let sudo_users = system::detect_sudo_users();
         if sudo_users.is_empty() {
             return Err(DomainError::PreconditionFailed(
-                "禁止 root 登录前请先创建 sudo 用户".into(),
+                crate::i18n::tr("err_no_sudo_before_root").into(),
             ));
         }
 
@@ -220,10 +220,10 @@ impl HardeningStep for SshPortChangeStep {
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
         let new_port = params
             .new_ssh_port
-            .ok_or_else(|| DomainError::PreconditionFailed("未提供新 SSH 端口".into()))?;
+            .ok_or_else(|| DomainError::PreconditionFailed(crate::i18n::tr("err_no_ssh_port").into()))?;
 
         if new_port == 0 {
-            return Err(DomainError::PreconditionFailed("端口 0 无效".into()));
+            return Err(DomainError::PreconditionFailed(crate::i18n::tr("err_port_zero").into()));
         }
 
         let result = modify_sshd_config("Port", &new_port.to_string())?;
@@ -276,7 +276,7 @@ impl HardeningStep for SshPasswordAuthStep {
         let sudo_users = system::detect_sudo_users();
         if sudo_users.is_empty() {
             return Err(DomainError::PreconditionFailed(
-                "禁止密码登录前请先创建 sudo 用户".into(),
+                crate::i18n::tr("err_no_sudo_before_pw").into(),
             ));
         }
 
@@ -317,12 +317,12 @@ impl HardeningStep for SshKeySetupStep {
         let username = params
             .ssh_key_username
             .as_deref()
-            .ok_or_else(|| DomainError::PreconditionFailed("未提供目标用户名".into()))?;
+            .ok_or_else(|| DomainError::PreconditionFailed(crate::i18n::tr("err_no_target_user").into()))?;
 
         let action = params
             .ssh_key_action
             .as_ref()
-            .ok_or_else(|| DomainError::PreconditionFailed("未选择密钥操作".into()))?;
+            .ok_or_else(|| DomainError::PreconditionFailed(crate::i18n::tr("err_no_key_action").into()))?;
 
         let username_undo = username.to_string();
         match action {
@@ -390,11 +390,11 @@ impl HardeningStep for UfwStep {
         let output = Command::new("ufw")
             .args(["allow", &port.to_string()])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("ufw allow 失败: {e}")))?;
+            .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_ufw_allow_failed"))))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "ufw allow 失败: {stderr}"
+                "{}: {stderr}", crate::i18n::tr("err_ufw_allow_failed")
             )));
         }
 
