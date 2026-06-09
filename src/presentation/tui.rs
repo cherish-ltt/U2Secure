@@ -24,14 +24,15 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Gauge, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, Paragraph, Wrap},
 };
 
 use crate::application::orchestrator::HardeningOrchestrator;
 use crate::application::steps::AllSteps;
 use crate::domain::audit::{AuditReport, AuditStatus};
-use crate::domain::steps::{ExecuteParams, HardeningStep, StepKind, StepResult};
+use crate::domain::steps::{ExecuteParams, HardeningStep, SshKeyAction, StepKind, StepResult};
 use crate::infrastructure::rollback;
+use crate::infrastructure::system;
 use crate::presentation::cli;
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,12 @@ struct LogEntry {
     message: String,
 }
 
+/// TUI 输入弹窗状态
+struct InputPopup {
+    prompt: &'static str,
+    value: String,
+}
+
 /// TUI 模式
 enum AppMode {
     /// 步骤选择
@@ -95,6 +102,8 @@ struct TuiApp {
     results: Vec<StepResult>,
     /// 当前执行进度
     progress: (usize, usize), // (current, total)
+    /// TUI 输入弹窗（激活时覆盖主界面）
+    input_popup: Option<InputPopup>,
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +132,7 @@ pub fn run_tui(orchestrator: &HardeningOrchestrator) -> anyhow::Result<()> {
         logs: vec![],
         results: vec![],
         progress: (0, 0),
+        input_popup: None,
     };
 
     // 运行主循环
@@ -155,6 +165,51 @@ fn run_app(
 
         // 处理事件
         let event = event::read()?;
+
+        // ── 输入弹窗激活时，优先处理 ──
+        if let Some(ref mut popup) = app.input_popup {
+            if let Event::Key(key) = event
+                && key.kind == KeyEventKind::Press
+            {
+                match key.code {
+                        KeyCode::Char(c) => popup.value.push(c),
+                        KeyCode::Backspace => {
+                            popup.value.pop();
+                        }
+                        KeyCode::Enter => {
+                            if !popup.value.is_empty() {
+                                let username = popup.value.clone();
+                                app.input_popup = None;
+                                // 自动生成密钥
+                                let params = ExecuteParams {
+                                    ssh_key_username: Some(username),
+                                    ssh_key_action: Some(SshKeyAction::GenerateNew),
+                                    ..Default::default()
+                                };
+                                app.logs.clear();
+                                app.results.clear();
+                                app.progress = (0, 1);
+                                for s in &mut app.steps {
+                                    s.state = StepExecState::Idle;
+                                }
+                                app.mode = AppMode::Executing;
+                                execute_single(
+                                    app, terminal, orchestrator,
+                                    StepKind::SshKeySetup, &params,
+                                )?;
+                                app.mode = AppMode::Summary;
+                            }
+                        }
+                        KeyCode::Esc => {
+                            app.input_popup = None;
+                        }
+                        _ => {}
+                    }
+                }
+
+            terminal.draw(|f| render(f, app))?;
+            continue;
+        }
 
         match app.mode {
             AppMode::Select => {
@@ -202,6 +257,19 @@ fn run_app(
                         KeyCode::Char('e') => {
                             if app.cursor < app.steps.len() {
                                 let kind = app.steps[app.cursor].kind;
+
+                                // SshKeySetup：无 sudo 用户时用 TUI 弹窗
+                                if kind == StepKind::SshKeySetup {
+                                    let users = system::detect_sudo_users();
+                                    if users.is_empty() {
+                                        app.input_popup = Some(InputPopup {
+                                            prompt: "目标用户名",
+                                            value: String::new(),
+                                        });
+                                        continue;
+                                    }
+                                }
+
                                 let params = suspend_for_params(terminal, &[kind], &app.report);
                                 app.logs.clear();
                                 app.results.clear();
@@ -493,6 +561,11 @@ fn render(frame: &mut Frame, app: &TuiApp) {
     render_audit_summary(frame, vert[1], &app.report);
     render_main_content(frame, vert[2], app);
     render_footer(frame, vert[3], app);
+
+    // 输入弹窗（叠加在最上层）
+    if app.input_popup.is_some() {
+        render_input_popup(frame, area, app);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -818,4 +891,64 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     };
 
     frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
+}
+
+// ---------------------------------------------------------------------------
+// 输入弹窗（叠加层）
+// ---------------------------------------------------------------------------
+
+/// 在界面顶层渲染输入弹窗
+fn render_input_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
+    let popup = app.input_popup.as_ref().unwrap();
+
+    // 弹窗尺寸：水平居中 50%，垂直居中 5 行
+    let width = area.width.clamp(30, 60);
+    let height = 5;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let popup_area = ratatui::layout::Rect { x, y, width, height };
+
+    // 清空弹窗区域（透出半透明效果）
+    frame.render_widget(Clear, popup_area);
+
+    // 弹窗边框
+    let block = Block::default()
+        .title(format!(" {}", popup.prompt))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .style(Style::default().bg(Color::Rgb(25, 25, 45)));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    // 输入框内容（带闪烁光标模拟）
+    let display = if popup.value.is_empty() {
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("输入用户名...", Style::default().dim().fg(Color::Gray)),
+            Span::styled("█", Style::default().fg(Color::Cyan)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(&popup.value, Style::default().fg(Color::White)),
+            Span::styled("█", Style::default().fg(Color::Cyan)),
+        ])
+    };
+    frame.render_widget(Paragraph::new(display), inner);
+
+    // 底部提示
+    let hint = ratatui::layout::Rect {
+        x: inner.x,
+        y: inner.y + inner.height.saturating_sub(1),
+        width: inner.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" Enter 确认  ", Style::default().dim().fg(Color::Green)),
+            Span::styled("Esc 取消", Style::default().dim().fg(Color::Red)),
+        ])),
+        hint,
+    );
 }
