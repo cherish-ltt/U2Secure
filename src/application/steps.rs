@@ -571,7 +571,7 @@ impl HardeningStep for AutoUpdatesStep {
         Ok(StepResult {
             kind: StepKind::AutoUpdates,
             changes_made: true,
-            message: "自动安全更新已启用（每日检查，自动安装安全补丁）".into(),
+            message: crate::i18n::tr("result_auto_updates_enabled").into(),
         })
     }
 }
@@ -631,7 +631,7 @@ impl HardeningStep for SecurityScanStep {
             return Ok(StepResult {
                 kind: StepKind::SecurityScan,
                 changes_made: false,
-                message: "lynis 无法自动安装，请手动安装后重新运行".into(),
+                message: crate::i18n::tr("result_lynis_fail").into(),
             });
         }
 
@@ -650,9 +650,9 @@ impl HardeningStep for SecurityScanStep {
         Ok(StepResult {
             kind: StepKind::SecurityScan,
             changes_made: true,
-            message: format!(
-                "lynis 安全扫描完成（{warnings} 个警告, {suggestions} 个建议）\n  详细报告: /var/log/lynis.log"
-            ),
+            message: crate::i18n::tr("result_lynis_ok")
+                .replace("{warns}", &warnings.to_string())
+                .replace("{suggs}", &suggestions.to_string()),
         })
     }
 }
@@ -729,10 +729,8 @@ impl HardeningStep for LogAuditStep {
         Ok(StepResult {
             kind: StepKind::LogAudit,
             changes_made: true,
-            message: format!(
-                "日志与审计增强完成\n  已安装/配置: {}\n  logwatch: 每日邮件报告\n  aide: 文件完整性检查已初始化",
-                installed.join(", ")
-            ),
+            message: crate::i18n::tr("result_logwatch_installed")
+                .replace("{installed}", &installed.join(", ")),
         })
     }
 }
@@ -799,9 +797,8 @@ impl HardeningStep for RestartSshStep {
         Ok(StepResult {
             kind: StepKind::RestartSsh,
             changes_made: true,
-            message: format!(
-                "SSH 服务已重启（状态: {status_str}）\n  ⚠️  请在另一终端验证连接后再关闭当前会话！\n  🔄 如需回滚：systemctl restart sshd 或恢复备份 /etc/ssh/sshd_config.bak.*"
-            ),
+            message: crate::i18n::tr("result_ssh_restarted")
+                .replace("{status}", &status_str),
         })
     }
 }
@@ -865,6 +862,9 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<StepResult, DomainError>
     Ok(StepResult {
         kind: StepKind::SshRootLogin, // 占位 kind，调用方会覆盖
         changes_made: true,
-        message: format!("{key} 已设置为 {value}（备份: {backup}）"),
+        message: crate::i18n::tr("result_sshd_cfg_set")
+            .replace("{key}", key)
+            .replace("{value}", value)
+            .replace("{bak}", &backup),
     })
 }

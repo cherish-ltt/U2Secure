@@ -600,7 +600,7 @@ fn execute_batch(
                 let err_result = StepResult {
                     kind,
                     changes_made: false,
-                    message: format!("失败: {e}"),
+                    message: crate::i18n::tr("tui_exec_failed").replace("{err}", &format!("{e}")),
                 };
                 app.results.push(err_result);
                 orchestrator
@@ -653,7 +653,7 @@ fn execute_single(
     mark_step_state(app, kind, StepExecState::Running);
     app.logs.push(LogEntry {
         icon: "▶",
-        message: format!("正在执行: {}", kind.label()),
+        message: crate::i18n::tr("tui_exec_running").replace("{step}", kind.label()),
     });
     app.progress = (0, 1);
     terminal.draw(|f| render(f, app))?;
@@ -685,7 +685,7 @@ fn execute_single(
             app.results.push(StepResult {
                 kind,
                 changes_made: false,
-                message: format!("失败: {e}"),
+                message: crate::i18n::tr("tui_exec_failed").replace("{err}", &format!("{}", e)),
             });
         }
     }
@@ -1127,7 +1127,9 @@ fn render_right_summary(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tu
     lines.push(Line::from(vec![Span::raw("")]));
 
     // 总计
-    let stats = format!(" 总计: {} 成功, {} 失败/跳过", success, failed,);
+    let stats = crate::i18n::tr("tui_result_summary")
+        .replace("{ok}", &success.to_string())
+        .replace("{fail}", &failed.to_string());
     lines.push(Line::from(vec![Span::styled(
         stats,
         Style::default().bold(),
@@ -1135,7 +1137,7 @@ fn render_right_summary(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tu
 
     lines.push(Line::from(vec![Span::raw("")]));
     lines.push(Line::from(vec![Span::styled(
-        " 按任意键返回步骤列表",
+        crate::i18n::tr("tui_result_return"),
         Style::default().dim(),
     )]));
 
@@ -1302,7 +1304,7 @@ fn render_pubkey_input(value: &str) -> Vec<Line<'static>> {
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
-                    "粘贴 ssh-ed25519 / ssh-rsa 公钥内容...",
+                    crate::i18n::tr("tui_popup_paste_hint"),
                     Style::default().dim().fg(Color::Gray),
                 ),
                 Span::styled("█", Style::default().fg(Color::Cyan)),
@@ -1368,20 +1370,27 @@ fn render_port_input(value: &str) -> Vec<Line<'static>> {
         vec![
             Line::from(vec![Span::raw("")]),
             Line::from(vec![
-                Span::raw("  建议端口: "),
+                Span::raw("  "),
                 Span::styled(
-                    system::random_suggested_port().to_string(),
+                    crate::i18n::tr("tui_popup_port_suggest")
+                        .replace("{port}", &system::random_suggested_port().to_string()),
                     Style::default().fg(Color::Cyan),
                 ),
-                Span::raw("  当前: "),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
                 Span::styled(
-                    current_port.to_string(),
+                    crate::i18n::tr("tui_popup_port_current")
+                        .replace("{port}", &current_port.to_string()),
                     Style::default().fg(Color::Yellow),
                 ),
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("输入 0-65535...", Style::default().dim().fg(Color::Gray)),
+                Span::styled(
+                    crate::i18n::tr("tui_popup_port_placeholder"),
+                    Style::default().dim().fg(Color::Gray),
+                ),
                 Span::styled("█", Style::default().fg(Color::Cyan)),
             ]),
         ]
@@ -1389,7 +1398,7 @@ fn render_port_input(value: &str) -> Vec<Line<'static>> {
         vec![
             Line::from(vec![Span::raw("")]),
             Line::from(vec![
-                Span::raw("  端口: "),
+                Span::raw("  port: "),
                 Span::styled(value.to_string(), Style::default().fg(Color::White)),
                 Span::styled("█", Style::default().fg(Color::Cyan)),
             ]),
