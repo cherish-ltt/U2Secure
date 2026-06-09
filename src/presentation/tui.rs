@@ -483,7 +483,7 @@ fn render(frame: &mut Frame, app: &TuiApp) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // Title
-            Constraint::Length(3), // Audit summary
+            Constraint::Length(5), // Audit summary (with wrapping)
             Constraint::Min(1),    // Main content
             Constraint::Length(1), // Footer
         ])
@@ -716,7 +716,8 @@ fn render_right_executing(frame: &mut Frame, area: ratatui::layout::Rect, app: &
         })
         .collect();
 
-    let log_widget = Paragraph::new(Text::from(log_lines));
+    let log_widget = Paragraph::new(Text::from(log_lines))
+        .wrap(Wrap { trim: false });
     frame.render_widget(log_widget, chunks[0]);
 
     // 进度条
