@@ -77,19 +77,11 @@ struct LogEntry {
 /// TUI 弹窗状态（支持多步流程）
 enum Popup {
     /// 输入用户名
-    UsernameInput {
-        value: String,
-    },
+    UsernameInput { value: String },
     /// 选择密钥操作
-    KeyActionSelect {
-        username: String,
-        selected: usize,
-    },
+    KeyActionSelect { username: String, selected: usize },
     /// 粘贴公钥内容
-    PubKeyInput {
-        username: String,
-        value: String,
-    },
+    PubKeyInput { username: String, value: String },
 }
 
 /// TUI 模式
@@ -214,7 +206,10 @@ fn run_app(
                                 let u = username.clone();
                                 app.popup = None;
                                 run_ssh_key_setup(
-                                    app, terminal, orchestrator, u,
+                                    app,
+                                    terminal,
+                                    orchestrator,
+                                    u,
                                     Some(SshKeyAction::GenerateNew),
                                 )?;
                             }
@@ -246,7 +241,10 @@ fn run_app(
                             let pk = value.clone();
                             app.popup = None;
                             run_ssh_key_setup(
-                                app, terminal, orchestrator, u,
+                                app,
+                                terminal,
+                                orchestrator,
+                                u,
                                 Some(SshKeyAction::PasteKey(pk)),
                             )?;
                         }
@@ -867,8 +865,7 @@ fn render_right_executing(frame: &mut Frame, area: ratatui::layout::Rect, app: &
         })
         .collect();
 
-    let log_widget = Paragraph::new(Text::from(log_lines))
-        .wrap(Wrap { trim: false });
+    let log_widget = Paragraph::new(Text::from(log_lines)).wrap(Wrap { trim: false });
     frame.render_widget(log_widget, chunks[0]);
 
     // 进度条
@@ -916,10 +913,7 @@ fn render_right_summary(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tu
             lines.push(Line::from(vec![
                 Span::styled(format!(" {} ", icon), Style::default().fg(fg)),
                 Span::styled(r.kind.label(), Style::default()),
-                Span::styled(
-                    format!(": {}", r.message),
-                    Style::default().dim(),
-                ),
+                Span::styled(format!(": {}", r.message), Style::default().dim()),
             ]));
         }
     }
@@ -1004,7 +998,12 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let width = area.width.clamp(36, 64);
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
-    let popup_area = ratatui::layout::Rect { x, y, width, height };
+    let popup_area = ratatui::layout::Rect {
+        x,
+        y,
+        width,
+        height,
+    };
 
     frame.render_widget(Clear, popup_area);
 
@@ -1031,10 +1030,7 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         height: 1,
     };
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            hint_line,
-            Style::default().dim(),
-        ))),
+        Paragraph::new(Line::from(Span::styled(hint_line, Style::default().dim()))),
         hint_area,
     );
 }
