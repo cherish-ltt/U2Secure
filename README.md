@@ -1,6 +1,6 @@
 <div align="center">
 <h1>U2Secure</h1>
-<h3>Linux 服务器安全加固 CLI 工具</h3>
+<h3>Linux 服务器安全加固工具 — CLI / TUI 双模式</h3>
 <p>
   <a href="https://github.com/cherish-ltt/u2secure/actions/workflows/rust-ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/cherish-ltt/u2secure/rust-ci.yml?branch=main" alt="Build Status"/>
@@ -21,17 +21,20 @@
 </div>
 
 
-> 🚀 面向 Linux 运维人员的交互式安全加固工具。运行一次即可完成从系统更新、用户创建、SSH 深度加固、防火墙、入侵防御、审计到自动更新的完整安全基线建设。
+> 🚀 面向 Linux 运维人员的交互式安全加固工具。支持 **TUI 终端图形界面**与**传统 CLI** 双模式。运行一次即可完成从系统更新、用户创建、SSH 深度加固、防火墙、入侵防御、审计到自动更新的完整安全基线建设。
 
 ## 目录
 
 - [概述](#概述)
 - [快速开始](#快速开始)
+- [启动模式](#启动模式)
+- [TUI 界面](#tui-界面)
 - [功能详解](#功能详解)
   - [Step 0：环境审计](#step-0环境审计)
   - [Step 1 ~ Step 12：加固步骤](#step-1--step-12加固步骤)
 - [安全回退机制](#安全回退机制)
 - [常见问题](#常见问题)
+- [版本历史](#版本历史)
 
 ---
 
@@ -40,7 +43,9 @@
 ### 设计目标
 
 - 首次运行自动审计系统当前安全状态，对已加固项目标记"安全可靠"（**幂等**）
-- 向导式交互（`dialoguer` 多选/输入/确认），每步执行前检测状态，不重复配置
+- **TUI 模式**：ratatui 终端图形界面，步骤列表 + 日志面板 + 进度条，支持单项强制执行
+- **CLI 模式**：传统 dialoguer 向导式交互，兼容原版体验
+- 每步执行前检测状态，不重复配置
 - 所有系统修改前自动备份，Ctrl+C 中断或步骤失败时自动回退
 
 ### 适用范围
@@ -57,21 +62,22 @@
 
 ```
 src/
-├── main.rs                 # 入口：初始化信号处理器，启动 CLI
+├── main.rs                 # 入口：三级路由 → CLI / TUI / 交互选择
 ├── domain/                 # 领域层（零外部依赖）
-│   ├── audit.rs            # AuditReport（审计报告实体）、AuditStatus、PackageManager
+│   ├── audit.rs            # AuditReport、AuditStatus、PackageManager
 │   ├── steps.rs            # StepKind、HardeningStep trait、ExecuteParams、SshKeyAction
 │   ├── errors.rs           # DomainError
 │   └── undo.rs             # UndoAction（可撤销操作值对象）
 ├── application/            # 应用层
-│   ├── orchestrator.rs     # HardeningOrchestrator：编排审计→选择→执行→回退
+│   ├── orchestrator.rs     # HardeningOrchestrator
 │   └── steps.rs            # 12 个步骤的具体实现
 ├── infrastructure/         # 基础设施
-│   ├── system.rs           # 系统命令执行、配置解析、用户管理、密钥管理
+│   ├── system.rs           # 系统命令、配置解析、用户管理、密钥管理
 │   ├── logger.rs           # 日志记录（含公钥脱敏）
-│   └── rollback.rs         # 回退管理器：全局 undo 栈 + Ctrl+C 信号处理
+│   └── rollback.rs         # 回退管理器：undo 栈 + Ctrl+C 信号处理
 └── presentation/           # 表示层
-    └── cli.rs              # dialoguer 交互式 CLI：审计渲染、步骤选择、参数收集
+    ├── cli.rs              # dialoguer 交互式 CLI
+    └── tui.rs              # ratatui 终端图形界面（TUI）
 ```
 
 ---
@@ -97,37 +103,58 @@ cargo install u2secure --locked
 ### 运行
 
 ```bash
-sudo u2secure
+sudo u2secure           # 交互式选择启动模式
+sudo u2secure -t        # 直接启动 TUI 模式（推荐）
+sudo u2secure -c        # 直接启动 CLI 模式
 ```
 
-首次运行会自动执行环境审计并展示报告，然后通过向导选择要执行的加固步骤。
+## 启动模式
 
-### 完整示例
+| 命令 | 模式 | 说明 |
+|------|------|------|
+| `u2secure` | 交互选择 | 弹窗选择 CLI 或 TUI |
+| `u2secure -t` / `--tui` | **TUI** | ratatui 终端图形界面（默认推荐） |
+| `u2secure -c` / `--cli` | **CLI** | 传统 dialoguer 交互式向导 |
 
-以下是一次典型运行过程（从审计到加固完成）：
+## TUI 界面
 
-```bash
-# 1. 以 root 运行
-$ sudo u2secure
-
-# 2. 自动输出环境审计报告（只读）
-# ──────────────────────────────────────────────
-# ✅ 当前用户权限: 已以 root 运行
-# ✅ 包管理器: 检测到 apt
-# ❌ SSH 端口: 默认端口 22
-# ❌ 密码登录: 密码登录未禁用
-# ❌ root 登录: root 登录未禁止
-# ❌ sudo 用户: 未检测到非 root 管理用户
-# ❌ Fail2ban: 未安装
-# ❌ UFW 防火墙: 未启用
-# ❌ 自动安全更新: 未启用
-# 🔄 系统更新状态: 缓存已过期
-# ──────────────────────────────────────────────
-
-# 3. 选择要执行的步骤（默认勾选未配置项）
-# 4. 交互式输入参数（用户名、端口、密钥等）
-# 5. 自动执行并输出总结报告
 ```
+┌─ U2Secure v0.2.0 — Linux 服务器安全加固工具 ──────────┐
+├─ 审计报告 ────────────────────────────────────────────┤
+│ ✅root ❌SSH:22 ❌sudo用户 ❌UFW ❌fail2ban ...       │
+├──────────────────────┬────────────────────────────────┤
+│  📋 加固步骤 (12)    │  ⚙️ 操作提示 / 执行状态        │
+│                      │                                │
+│  ▸ [✓] 系统更新  ✅  │  ↑↓ 移动光标                  │
+│    [✓] 用户创建  ❌  │  Space 切换选择               │
+│    [ ] SSH root  ✅  │  Enter 批量执行                │
+│    [ ] 端口修改  ❌  │  e 单项执行（强制）            │
+│    ...               │  📊 ████████░░ 6/10           │
+├──────────────────────┴────────────────────────────────┤
+│  ↑↓/jk  Space  Enter  e  r  q                        │
+└──────────────────────────────────────────────────────┘
+```
+
+### TUI 操作键
+
+| 按键 | 功能 |
+|------|------|
+| `↑` / `↓` | 移动步骤光标 |
+| `Space` | 切换选中/取消 |
+| `Enter` | 批量执行所有勾选步骤 |
+| `e` | **立即执行当前步骤**（不依赖勾选状态） |
+| `r` | 重新执行环境审计 |
+| `q` | 退出 |
+
+### TUI 弹窗操作
+
+执行 ED25519 密钥设置时，TUI 会弹出多步对话框：
+
+1. **输入用户名** — 手动输入目标用户名
+2. **选择操作** — 生成新密钥 / 粘贴已有公钥 / 跳过
+3. **粘贴公钥**（如选择）— 粘贴 ssh-ed25519 或 ssh-rsa 公钥内容
+
+全程在 TUI 内完成，不回退到命令行。
 
 ---
 
@@ -298,6 +325,13 @@ getent group sudo
 # 检查 UFW 状态
 ufw status
 ```
+
+## 版本历史
+
+| 版本 | 日期 | 亮点 |
+|------|------|------|
+| [v0.2.0](doc/versions/v0.2.0.md) | 2026-06 | 新增 ratatui TUI 模式，支持单项执行、弹窗交互 |
+| v0.1.0 | 2026-05 | 初始版本，dialoguer CLI 交互式加固 |
 
 ## 许可证
 
