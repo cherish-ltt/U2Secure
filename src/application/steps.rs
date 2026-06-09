@@ -78,11 +78,17 @@ impl HardeningStep for SystemUpdateStep {
         let output = Command::new(update_cmd[0])
             .args(&update_cmd[1..])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_update_failed"))))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_update_failed")
+                ))
+            })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "{}: {stderr}", crate::i18n::tr("err_update_failed")
+                "{}: {stderr}",
+                crate::i18n::tr("err_update_failed")
             )));
         }
 
@@ -90,11 +96,17 @@ impl HardeningStep for SystemUpdateStep {
         let output = Command::new(upgrade_cmd[0])
             .args(&upgrade_cmd[1..])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_upgrade_failed"))))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_upgrade_failed")
+                ))
+            })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "{}: {stderr}", crate::i18n::tr("err_upgrade_failed")
+                "{}: {stderr}",
+                crate::i18n::tr("err_upgrade_failed")
             )));
         }
 
@@ -127,14 +139,13 @@ impl HardeningStep for UserCreationStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        let username = params
-            .new_username
-            .as_deref()
-            .ok_or_else(|| DomainError::PreconditionFailed(crate::i18n::tr("err_no_username").into()))?;
+        let username = params.new_username.as_deref().ok_or_else(|| {
+            DomainError::PreconditionFailed(crate::i18n::tr("err_no_username").into())
+        })?;
 
         if system::user_exists(username) {
             return Err(DomainError::PreconditionFailed(
-                crate::i18n::tr("err_user_exists").replace("{user}", username)
+                crate::i18n::tr("err_user_exists").replace("{user}", username),
             ));
         }
 
@@ -218,12 +229,14 @@ impl HardeningStep for SshPortChangeStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        let new_port = params
-            .new_ssh_port
-            .ok_or_else(|| DomainError::PreconditionFailed(crate::i18n::tr("err_no_ssh_port").into()))?;
+        let new_port = params.new_ssh_port.ok_or_else(|| {
+            DomainError::PreconditionFailed(crate::i18n::tr("err_no_ssh_port").into())
+        })?;
 
         if new_port == 0 {
-            return Err(DomainError::PreconditionFailed(crate::i18n::tr("err_port_zero").into()));
+            return Err(DomainError::PreconditionFailed(
+                crate::i18n::tr("err_port_zero").into(),
+            ));
         }
 
         let result = modify_sshd_config("Port", &new_port.to_string())?;
@@ -314,15 +327,13 @@ impl HardeningStep for SshKeySetupStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        let username = params
-            .ssh_key_username
-            .as_deref()
-            .ok_or_else(|| DomainError::PreconditionFailed(crate::i18n::tr("err_no_target_user").into()))?;
+        let username = params.ssh_key_username.as_deref().ok_or_else(|| {
+            DomainError::PreconditionFailed(crate::i18n::tr("err_no_target_user").into())
+        })?;
 
-        let action = params
-            .ssh_key_action
-            .as_ref()
-            .ok_or_else(|| DomainError::PreconditionFailed(crate::i18n::tr("err_no_key_action").into()))?;
+        let action = params.ssh_key_action.as_ref().ok_or_else(|| {
+            DomainError::PreconditionFailed(crate::i18n::tr("err_no_key_action").into())
+        })?;
 
         let username_undo = username.to_string();
         match action {
@@ -390,11 +401,17 @@ impl HardeningStep for UfwStep {
         let output = Command::new("ufw")
             .args(["allow", &port.to_string()])
             .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_ufw_allow_failed"))))?;
+            .map_err(|e| {
+                DomainError::SystemCommandFailed(format!(
+                    "{}: {e}",
+                    crate::i18n::tr("err_ufw_allow_failed")
+                ))
+            })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DomainError::SystemCommandFailed(format!(
-                "{}: {stderr}", crate::i18n::tr("err_ufw_allow_failed")
+                "{}: {stderr}",
+                crate::i18n::tr("err_ufw_allow_failed")
             )));
         }
 
@@ -479,10 +496,13 @@ impl HardeningStep for Fail2banStep {
 
             // 安装成功后注册撤销
             rollback::register_command_undo(
-                crate::i18n::tr("undo_cmd").replace("{desc}", "stop fail2ban").into(),
+                crate::i18n::tr("undo_cmd").replace("{desc}", "stop fail2ban"),
                 vec!["systemctl".into(), "stop".into(), "fail2ban".into()],
             );
-            rollback::register_package_remove(crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "fail2ban").into(), "fail2ban".into());
+            rollback::register_package_remove(
+                crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "fail2ban"),
+                "fail2ban".into(),
+            );
         }
 
         // 配置监狱规则（使用 SSH 端口）
@@ -497,7 +517,8 @@ impl HardeningStep for Fail2banStep {
         Ok(StepResult {
             kind: StepKind::Fail2ban,
             changes_made: true,
-            message: crate::i18n::tr("result_fail2ban_installed").replace("{port}", &port.to_string()),
+            message: crate::i18n::tr("result_fail2ban_installed")
+                .replace("{port}", &port.to_string()),
         })
     }
 }
@@ -545,7 +566,7 @@ impl HardeningStep for AutoUpdatesStep {
 
         // 安装成功后注册撤销
         rollback::register_command_undo(
-            crate::i18n::tr("undo_cmd").replace("{desc}", "stop unattended-upgrades").into(),
+            crate::i18n::tr("undo_cmd").replace("{desc}", "stop unattended-upgrades"),
             vec![
                 "systemctl".into(),
                 "stop".into(),
@@ -553,7 +574,7 @@ impl HardeningStep for AutoUpdatesStep {
             ],
         );
         rollback::register_package_remove(
-            crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "unattended-upgrades").into(),
+            crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "unattended-upgrades"),
             "unattended-upgrades".into(),
         );
 
@@ -625,7 +646,10 @@ impl HardeningStep for SecurityScanStep {
         }
 
         // 安装完成后注册撤销（无论成功与否，实际在安装后注册）
-        rollback::register_package_remove(crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "lynis").into(), "lynis".into());
+        rollback::register_package_remove(
+            crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "lynis"),
+            "lynis".into(),
+        );
 
         if !system::which("lynis") {
             return Ok(StepResult {
@@ -692,7 +716,10 @@ impl HardeningStep for LogAuditStep {
             if system::which("logwatch") {
                 installed.push("logwatch");
                 // 安装成功后注册撤销
-                rollback::register_package_remove(crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "logwatch").into(), "logwatch".into());
+                rollback::register_package_remove(
+                    crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "logwatch"),
+                    "logwatch".into(),
+                );
             }
         } else {
             installed.push("logwatch");
@@ -708,7 +735,10 @@ impl HardeningStep for LogAuditStep {
             if system::which("aide") {
                 installed.push("aide");
                 // 安装成功后注册撤销
-                rollback::register_package_remove(crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "aide").into(), "aide".into());
+                rollback::register_package_remove(
+                    crate::i18n::tr("undo_pkg_remove").replace("{pkg}", "aide"),
+                    "aide".into(),
+                );
             }
         } else {
             installed.push("aide");
@@ -797,8 +827,7 @@ impl HardeningStep for RestartSshStep {
         Ok(StepResult {
             kind: StepKind::RestartSsh,
             changes_made: true,
-            message: crate::i18n::tr("result_ssh_restarted")
-                .replace("{status}", &status_str),
+            message: crate::i18n::tr("result_ssh_restarted").replace("{status}", &status_str),
         })
     }
 }

@@ -21,10 +21,18 @@ impl fmt::Display for DomainError {
         match self {
             Self::PermissionDenied => write!(f, "{}", crate::i18n::tr("err_permission_denied")),
             Self::SystemCommandFailed(msg) => {
-                write!(f, "{}", crate::i18n::tr("err_cmd_failed").replace("{msg}", msg))
+                write!(
+                    f,
+                    "{}",
+                    crate::i18n::tr("err_cmd_failed").replace("{msg}", msg)
+                )
             }
             Self::ParseError(msg) => {
-                write!(f, "{}", crate::i18n::tr("err_parse_error").replace("{msg}", msg))
+                write!(
+                    f,
+                    "{}",
+                    crate::i18n::tr("err_parse_error").replace("{msg}", msg)
+                )
             }
             Self::PreconditionFailed(msg) => write!(
                 f,

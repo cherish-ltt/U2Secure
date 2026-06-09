@@ -181,19 +181,29 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
         // ── 应用层（步骤执行结果） ──
         "result_sys_updated" => "系统更新完成",
-        "result_user_created" => "用户 '{user}' 已创建并加入 sudo 组，密钥已设置（私钥: ~/.ssh/id_ed25519）",
+        "result_user_created" => {
+            "用户 '{user}' 已创建并加入 sudo 组，密钥已设置（私钥: ~/.ssh/id_ed25519）"
+        }
         "result_root_login_set" => "PermitRootLogin 已设置为 prohibit-password（备份: {bak}）",
         "result_ssh_port_set" => "SSH 端口已修改为 {port}（{msg}）",
         "result_pw_auth_disabled" => "密码登录已禁用（仅允许密钥登录）",
-        "result_key_generated" => "ED25519 密钥对已生成\n  私钥: {priv}\n  公钥: {pub}\n  ⚠️  私钥无密码短语保护，建议手动加密：ssh-keygen -p -f {key}\n  请立即复制私钥并安全保存！",
+        "result_key_generated" => {
+            "ED25519 密钥对已生成\n  私钥: {priv}\n  公钥: {pub}\n  ⚠️  私钥无密码短语保护，建议手动加密：ssh-keygen -p -f {key}\n  请立即复制私钥并安全保存！"
+        }
         "result_key_pasted" => "公钥已添加到 {user} 的 authorized_keys",
         "result_ufw_enabled" => "UFW 已启用，SSH 端口 {port} 已放行",
         "result_fail2ban_installed" => "Fail2ban 已安装并运行，SSH 端口 {port} 已加入监控",
         "result_auto_updates_enabled" => "自动安全更新已启用（每日检查，自动安装安全补丁）",
-        "result_lynis_ok" => "lynis 安全扫描完成（{warns} 个警告, {suggs} 个建议）\n  详细报告: /var/log/lynis.log",
+        "result_lynis_ok" => {
+            "lynis 安全扫描完成（{warns} 个警告, {suggs} 个建议）\n  详细报告: /var/log/lynis.log"
+        }
         "result_lynis_fail" => "lynis 无法自动安装，请手动安装后重新运行",
-        "result_logwatch_installed" => "日志与审计增强完成\n  已安装/配置: {installed}\n  logwatch: 每日邮件报告\n  aide: 文件完整性检查已初始化",
-        "result_ssh_restarted" => "SSH 服务已重启（状态: {status}）\n  ⚠️  请在另一终端验证连接后再关闭当前会话！\n  🔄 如需回滚：systemctl restart sshd 或恢复备份 /etc/ssh/sshd_config.bak.*",
+        "result_logwatch_installed" => {
+            "日志与审计增强完成\n  已安装/配置: {installed}\n  logwatch: 每日邮件报告\n  aide: 文件完整性检查已初始化"
+        }
+        "result_ssh_restarted" => {
+            "SSH 服务已重启（状态: {status}）\n  ⚠️  请在另一终端验证连接后再关闭当前会话！\n  🔄 如需回滚：systemctl restart sshd 或恢复备份 /etc/ssh/sshd_config.bak.*"
+        }
         "result_sshd_cfg_set" => "{key} 已设置为 {value}（备份: {bak}）",
         "result_sshd_syntax_ok" => "sshd_config 语法检查通过",
         "result_sshd_syntax_err" => "sshd_config 语法错误，请检查配置: {err}",
@@ -282,7 +292,9 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "tui_result_title" => "执行结果",
         "tui_result_summary" => "总计: {ok} 成功, {fail} 失败/跳过",
         "tui_result_return" => "按任意键返回步骤列表",
-        "tui_footer_select" => "↑↓/jk 移动 | Space 选择 | Enter 批量执行 | e 单项执行 | r 重新审计 | q 退出",
+        "tui_footer_select" => {
+            "↑↓/jk 移动 | Space 选择 | Enter 批量执行 | e 单项执行 | r 重新审计 | q 退出"
+        }
         "tui_footer_exec" => "执行中... 按 Ctrl+C 中断",
         "tui_footer_summary" => "执行完毕 | 按任意键返回步骤列表",
         "tui_popup_username" => "目标用户名",
@@ -408,7 +420,9 @@ fn en(key: &str) -> Option<&'static str> {
         "err_unknown_pkg_mgr" => "Unrecognized package manager",
         "err_unsupported_pkg" => "Unsupported package manager",
         "err_auto_update_only_debian" => "Auto security updates only support Debian/Ubuntu",
-        "err_unknown_pkg_lynis" => "Cannot determine package manager, please install lynis manually",
+        "err_unknown_pkg_lynis" => {
+            "Cannot determine package manager, please install lynis manually"
+        }
         "err_sshd_not_found" => "sshd_config not found",
         "err_no_username" => "No username provided",
         "err_user_exists" => "User '{user}' already exists",
@@ -433,19 +447,31 @@ fn en(key: &str) -> Option<&'static str> {
         "err_write" => "Write failed",
 
         "result_sys_updated" => "System update completed",
-        "result_user_created" => "User '{user}' created with sudo, SSH key set (private key: ~/.ssh/id_ed25519)",
+        "result_user_created" => {
+            "User '{user}' created with sudo, SSH key set (private key: ~/.ssh/id_ed25519)"
+        }
         "result_root_login_set" => "PermitRootLogin set to prohibit-password (backup: {bak})",
         "result_ssh_port_set" => "SSH port changed to {port} ({msg})",
         "result_pw_auth_disabled" => "Password auth disabled (key-only login)",
-        "result_key_generated" => "ED25519 key pair generated\n  Private: {priv}\n  Public: {pub}\n  ⚠️  No passphrase set, encrypt manually: ssh-keygen -p -f {key}\n  Copy and save the private key now!",
+        "result_key_generated" => {
+            "ED25519 key pair generated\n  Private: {priv}\n  Public: {pub}\n  ⚠️  No passphrase set, encrypt manually: ssh-keygen -p -f {key}\n  Copy and save the private key now!"
+        }
         "result_key_pasted" => "Public key added to {user}'s authorized_keys",
         "result_ufw_enabled" => "UFW enabled, SSH port {port} allowed",
         "result_fail2ban_installed" => "Fail2ban installed and running, SSH port {port} monitored",
-        "result_auto_updates_enabled" => "Auto security updates enabled (daily check, auto-install patches)",
-        "result_lynis_ok" => "Lynis security scan completed ({warns} warnings, {suggs} suggestions)\n  Full report: /var/log/lynis.log",
+        "result_auto_updates_enabled" => {
+            "Auto security updates enabled (daily check, auto-install patches)"
+        }
+        "result_lynis_ok" => {
+            "Lynis security scan completed ({warns} warnings, {suggs} suggestions)\n  Full report: /var/log/lynis.log"
+        }
         "result_lynis_fail" => "Lynis could not be auto-installed, please install manually",
-        "result_logwatch_installed" => "Log & audit enhancement complete\n  Installed/configured: {installed}\n  logwatch: daily email report\n  aide: file integrity check initialized",
-        "result_ssh_restarted" => "SSH service restarted (status: {status})\n  ⚠️  Verify connection in another terminal before closing this session!\n  🔄 Rollback: systemctl restart sshd or restore /etc/ssh/sshd_config.bak.*",
+        "result_logwatch_installed" => {
+            "Log & audit enhancement complete\n  Installed/configured: {installed}\n  logwatch: daily email report\n  aide: file integrity check initialized"
+        }
+        "result_ssh_restarted" => {
+            "SSH service restarted (status: {status})\n  ⚠️  Verify connection in another terminal before closing this session!\n  🔄 Rollback: systemctl restart sshd or restore /etc/ssh/sshd_config.bak.*"
+        }
         "result_sshd_cfg_set" => "{key} set to {value} (backup: {bak})",
         "result_sshd_syntax_ok" => "sshd_config syntax check passed",
         "result_sshd_syntax_err" => "sshd_config syntax error: {err}",
@@ -471,7 +497,9 @@ fn en(key: &str) -> Option<&'static str> {
         "cli_welcome" => "U2Secure - Linux Server Security Hardening Tool v{ver}",
         "cli_auditing" => "Running environment audit...",
         "cli_audit_done" => "Environment audit completed:",
-        "cli_select_steps" => "Select hardening steps to execute (secure items are unchecked by default):",
+        "cli_select_steps" => {
+            "Select hardening steps to execute (secure items are unchecked by default):"
+        }
         "cli_hint_nav" => "Hint: arrow keys to move, space to select, enter to confirm",
         "cli_collecting" => "Collecting configuration parameters...",
         "cli_will_execute" => "The following steps will be executed:",
@@ -530,7 +558,9 @@ fn en(key: &str) -> Option<&'static str> {
         "tui_result_title" => "Execution Result",
         "tui_result_summary" => "Total: {ok} success, {fail} failed/skipped",
         "tui_result_return" => "Press any key to return to step list",
-        "tui_footer_select" => "↑↓/jk Move | Space Toggle | Enter Batch | e Single | r Re-audit | q Quit",
+        "tui_footer_select" => {
+            "↑↓/jk Move | Space Toggle | Enter Batch | e Single | r Re-audit | q Quit"
+        }
         "tui_footer_exec" => "Running... Press Ctrl+C to interrupt",
         "tui_footer_summary" => "Done | Press any key to return",
         "tui_popup_username" => "Target Username",
@@ -680,19 +710,29 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "err_write" => "寫入失敗",
 
         "result_sys_updated" => "系統更新完成",
-        "result_user_created" => "用戶 '{user}' 已創建並加入 sudo 群組，金鑰已設定（私鑰: ~/.ssh/id_ed25519）",
+        "result_user_created" => {
+            "用戶 '{user}' 已創建並加入 sudo 群組，金鑰已設定（私鑰: ~/.ssh/id_ed25519）"
+        }
         "result_root_login_set" => "PermitRootLogin 已設定為 prohibit-password（備份: {bak}）",
         "result_ssh_port_set" => "SSH 連接埠已修改為 {port}（{msg}）",
         "result_pw_auth_disabled" => "密碼登入已停用（僅允許金鑰登入）",
-        "result_key_generated" => "ED25519 金鑰對已生成\n  私鑰: {priv}\n  公鑰: {pub}\n  ⚠️  私鑰無密碼短語保護，建議手動加密：ssh-keygen -p -f {key}\n  請立即複製私鑰並安全儲存！",
+        "result_key_generated" => {
+            "ED25519 金鑰對已生成\n  私鑰: {priv}\n  公鑰: {pub}\n  ⚠️  私鑰無密碼短語保護，建議手動加密：ssh-keygen -p -f {key}\n  請立即複製私鑰並安全儲存！"
+        }
         "result_key_pasted" => "公鑰已添加到 {user} 的 authorized_keys",
         "result_ufw_enabled" => "UFW 已啟用，SSH 連接埠 {port} 已放行",
         "result_fail2ban_installed" => "Fail2ban 已安裝並執行，SSH 連接埠 {port} 已加入監控",
         "result_auto_updates_enabled" => "自動安全更新已啟用（每日檢查，自動安裝安全修補程式）",
-        "result_lynis_ok" => "lynis 安全掃描完成（{warns} 個警告, {suggs} 個建議）\n  詳細報告: /var/log/lynis.log",
+        "result_lynis_ok" => {
+            "lynis 安全掃描完成（{warns} 個警告, {suggs} 個建議）\n  詳細報告: /var/log/lynis.log"
+        }
         "result_lynis_fail" => "lynis 無法自動安裝，請手動安裝後重新執行",
-        "result_logwatch_installed" => "日誌與稽核增強完成\n  已安裝/配置: {installed}\n  logwatch: 每日郵件報告\n  aide: 檔案完整性檢查已初始化",
-        "result_ssh_restarted" => "SSH 服務已重新啟動（狀態: {status}）\n  ⚠️  請在另一個終端驗證連線後再關閉當前會話！\n  🔄 如需回退：systemctl restart sshd 或恢復備份 /etc/ssh/sshd_config.bak.*",
+        "result_logwatch_installed" => {
+            "日誌與稽核增強完成\n  已安裝/配置: {installed}\n  logwatch: 每日郵件報告\n  aide: 檔案完整性檢查已初始化"
+        }
+        "result_ssh_restarted" => {
+            "SSH 服務已重新啟動（狀態: {status}）\n  ⚠️  請在另一個終端驗證連線後再關閉當前會話！\n  🔄 如需回退：systemctl restart sshd 或恢復備份 /etc/ssh/sshd_config.bak.*"
+        }
         "result_sshd_cfg_set" => "{key} 已設定為 {value}（備份: {bak}）",
         "result_sshd_syntax_ok" => "sshd_config 語法檢查通過",
         "result_sshd_syntax_err" => "sshd_config 語法錯誤，請檢查配置: {err}",
@@ -777,7 +817,9 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "tui_result_title" => "執行結果",
         "tui_result_summary" => "總計: {ok} 成功, {fail} 失敗/跳過",
         "tui_result_return" => "按任意鍵返回步驟列表",
-        "tui_footer_select" => "↑↓/jk 移動 | Space 選擇 | Enter 批次執行 | e 單項執行 | r 重新稽核 | q 退出",
+        "tui_footer_select" => {
+            "↑↓/jk 移動 | Space 選擇 | Enter 批次執行 | e 單項執行 | r 重新稽核 | q 退出"
+        }
         "tui_footer_exec" => "執行中... 按 Ctrl+C 中斷",
         "tui_footer_summary" => "執行完畢 | 按任意鍵返回步驟列表",
         "tui_popup_username" => "目標用戶名",

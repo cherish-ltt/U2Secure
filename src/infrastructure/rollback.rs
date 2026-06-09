@@ -21,7 +21,7 @@ pub fn init_signal_handler() {
     ctrlc::set_handler(move || {
         INTERRUPTED.store(true, Ordering::SeqCst);
     })
-    .expect(crate::i18n::tr("err_setup_signal"));
+    .unwrap_or_else(|_| panic!("{}", crate::i18n::tr("err_setup_signal")));
 }
 
 /// 注册一个撤销操作
@@ -45,7 +45,7 @@ pub fn undo_all() {
     if let Some(mut actions) = actions {
         actions.reverse();
         for action in actions {
-            eprintln!("  {} {}", "⮐", action.description);
+            eprintln!("  ⮐ {}", action.description);
             action.execute();
         }
     }

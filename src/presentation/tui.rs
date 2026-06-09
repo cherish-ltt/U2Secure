@@ -211,7 +211,9 @@ fn run_app(
                             *selected = selected.saturating_sub(1);
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
-                            *selected = selected.saturating_add(1).min(users.len().saturating_sub(1));
+                            *selected = selected
+                                .saturating_add(1)
+                                .min(users.len().saturating_sub(1));
                         }
                         KeyCode::Enter => {
                             let username = users[*selected].clone();
@@ -247,7 +249,10 @@ fn run_app(
                                 } else {
                                     app.popup = None;
                                     run_ssh_key_setup(
-                                        app, terminal, orchestrator, u,
+                                        app,
+                                        terminal,
+                                        orchestrator,
+                                        u,
                                         Some(SshKeyAction::GenerateNew),
                                     )?;
                                 }
@@ -259,7 +264,9 @@ fn run_app(
                                     value: String::new(),
                                 });
                             }
-                            _ => { app.popup = None; }
+                            _ => {
+                                app.popup = None;
+                            }
                         },
                         KeyCode::Esc => app.popup = None,
                         _ => {}
@@ -269,13 +276,18 @@ fn run_app(
                         ref mut value,
                     } => match key.code {
                         KeyCode::Char(c) => value.push(c),
-                        KeyCode::Backspace => { value.pop(); }
+                        KeyCode::Backspace => {
+                            value.pop();
+                        }
                         KeyCode::Enter if !value.is_empty() => {
                             let u = username.clone();
                             let pk = value.clone();
                             app.popup = None;
                             run_ssh_key_setup(
-                                app, terminal, orchestrator, u,
+                                app,
+                                terminal,
+                                orchestrator,
+                                u,
                                 Some(SshKeyAction::PasteKey(pk)),
                             )?;
                         }
@@ -309,7 +321,10 @@ fn run_app(
                                     let _ = std::fs::remove_file(&p);
                                 }
                                 run_ssh_key_setup(
-                                    app, terminal, orchestrator, u,
+                                    app,
+                                    terminal,
+                                    orchestrator,
+                                    u,
                                     Some(SshKeyAction::GenerateNew),
                                 )?;
                             }
@@ -337,7 +352,9 @@ fn run_app(
                                 value.push(c);
                             }
                         }
-                        KeyCode::Backspace => { value.pop(); }
+                        KeyCode::Backspace => {
+                            value.pop();
+                        }
                         KeyCode::Enter if !value.is_empty() => {
                             let username = value.clone();
                             app.popup = Some(Popup::CreateUserLockPw {
@@ -373,7 +390,9 @@ fn run_app(
                                 value.push(c);
                             }
                         }
-                        KeyCode::Backspace => { value.pop(); }
+                        KeyCode::Backspace => {
+                            value.pop();
+                        }
                         KeyCode::Enter if !value.is_empty() => {
                             if let Ok(port) = value.parse::<u16>()
                                 && port > 0
@@ -589,7 +608,9 @@ fn execute_batch(
                     });
                 }
                 app.results.push(result);
-                orchestrator.logger.log_operation(crate::i18n::tr("log_step_complete"), kind.label());
+                orchestrator
+                    .logger
+                    .log_operation(crate::i18n::tr("log_step_complete"), kind.label());
             }
             Err(e) => {
                 mark_step_state(app, kind, StepExecState::Failure);
@@ -603,9 +624,10 @@ fn execute_batch(
                     message: crate::i18n::tr("tui_exec_failed").replace("{err}", &format!("{e}")),
                 };
                 app.results.push(err_result);
-                orchestrator
-                    .logger
-                    .log_operation(crate::i18n::tr("log_step_failed"), &format!("{}: {e}", kind.label()));
+                orchestrator.logger.log_operation(
+                    crate::i18n::tr("log_step_failed"),
+                    &format!("{}: {e}", kind.label()),
+                );
 
                 // 自动回退
                 orchestrator
@@ -743,7 +765,13 @@ fn run_user_creation(
         s.state = StepExecState::Idle;
     }
     app.mode = AppMode::Executing;
-    execute_single(app, terminal, _orchestrator, StepKind::UserCreation, &params)?;
+    execute_single(
+        app,
+        terminal,
+        _orchestrator,
+        StepKind::UserCreation,
+        &params,
+    )?;
     app.mode = AppMode::Summary;
     Ok(())
 }
@@ -766,7 +794,13 @@ fn run_ssh_port_change(
         s.state = StepExecState::Idle;
     }
     app.mode = AppMode::Executing;
-    execute_single(app, terminal, _orchestrator, StepKind::SshPortChange, &params)?;
+    execute_single(
+        app,
+        terminal,
+        _orchestrator,
+        StepKind::SshPortChange,
+        &params,
+    )?;
     app.mode = AppMode::Summary;
     Ok(())
 }
@@ -926,7 +960,10 @@ fn render_main_content(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tui
 
 fn render_step_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let block = Block::default()
-        .title(format!(" {} ", crate::i18n::tr("tui_steps_title").replace("{n}", &app.steps.len().to_string())))
+        .title(format!(
+            " {} ",
+            crate::i18n::tr("tui_steps_title").replace("{n}", &app.steps.len().to_string())
+        ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded);
 
@@ -1198,7 +1235,14 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         Popup::SshKeyAction { selected, .. } => (
             format!(" {} ", crate::i18n::tr("tui_popup_select_action")),
             7,
-            render_select_options(&[crate::i18n::tr("tui_popup_gen_key"), crate::i18n::tr("tui_popup_paste_key"), crate::i18n::tr("tui_popup_skip")], *selected),
+            render_select_options(
+                &[
+                    crate::i18n::tr("tui_popup_gen_key"),
+                    crate::i18n::tr("tui_popup_paste_key"),
+                    crate::i18n::tr("tui_popup_skip"),
+                ],
+                *selected,
+            ),
             crate::i18n::tr("tui_hint_updown_enter_esc"),
         ),
         Popup::SshKeyPaste { value, .. } => (
@@ -1210,7 +1254,13 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         Popup::SshKeyOverwrite { selected, .. } => (
             format!(" {} ", crate::i18n::tr("tui_popup_overwrite_title")),
             7,
-            render_select_options(&[crate::i18n::tr("tui_popup_overwrite_yes"), crate::i18n::tr("tui_popup_overwrite_no")], *selected),
+            render_select_options(
+                &[
+                    crate::i18n::tr("tui_popup_overwrite_yes"),
+                    crate::i18n::tr("tui_popup_overwrite_no"),
+                ],
+                *selected,
+            ),
             crate::i18n::tr("tui_hint_updown_enter_esc_back"),
         ),
         Popup::CreateUserUsername { value } => (
@@ -1222,7 +1272,13 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         Popup::CreateUserLockPw { lock, .. } => (
             format!(" {} ", crate::i18n::tr("tui_popup_lock_title")),
             7,
-            render_select_options(&[crate::i18n::tr("tui_popup_lock_yes"), crate::i18n::tr("tui_popup_lock_no")], if *lock { 0 } else { 1 }),
+            render_select_options(
+                &[
+                    crate::i18n::tr("tui_popup_lock_yes"),
+                    crate::i18n::tr("tui_popup_lock_no"),
+                ],
+                if *lock { 0 } else { 1 },
+            ),
             crate::i18n::tr("tui_hint_updown_enter_esc_back"),
         ),
         Popup::SshPortInput { value } => (
@@ -1280,7 +1336,10 @@ fn render_username_input(value: &str) -> Vec<Line<'static>> {
             Line::from(vec![Span::raw("")]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled(crate::i18n::tr("tui_popup_enter_user"), Style::default().dim().fg(Color::Gray)),
+                Span::styled(
+                    crate::i18n::tr("tui_popup_enter_user"),
+                    Style::default().dim().fg(Color::Gray),
+                ),
                 Span::styled("█", Style::default().fg(Color::Cyan)),
             ]),
         ]

@@ -21,7 +21,11 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     );
 
     // ── 步骤 0：环境审计 ──
-    println!("{} {}...\n", "🔍".bright_blue(), crate::i18n::tr("cli_auditing"));
+    println!(
+        "{} {}...\n",
+        "🔍".bright_blue(),
+        crate::i18n::tr("cli_auditing")
+    );
     let report = orchestrator.audit();
 
     render_audit_report(&report);
@@ -30,15 +34,27 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     let selected_steps = step_selection(&report);
 
     if selected_steps.is_empty() {
-        println!("\n{} {}", "ℹ️".yellow(), crate::i18n::tr("cli_no_selection"));
+        println!(
+            "\n{} {}",
+            "ℹ️".yellow(),
+            crate::i18n::tr("cli_no_selection")
+        );
         return;
     }
 
     // ── 为每个需要交互的步骤收集输入 ──
-    println!("\n{} {}\n", "📝".bright_blue(), crate::i18n::tr("cli_collecting"));
+    println!(
+        "\n{} {}\n",
+        "📝".bright_blue(),
+        crate::i18n::tr("cli_collecting")
+    );
 
     // 确认后再收集交互输入
-    println!("\n{} {}", "📋".bright_blue(), crate::i18n::tr("cli_will_execute"));
+    println!(
+        "\n{} {}",
+        "📋".bright_blue(),
+        crate::i18n::tr("cli_will_execute")
+    );
     for s in &selected_steps {
         let status = s.check_default_status(&report);
         println!("  {} {}", status.icon(), s.label());
@@ -58,7 +74,11 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     let params = collect_step_params(&selected_steps, &report);
 
     // ── 执行 ──
-    println!("\n{} {}\n", "⚙️".bright_green(), crate::i18n::tr("cli_executing"));
+    println!(
+        "\n{} {}\n",
+        "⚙️".bright_green(),
+        crate::i18n::tr("cli_executing")
+    );
     let results = orchestrator.execute_steps(&report, &selected_steps, &params);
 
     // ── 总结报告 ──
@@ -131,18 +151,19 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 println!(
                     "{} {}",
                     "ℹ️".yellow(),
-                    crate::i18n::tr("cli_current_port")
-                        .replace("{port}", &if current_port == 22 {
+                    crate::i18n::tr("cli_current_port").replace(
+                        "{port}",
+                        &if current_port == 22 {
                             crate::i18n::tr("cli_default_port").to_string()
                         } else {
                             current_port.to_string()
-                        })
+                        }
+                    )
                 );
                 println!(
                     "{} {}",
                     "💡".bright_blue(),
-                    crate::i18n::tr("cli_suggest_port")
-                        .replace("{port}", &suggested.to_string())
+                    crate::i18n::tr("cli_suggest_port").replace("{port}", &suggested.to_string())
                 );
 
                 let port_str: String = Input::new()
@@ -152,7 +173,9 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                         if input == "0" {
                             return Ok(());
                         }
-                        let port: u16 = input.parse().map_err(|_| crate::i18n::tr("cli_port_invalid"))?;
+                        let port: u16 = input
+                            .parse()
+                            .map_err(|_| crate::i18n::tr("cli_port_invalid"))?;
                         if port == 0 {
                             return Err(crate::i18n::tr("cli_port_zero"));
                         }
@@ -177,11 +200,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 // 确定目标用户
                 let users = system::detect_sudo_users();
                 let target_user = if users.is_empty() {
-                    println!(
-                        "{} {}",
-                        "ℹ️".yellow(),
-                        crate::i18n::tr("cli_manual_user")
-                    );
+                    println!("{} {}", "ℹ️".yellow(), crate::i18n::tr("cli_manual_user"));
                     let manual: String = Input::new()
                         .with_prompt(crate::i18n::tr("cli_user_prompt"))
                         .validate_with(|input: &String| -> Result<(), &str> {
@@ -226,7 +245,11 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                     );
                 }
 
-                let action_options = &[crate::i18n::tr("cli_key_generate"), crate::i18n::tr("cli_key_paste"), crate::i18n::tr("cli_key_skip")];
+                let action_options = &[
+                    crate::i18n::tr("cli_key_generate"),
+                    crate::i18n::tr("cli_key_paste"),
+                    crate::i18n::tr("cli_key_skip"),
+                ];
                 let selection = Select::new()
                     .with_prompt(crate::i18n::tr("cli_key_action").replace("{user}", &target_user))
                     .items(action_options)
@@ -262,7 +285,11 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
 
 /// 渲染审计报告
 fn render_audit_report(report: &AuditReport) {
-    println!("{} {}", "📊".bright_cyan(), crate::i18n::tr("cli_audit_done"));
+    println!(
+        "{} {}",
+        "📊".bright_cyan(),
+        crate::i18n::tr("cli_audit_done")
+    );
     println!("{}", "─".repeat(50).dimmed());
 
     for item in &report.items {
@@ -303,11 +330,7 @@ fn step_selection(report: &AuditReport) -> Vec<StepKind> {
         "📋".bright_blue(),
         crate::i18n::tr("cli_select_steps"),
     );
-    println!(
-        "{} {}\n",
-        "💡".dimmed(),
-        crate::i18n::tr("cli_hint_nav"),
-    );
+    println!("{} {}\n", "💡".dimmed(), crate::i18n::tr("cli_hint_nav"),);
 
     let selections = MultiSelect::new()
         .items(&items)
@@ -326,7 +349,11 @@ fn step_selection(report: &AuditReport) -> Vec<StepKind> {
 /// 渲染执行总结
 fn render_summary(results: &[crate::domain::steps::StepResult]) {
     println!("\n{}", "=".repeat(50).bright_green());
-    println!("{} {}", "📋".bright_green(), crate::i18n::tr("cli_summary_title"));
+    println!(
+        "{} {}",
+        "📋".bright_green(),
+        crate::i18n::tr("cli_summary_title")
+    );
     println!("{}", "=".repeat(50).bright_green());
 
     let mut success_count = 0;

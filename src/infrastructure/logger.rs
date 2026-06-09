@@ -47,7 +47,12 @@ impl FileLogger {
     pub fn log_operation(&self, step: &str, detail: &str) {
         // 简单脱敏：替换公钥内容
         let sanitized = sanitize_detail(detail);
-        self.log(&format!("{} {}: {}", crate::i18n::tr("log_operation"), step, sanitized));
+        self.log(&format!(
+            "{} {}: {}",
+            crate::i18n::tr("log_operation"),
+            step,
+            sanitized
+        ));
     }
 }
 

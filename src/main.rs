@@ -4,7 +4,7 @@ mod infrastructure;
 mod presentation;
 
 use u2secure::i18n;
-use u2secure::i18n::{Lang};
+use u2secure::i18n::Lang;
 
 use application::orchestrator::HardeningOrchestrator;
 use infrastructure::rollback;
@@ -33,10 +33,7 @@ impl ModeChoice {
 
     fn interactive() -> Self {
         // 语言选择
-        let lang_options: Vec<&str> = Lang::all()
-            .iter()
-            .map(|l| l.label())
-            .collect();
+        let lang_options: Vec<&str> = Lang::all().iter().map(|l| l.label()).collect();
         let lang_sel = dialoguer::Select::new()
             .with_prompt(i18n::translate("select_language"))
             .items(&lang_options)

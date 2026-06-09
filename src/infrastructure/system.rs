@@ -266,15 +266,13 @@ pub fn run_full_audit() -> AuditReport {
     items.push(AuditItem {
         name: crate::i18n::tr("audit_pkg_mgr"),
         status: AuditStatus::Safe,
-        detail: crate::i18n::tr("audit_detail_pkg")
-            .replace("{pkg}", package_manager.name()),
+        detail: crate::i18n::tr("audit_detail_pkg").replace("{pkg}", package_manager.name()),
     });
 
     items.push(if ssh_port != 22 {
         AuditItem::safe(
             crate::i18n::tr("audit_ssh_port"),
-            crate::i18n::tr("audit_detail_port_safe")
-                .replace("{port}", &ssh_port.to_string()),
+            crate::i18n::tr("audit_detail_port_safe").replace("{port}", &ssh_port.to_string()),
         )
     } else {
         AuditItem::missing(
@@ -315,8 +313,7 @@ pub fn run_full_audit() -> AuditReport {
     } else {
         AuditItem::safe(
             crate::i18n::tr("audit_sudo_users"),
-            crate::i18n::tr("audit_detail_sudo_ok")
-                .replace("{users}", &sudo_users.join(", ")),
+            crate::i18n::tr("audit_detail_sudo_ok").replace("{users}", &sudo_users.join(", ")),
         )
     });
 
