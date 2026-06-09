@@ -78,10 +78,14 @@ struct LogEntry {
 enum Popup {
     /// SSH 密钥：输入用户名
     SshKeyUsername { value: String },
+    /// SSH 密钥：选择操作用户
+    SshKeyUserSelect { users: Vec<String>, selected: usize },
     /// SSH 密钥：选择操作
     SshKeyAction { username: String, selected: usize },
     /// SSH 密钥：粘贴公钥
     SshKeyPaste { username: String, value: String },
+    /// SSH 密钥：确认覆盖已有密钥
+    SshKeyOverwrite { username: String, selected: usize },
 
     /// 创建用户：输入用户名
     CreateUserUsername { value: String },
@@ -199,6 +203,26 @@ fn run_app(
                         KeyCode::Esc => app.popup = None,
                         _ => {}
                     },
+                    Popup::SshKeyUserSelect {
+                        ref users,
+                        ref mut selected,
+                    } => match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            *selected = selected.saturating_sub(1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            *selected = selected.saturating_add(1).min(users.len().saturating_sub(1));
+                        }
+                        KeyCode::Enter => {
+                            let username = users[*selected].clone();
+                            app.popup = Some(Popup::SshKeyAction {
+                                username,
+                                selected: 0,
+                            });
+                        }
+                        KeyCode::Esc => app.popup = None,
+                        _ => {}
+                    },
                     Popup::SshKeyAction {
                         ref username,
                         ref mut selected,
@@ -212,11 +236,21 @@ fn run_app(
                         KeyCode::Enter => match *selected {
                             0 => {
                                 let u = username.clone();
-                                app.popup = None;
-                                run_ssh_key_setup(
-                                    app, terminal, orchestrator, u,
-                                    Some(SshKeyAction::GenerateNew),
-                                )?;
+                                // 检查密钥是否已存在
+                                let home = system::home_dir(&u);
+                                let key_path = format!("{}/.ssh/id_ed25519", home);
+                                if std::path::Path::new(&key_path).exists() {
+                                    app.popup = Some(Popup::SshKeyOverwrite {
+                                        username: u,
+                                        selected: 0,
+                                    });
+                                } else {
+                                    app.popup = None;
+                                    run_ssh_key_setup(
+                                        app, terminal, orchestrator, u,
+                                        Some(SshKeyAction::GenerateNew),
+                                    )?;
+                                }
                             }
                             1 => {
                                 let u = username.clone();
@@ -245,6 +279,48 @@ fn run_app(
                                 Some(SshKeyAction::PasteKey(pk)),
                             )?;
                         }
+                        KeyCode::Esc => {
+                            let u = username.clone();
+                            app.popup = Some(Popup::SshKeyAction {
+                                username: u,
+                                selected: 0,
+                            });
+                        }
+                        _ => {}
+                    },
+                    Popup::SshKeyOverwrite {
+                        ref username,
+                        ref mut selected,
+                    } => match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            *selected = 0;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            *selected = 1;
+                        }
+                        KeyCode::Enter => match *selected {
+                            0 => {
+                                let u = username.clone();
+                                app.popup = None;
+                                // 先删旧密钥再重建
+                                let home = system::home_dir(&u);
+                                for f in ["id_ed25519", "id_ed25519.pub"] {
+                                    let p = format!("{}/.ssh/{}", home, f);
+                                    let _ = std::fs::remove_file(&p);
+                                }
+                                run_ssh_key_setup(
+                                    app, terminal, orchestrator, u,
+                                    Some(SshKeyAction::GenerateNew),
+                                )?;
+                            }
+                            _ => {
+                                let u = username.clone();
+                                app.popup = Some(Popup::SshKeyAction {
+                                    username: u,
+                                    selected: 0,
+                                });
+                            }
+                        },
                         KeyCode::Esc => {
                             let u = username.clone();
                             app.popup = Some(Popup::SshKeyAction {
@@ -372,20 +448,23 @@ fn run_app(
                                     }
                                     StepKind::SshKeySetup => {
                                         let users = system::detect_sudo_users();
-                                        let username = if users.is_empty() {
-                                            // 无 sudo 用户：弹窗让用户输入
+                                        if users.is_empty() {
                                             app.popup = Some(Popup::SshKeyUsername {
                                                 value: String::new(),
                                             });
-                                            continue;
                                         } else {
-                                            // 有 sudo 用户：自动取第一个，直接到操作选择
-                                            users[0].clone()
-                                        };
-                                        app.popup = Some(Popup::SshKeyAction {
-                                            username,
-                                            selected: 0,
-                                        });
+                                            // 包含 root 在内供用户选择
+                                            let mut choices = vec!["root".to_string()];
+                                            for u in users {
+                                                if u != "root" {
+                                                    choices.push(u);
+                                                }
+                                            }
+                                            app.popup = Some(Popup::SshKeyUserSelect {
+                                                users: choices,
+                                                selected: 0,
+                                            });
+                                        }
                                         continue;
                                     }
                                     StepKind::SshPortChange => {
@@ -1107,6 +1186,12 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             render_username_input(value),
             " Enter 确认  Esc 取消 ",
         ),
+        Popup::SshKeyUserSelect { users, selected } => (
+            " 选择用户 ",
+            (users.len() + 2).clamp(5, 12) as u16,
+            render_string_list(users, *selected),
+            " ↑↓ 选择  Enter 确认  Esc 取消 ",
+        ),
         Popup::SshKeyAction { selected, .. } => (
             " 选择操作 ",
             7,
@@ -1118,6 +1203,12 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
             5,
             render_pubkey_input(value),
             " Enter 确认  Esc 返回 ",
+        ),
+        Popup::SshKeyOverwrite { selected, .. } => (
+            " 密钥已存在 ",
+            7,
+            render_select_options(&["重新创建 (覆盖现有密钥)", "取消"], *selected),
+            " ↑↓ 选择  Enter 确认  Esc 返回 ",
         ),
         Popup::CreateUserUsername { value } => (
             " 新用户名 ",
@@ -1246,6 +1337,24 @@ fn render_select_options(options: &[&'static str], selected: usize) -> Vec<Line<
         lines.push(Line::from(vec![
             Span::styled(prefix, style),
             Span::styled(*opt, style),
+        ]));
+    }
+    lines
+}
+
+/// 动态字符串列表渲染（用于用户选择等）
+fn render_string_list(items: &[String], selected: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![Span::raw("")])];
+    for (i, item) in items.iter().enumerate() {
+        let prefix = if i == selected { " ▸ " } else { "   " };
+        let style = if i == selected {
+            Style::default().fg(Color::Cyan).bold()
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(item.clone(), style),
         ]));
     }
     lines
