@@ -388,6 +388,7 @@ ufw status
 
 | 版本 | 日期 | 亮点 |
 |------|------|------|
+| v0.3.1 | 2026-09 | 许可证变更为 MIT OR Apache-2.0 双协议 |
 | v0.3.0 | 2026-09 | 支持 npm / bun / cargo-binstall 安装预编译二进制，新增 Linux & macOS ARM64 构建 |
 | [v0.2.0](docs/versions/v0.2.0.md) | 2026-06 | 新增 ratatui TUI 模式，支持单项执行、弹窗交互 |
 | v0.1.0 | 2026-05 | 初始版本，dialoguer CLI 交互式加固 |
