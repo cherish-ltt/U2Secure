@@ -1,9 +1,19 @@
-/target
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
 
-pi-review/
+# macOS
+.DS_Store
 
-prd.md
+# IDE
+.vscode/
+.idea/
+*.swp
 
+# 项目日志
 secure-init.log
 
-.DS_Store
+# 其他
+pi-review/
+prd.md
