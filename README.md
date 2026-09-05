@@ -15,7 +15,7 @@
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"/>
   </a>
   <a href="https://www.rust-lang.org">
-    <img src="https://img.shields.io/badge/rust-1.95.0+-orange.svg" alt="license"/>
+    <img src="https://img.shields.io/badge/rust-1.98.1+-orange.svg" alt="rust version"/>
   </a>
   <img src="https://github.com/cherish-ltt/U2Secure/blob/main/doc/show-tui.png" width="720"/>
 </p>
@@ -34,6 +34,7 @@
   - [Step 1 ~ Step 12：加固步骤](#step-1--step-12加固步骤)
 - [安全回退机制](#安全回退机制)
 - [常见问题](#常见问题)
+- [贡献指南](#贡献指南)
 - [版本历史](#版本历史)
 
 ---
@@ -338,6 +339,15 @@ getent group sudo
 # 检查 UFW 状态
 ufw status
 ```
+
+## 贡献指南
+
+欢迎提交 Issue 与 Pull Request。所有贡献必须遵守项目开发规范 [AGENTS.md](AGENTS.md)，包括：
+
+- **提交规范**：`<type>: <中文描述>`（如 `feat: 添加用户登录接口`），单次提交对应单一逻辑变更
+- **代码质量**：所有变更必须通过 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo build`、`cargo test` 四项 CI 检查
+- **项目结构**：遵循 DDD + 洋葱架构（domain / application / infrastructure / presentation）
+- **测试要求**：新功能须附带单元测试，测试覆盖率 ≥ 80%
 
 ## 版本历史
 
