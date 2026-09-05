@@ -1,6 +1,6 @@
 [package]
 name = "u2secure"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.98.1"
 authors = ["cherish-ltt <125760530+cherish-ltt@users.noreply.github.com>"]
@@ -8,6 +8,11 @@ description = "Make your Linux system more secure through interactive CLI | 通�
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/cherish-ltt/U2Secure"
+
+# cargo-binstall 预编译二进制安装支持（从 GitHub Releases 下载）
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ binary-ext }"
+pkg-fmt = "bin"
 
 # 核心依赖
 [dependencies]

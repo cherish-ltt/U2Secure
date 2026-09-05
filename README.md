@@ -97,18 +97,43 @@ U2Secure 通过**环境审计 → 五大防护域 12 步加固 → 生效校验*
 
 ### 安装
 
+> **推荐使用 npm / bun 或 cargo-binstall 安装**：自动根据当前平台（Linux x86_64/ARM64、macOS x86_64/ARM64、Windows x64）下载预编译二进制，无需本地 Rust 环境。
+
+#### 方式一：npm / bun（推荐）
+
 ```bash
-# github克隆并编译
+# npm 全局安装
+npm install -g @ghyper9023/u2secure
+
+# 或 bun 全局安装
+bun install -g @ghyper9023/u2secure
+```
+
+安装时 postinstall 脚本自动从 GitHub Releases 下载当前平台的预编译二进制，完成后直接运行 `sudo u2secure`。bun 默认拦截 postinstall 脚本，首次安装时按提示信任该包即可。
+
+#### 方式二：cargo-binstall
+
+```bash
+cargo binstall u2secure
+```
+
+通过 [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) 直接安装 GitHub Releases 中的预编译二进制，跳过本地编译。
+
+#### 方式三：crates.io 源码安装
+
+```bash
+cargo install u2secure --locked
+```
+
+#### 方式四：从源码编译
+
+```bash
 git clone <repo-url> u2secure
 cd u2secure
 cargo build --release
 
 # 二进制位于 target/release/u2secure
 sudo cp target/release/u2secure /usr/local/bin/
-```
-```bash
-# crates.io方式(推荐)
-cargo install u2secure --locked
 ```
 
 ### 运行
@@ -130,7 +155,7 @@ sudo u2secure -c        # 直接启动 CLI 模式
 ## TUI 界面
 
 ```
-┌─ U2Secure v0.2.0 — Linux 服务器安全加固工具 ──────────┐
+┌─ U2Secure v0.3.0 — Linux 服务器安全加固工具 ──────────┐
 ├─ 审计报告 ────────────────────────────────────────────┤
 │ ✅root ❌SSH:22 ❌sudo用户 ❌UFW ❌fail2ban ...       │
 ├──────────────────────┬────────────────────────────────┤
@@ -363,6 +388,7 @@ ufw status
 
 | 版本 | 日期 | 亮点 |
 |------|------|------|
+| v0.3.0 | 2026-09 | 支持 npm / bun / cargo-binstall 安装预编译二进制，新增 Linux & macOS ARM64 构建 |
 | [v0.2.0](docs/versions/v0.2.0.md) | 2026-06 | 新增 ratatui TUI 模式，支持单项执行、弹窗交互 |
 | v0.1.0 | 2026-05 | 初始版本，dialoguer CLI 交互式加固 |
 
