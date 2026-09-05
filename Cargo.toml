@@ -1,24 +1,38 @@
 [package]
-edition = "2024"
-rust-version = "1.95.0"
 name = "u2secure"
 version = "0.2.0"
+edition = "2024"
+rust-version = "1.98.1"
+authors = ["cherish-ltt <125760530+cherish-ltt@users.noreply.github.com>"]
 description = "Make your Linux system more secure through interactive CLI | 通过交互式的cli让你的Linux系统更安全"
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/cherish-ltt/U2Secure"
 
+# 核心依赖
 [dependencies]
-dialoguer = "0.12"
-colored = "3"
-chrono = "0.4.45"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1.0.150"
-anyhow = "1"
-ctrlc = "3"
-tempfile = "3"
-ratatui = "0.30.1"
-crossterm = "0.29"
+# 交互式向导
+dialoguer = "=0.12.0"
+# 终端文本着色
+colored = "=3.1.1"
+# TUI 图形界面
+ratatui = "=0.30.2"
+# TUI 终端事件与渲染后端
+crossterm = "=0.29.0"
+# 数据结构序列化
+serde = { version = "=1.0.229", features = ["derive"] }
+# JSON 解析
+serde_json = "=1.0.151"
+# 时间处理
+chrono = "=0.4.45"
+# 错误处理
+anyhow = "=1.0.104"
+# Ctrl+C 信号处理
+ctrlc = "=3.5.2"
+# 临时文件
+tempfile = "=3.27.0"
 
+# 开发依赖
 [dev-dependencies]
-tempfile = "3"
+# 测试临时目录
+tempfile = "=3.27.0"
