@@ -115,7 +115,12 @@ jobs:
             console.error(`Failed to parse owner/repo from repository.url: ${repoUrl}`);
             process.exit(1);
           }
-          const repo = match[1];
+          // 修复：去除可能的 .git 后缀
+          let repo = match[1];
+          if (repo.endsWith('.git')) {
+            repo = repo.slice(0, -4);
+          }
+
           const tag = `v${version}`;
 
           function getPlatformAsset() {
