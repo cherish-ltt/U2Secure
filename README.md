@@ -1,4 +1,5 @@
 <div align="center">
+<img src="docs/logo.png" width="128" alt="U2Secure Logo"/>
 <h1>U2Secure</h1>
 <h3>Linux 服务器安全加固工具 — CLI / TUI 双模式</h3>
 <p>
@@ -26,6 +27,7 @@
 ## 目录
 
 - [概述](#概述)
+- [安全加固体系](#安全加固体系)
 - [快速开始](#快速开始)
 - [启动模式](#启动模式)
 - [TUI 界面](#tui-界面)
@@ -80,6 +82,14 @@ src/
     ├── cli.rs              # dialoguer 交互式 CLI
     └── tui.rs              # ratatui 终端图形界面（TUI）
 ```
+
+---
+
+## 安全加固体系
+
+U2Secure 通过**环境审计 → 五大防护域 12 步加固 → 生效校验**的完整流程系统性提升 Linux 服务器的安全基线，每一步修改都受"全程安全网"（自动备份 / 自动回退 / 幂等执行 / 日志脱敏）保护：
+
+![U2Secure 安全加固体系](docs/security-hardening-flow.png)
 
 ---
 
