@@ -216,35 +216,35 @@ impl AuditReport {
                 } else {
                     AuditStatus::NeedsUpdate
                 }
-            }
+            },
             StepKind::UserCreation => {
                 if self.sudo_users.is_empty() {
                     AuditStatus::Missing
                 } else {
                     AuditStatus::Safe
                 }
-            }
+            },
             StepKind::SshRootLogin => {
                 if self.root_login_disabled {
                     AuditStatus::Safe
                 } else {
                     AuditStatus::Missing
                 }
-            }
+            },
             StepKind::SshPortChange => {
                 if self.ssh_port != 22 {
                     AuditStatus::Safe
                 } else {
                     AuditStatus::Missing
                 }
-            }
+            },
             StepKind::SshPasswordAuth => {
                 if self.password_auth_disabled {
                     AuditStatus::Safe
                 } else {
                     AuditStatus::Missing
                 }
-            }
+            },
             StepKind::SshKeySetup => {
                 // 粗略检查：有 sudo 用户即认为可能已有密钥
                 if self.sudo_users.is_empty() {
@@ -252,31 +252,31 @@ impl AuditReport {
                 } else {
                     AuditStatus::Partial
                 }
-            }
+            },
             StepKind::Ufw => {
                 if self.ufw_enabled {
                     AuditStatus::Safe
                 } else {
                     AuditStatus::Missing
                 }
-            }
+            },
             StepKind::Fail2ban => {
                 if self.fail2ban_installed {
                     AuditStatus::Safe
                 } else {
                     AuditStatus::Missing
                 }
-            }
+            },
             StepKind::AutoUpdates => {
                 if self.auto_updates_enabled {
                     AuditStatus::Safe
                 } else {
                     AuditStatus::Missing
                 }
-            }
+            },
             StepKind::SecurityScan | StepKind::LogAudit | StepKind::RestartSsh => {
                 AuditStatus::Missing
-            }
+            },
         }
     }
 }

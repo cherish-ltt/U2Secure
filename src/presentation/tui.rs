@@ -192,16 +192,16 @@ fn run_app(
                         KeyCode::Char(c) => value.push(c),
                         KeyCode::Backspace => {
                             value.pop();
-                        }
+                        },
                         KeyCode::Enter if !value.is_empty() => {
                             let username = value.clone();
                             app.popup = Some(Popup::SshKeyAction {
                                 username,
                                 selected: 0,
                             });
-                        }
+                        },
                         KeyCode::Esc => app.popup = None,
-                        _ => {}
+                        _ => {},
                     },
                     Popup::SshKeyUserSelect {
                         ref users,
@@ -209,21 +209,21 @@ fn run_app(
                     } => match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
                             *selected = selected.saturating_sub(1);
-                        }
+                        },
                         KeyCode::Down | KeyCode::Char('j') => {
                             *selected = selected
                                 .saturating_add(1)
                                 .min(users.len().saturating_sub(1));
-                        }
+                        },
                         KeyCode::Enter => {
                             let username = users[*selected].clone();
                             app.popup = Some(Popup::SshKeyAction {
                                 username,
                                 selected: 0,
                             });
-                        }
+                        },
                         KeyCode::Esc => app.popup = None,
-                        _ => {}
+                        _ => {},
                     },
                     Popup::SshKeyAction {
                         ref username,
@@ -231,10 +231,10 @@ fn run_app(
                     } => match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
                             *selected = selected.saturating_sub(1);
-                        }
+                        },
                         KeyCode::Down | KeyCode::Char('j') => {
                             *selected = selected.saturating_add(1).min(2);
-                        }
+                        },
                         KeyCode::Enter => match *selected {
                             0 => {
                                 let u = username.clone();
@@ -256,20 +256,20 @@ fn run_app(
                                         Some(SshKeyAction::GenerateNew),
                                     )?;
                                 }
-                            }
+                            },
                             1 => {
                                 let u = username.clone();
                                 app.popup = Some(Popup::SshKeyPaste {
                                     username: u,
                                     value: String::new(),
                                 });
-                            }
+                            },
                             _ => {
                                 app.popup = None;
-                            }
+                            },
                         },
                         KeyCode::Esc => app.popup = None,
-                        _ => {}
+                        _ => {},
                     },
                     Popup::SshKeyPaste {
                         ref username,
@@ -278,7 +278,7 @@ fn run_app(
                         KeyCode::Char(c) => value.push(c),
                         KeyCode::Backspace => {
                             value.pop();
-                        }
+                        },
                         KeyCode::Enter if !value.is_empty() => {
                             let u = username.clone();
                             let pk = value.clone();
@@ -290,15 +290,15 @@ fn run_app(
                                 u,
                                 Some(SshKeyAction::PasteKey(pk)),
                             )?;
-                        }
+                        },
                         KeyCode::Esc => {
                             let u = username.clone();
                             app.popup = Some(Popup::SshKeyAction {
                                 username: u,
                                 selected: 0,
                             });
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     },
                     Popup::SshKeyOverwrite {
                         ref username,
@@ -306,10 +306,10 @@ fn run_app(
                     } => match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
                             *selected = 0;
-                        }
+                        },
                         KeyCode::Down | KeyCode::Char('j') => {
                             *selected = 1;
-                        }
+                        },
                         KeyCode::Enter => match *selected {
                             0 => {
                                 let u = username.clone();
@@ -327,14 +327,14 @@ fn run_app(
                                     u,
                                     Some(SshKeyAction::GenerateNew),
                                 )?;
-                            }
+                            },
                             _ => {
                                 let u = username.clone();
                                 app.popup = Some(Popup::SshKeyAction {
                                     username: u,
                                     selected: 0,
                                 });
-                            }
+                            },
                         },
                         KeyCode::Esc => {
                             let u = username.clone();
@@ -342,8 +342,8 @@ fn run_app(
                                 username: u,
                                 selected: 0,
                             });
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     },
                     // ── 创建用户 ──
                     Popup::CreateUserUsername { ref mut value } => match key.code {
@@ -351,19 +351,19 @@ fn run_app(
                             if value.len() < 32 {
                                 value.push(c);
                             }
-                        }
+                        },
                         KeyCode::Backspace => {
                             value.pop();
-                        }
+                        },
                         KeyCode::Enter if !value.is_empty() => {
                             let username = value.clone();
                             app.popup = Some(Popup::CreateUserLockPw {
                                 username,
                                 lock: true,
                             });
-                        }
+                        },
                         KeyCode::Esc => app.popup = None,
-                        _ => {}
+                        _ => {},
                     },
                     Popup::CreateUserLockPw {
                         ref username,
@@ -376,12 +376,12 @@ fn run_app(
                             let l = *lock;
                             app.popup = None;
                             run_user_creation(app, terminal, orchestrator, u, l)?;
-                        }
+                        },
                         KeyCode::Esc => {
                             let u = username.clone();
                             app.popup = Some(Popup::CreateUserUsername { value: u });
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     },
                     // ── SSH 端口 ──
                     Popup::SshPortInput { ref mut value } => match key.code {
@@ -389,10 +389,10 @@ fn run_app(
                             if value.len() < 5 {
                                 value.push(c);
                             }
-                        }
+                        },
                         KeyCode::Backspace => {
                             value.pop();
-                        }
+                        },
                         KeyCode::Enter if !value.is_empty() => {
                             if let Ok(port) = value.parse::<u16>()
                                 && port > 0
@@ -400,9 +400,9 @@ fn run_app(
                                 app.popup = None;
                                 run_ssh_port_change(app, terminal, orchestrator, port)?;
                             }
-                        }
+                        },
                         KeyCode::Esc => app.popup = None,
-                        _ => {}
+                        _ => {},
                     },
                 }
             }
@@ -419,18 +419,18 @@ fn run_app(
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
                             app.cursor = app.cursor.saturating_sub(1);
-                        }
+                        },
                         KeyCode::Down | KeyCode::Char('j') => {
                             app.cursor = app
                                 .cursor
                                 .saturating_add(1)
                                 .min(app.steps.len().saturating_sub(1));
-                        }
+                        },
                         KeyCode::Char(' ') => {
                             if app.cursor < app.steps.len() {
                                 app.steps[app.cursor].checked ^= true;
                             }
-                        }
+                        },
                         KeyCode::Enter => {
                             let selected: Vec<StepKind> = app
                                 .steps
@@ -452,7 +452,7 @@ fn run_app(
                                 execute_batch(app, terminal, orchestrator, &selected, &params)?;
                                 app.mode = AppMode::Summary;
                             }
-                        }
+                        },
                         KeyCode::Char('e') => {
                             if app.cursor < app.steps.len() {
                                 let kind = app.steps[app.cursor].kind;
@@ -464,7 +464,7 @@ fn run_app(
                                             value: String::new(),
                                         });
                                         continue;
-                                    }
+                                    },
                                     StepKind::SshKeySetup => {
                                         let users = system::detect_sudo_users();
                                         if users.is_empty() {
@@ -485,14 +485,14 @@ fn run_app(
                                             });
                                         }
                                         continue;
-                                    }
+                                    },
                                     StepKind::SshPortChange => {
                                         app.popup = Some(Popup::SshPortInput {
                                             value: String::new(),
                                         });
                                         continue;
-                                    }
-                                    _ => {}
+                                    },
+                                    _ => {},
                                 }
 
                                 let params = suspend_for_params(terminal, &[kind], &app.report);
@@ -506,22 +506,22 @@ fn run_app(
                                 execute_single(app, terminal, orchestrator, kind, &params)?;
                                 app.mode = AppMode::Summary;
                             }
-                        }
+                        },
                         KeyCode::Char('r') => {
                             app.report = orchestrator.audit();
                             app.steps = init_steps(&app.report);
                             app.logs.clear();
                             app.results.clear();
-                        }
+                        },
                         KeyCode::Char('q') => return Ok(()),
-                        _ => {}
+                        _ => {},
                     }
                 }
-            }
+            },
             AppMode::Executing => {
                 // 执行期间事件循环被同步执行阻塞，不会到达此处
                 // Ctrl+C 中断由信号处理器通过 INTERRUPTED 标志处理
-            }
+            },
             AppMode::Summary => {
                 if let Event::Key(key) = event
                     && key.kind == KeyEventKind::Press
@@ -531,7 +531,7 @@ fn run_app(
                     app.steps = init_steps(&app.report);
                     app.mode = AppMode::Select;
                 }
-            }
+            },
         }
     }
 }
@@ -605,7 +605,7 @@ fn execute_batch(
                 orchestrator
                     .logger
                     .log_operation(crate::i18n::tr("log_step_complete"), kind.label());
-            }
+            },
             Err(e) => {
                 mark_step_state(app, kind, StepExecState::Failure);
                 app.logs.push(LogEntry {
@@ -632,7 +632,7 @@ fn execute_batch(
                 app.progress = (i + 1, total);
                 terminal.draw(|f| render(f, app))?;
                 break;
-            }
+            },
         }
 
         app.progress = (i + 1, total);
@@ -662,7 +662,7 @@ fn execute_single(
                 message: crate::i18n::tr("tui_exec_failed").replace("{err}", kind.label()),
             });
             return Ok(());
-        }
+        },
     };
 
     // 标记为执行中
@@ -691,7 +691,7 @@ fn execute_single(
                 });
             }
             app.results.push(result);
-        }
+        },
         Err(e) => {
             mark_step_state(app, kind, StepExecState::Failure);
             app.logs.push(LogEntry {
@@ -703,7 +703,7 @@ fn execute_single(
                 changes_made: false,
                 message: crate::i18n::tr("tui_exec_failed").replace("{err}", &format!("{}", e)),
             });
-        }
+        },
     }
 
     app.progress = (1, 1);

@@ -25,7 +25,7 @@ impl ModeChoice {
                 other => {
                     eprintln!("{}", i18n::translate("unknown_arg").replace("{arg}", other));
                     std::process::exit(1);
-                }
+                },
             }
         }
         Self::interactive()
@@ -69,6 +69,6 @@ fn main() {
             if let Err(e) = tui::run_tui(&orchestrator) {
                 eprintln!("\n TUI {e}");
             }
-        }
+        },
     }
 }

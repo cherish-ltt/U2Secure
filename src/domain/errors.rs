@@ -26,14 +26,14 @@ impl fmt::Display for DomainError {
                     "{}",
                     crate::i18n::tr("err_cmd_failed").replace("{msg}", msg)
                 )
-            }
+            },
             Self::ParseError(msg) => {
                 write!(
                     f,
                     "{}",
                     crate::i18n::tr("err_parse_error").replace("{msg}", msg)
                 )
-            }
+            },
             Self::PreconditionFailed(msg) => write!(
                 f,
                 "{}",

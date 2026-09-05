@@ -60,7 +60,7 @@ impl HardeningOrchestrator {
                     self.logger
                         .log_operation("完成", &format!("{}: {}", kind.label(), result.message));
                     results.push(result);
-                }
+                },
                 Err(e) => {
                     let err_msg = format!("{}: {e}", kind.label());
                     self.logger.log_operation("失败", &err_msg);
@@ -74,7 +74,7 @@ impl HardeningOrchestrator {
                     self.logger.log("[回退] 步骤失败，自动回退所有已注册的修改");
                     rollback::undo_all();
                     break;
-                }
+                },
             }
         }
         results

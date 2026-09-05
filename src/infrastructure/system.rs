@@ -151,7 +151,7 @@ pub fn detect_sudo_users() -> Vec<String> {
             } else {
                 vec![]
             }
-        }
+        },
         None => vec![],
     }
 }

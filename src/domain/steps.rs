@@ -88,7 +88,7 @@ impl fmt::Debug for SshKeyAction {
                     key.clone()
                 };
                 write!(f, "PasteKey(\"{}\")", truncated)
-            }
+            },
         }
     }
 }

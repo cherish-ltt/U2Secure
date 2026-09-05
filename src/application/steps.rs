@@ -360,7 +360,7 @@ impl HardeningStep for SshKeySetupStep {
                     changes_made: true,
                     message: msg,
                 })
-            }
+            },
             SshKeyAction::PasteKey(pub_key) => {
                 system::add_authorized_key(username, pub_key)?;
                 Ok(StepResult {
@@ -368,7 +368,7 @@ impl HardeningStep for SshKeySetupStep {
                     changes_made: true,
                     message: crate::i18n::tr("result_key_pasted").replace("{user}", username),
                 })
-            }
+            },
         }
     }
 }
@@ -486,7 +486,7 @@ impl HardeningStep for Fail2banStep {
                     return Err(DomainError::SystemCommandFailed(
                         crate::i18n::tr("err_unsupported_pkg").into(),
                     ));
-                }
+                },
             };
 
             let output = Command::new(pm_name)
@@ -646,18 +646,18 @@ impl HardeningStep for SecurityScanStep {
                                         > /etc/apt/sources.list.d/lynis.list && \
                                         apt update && apt install -y lynis"])
                         .output();
-                }
+                },
                 PackageManager::Yum | PackageManager::Dnf => {
                     let pm_name = pm.name();
                     let _ = Command::new(pm_name)
                         .args(["install", "-y", "lynis"])
                         .output();
-                }
+                },
                 PackageManager::Unknown => {
                     return Err(DomainError::SystemCommandFailed(
                         crate::i18n::tr("err_unknown_pkg_lynis").into(),
                     ));
-                }
+                },
             }
         }
 

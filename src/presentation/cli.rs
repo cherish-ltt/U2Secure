@@ -143,7 +143,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 // 创建用户后，自动为该用户设置密钥
                 params.ssh_key_username = params.new_username.clone();
                 params.ssh_key_action = Some(SshKeyAction::GenerateNew);
-            }
+            },
             StepKind::SshPortChange => {
                 let current_port = report.ssh_port;
                 let suggested = system::random_suggested_port();
@@ -190,7 +190,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                 {
                     params.new_ssh_port = Some(port);
                 }
-            }
+            },
             StepKind::SshKeySetup => {
                 // 如果已经在 UserCreation 中设置过密钥，跳过
                 if params.ssh_key_action.is_some() {
@@ -261,7 +261,7 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                     0 => {
                         params.ssh_key_username = Some(target_user);
                         params.ssh_key_action = Some(SshKeyAction::GenerateNew);
-                    }
+                    },
                     1 => {
                         let pub_key: String = Input::new()
                             .with_prompt(crate::i18n::tr("cli_key_prompt"))
@@ -272,11 +272,11 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
                             params.ssh_key_username = Some(target_user);
                             params.ssh_key_action = Some(SshKeyAction::PasteKey(pub_key));
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
-            }
-            _ => { /* 无交互需求的步骤 */ }
+            },
+            _ => { /* 无交互需求的步骤 */ },
         }
     }
 
