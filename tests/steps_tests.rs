@@ -24,6 +24,7 @@ fn test_all_steps_contains_all_kinds() {
 // 步骤状态检测测试（无系统调用，纯逻辑）
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn make_report(
     ssh_port: u16,
     password_disabled: bool,
