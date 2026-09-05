@@ -1,0 +1,210 @@
+name: Manual NPM Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 0.3.0 or v0.3.0)'
+        required: true
+        type: string
+      npm_tag:
+        description: 'npm dist-tag (latest, beta, next, etc.)'
+        required: false
+        default: 'latest'
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish-npm:
+    name: Publish to npm (manual)
+    runs-on: ubuntu-latest
+    environment: release
+
+    steps:
+      - name: Normalize version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            RAW_VERSION="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            RAW_VERSION="${{ github.ref_name }}"
+          else
+            echo "Cannot determine version. Aborting."
+            exit 1
+          fi
+          CLEAN_VERSION="${RAW_VERSION#v}"
+          TAG="v${CLEAN_VERSION}"
+          echo "version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Prepare npm package
+        run: |
+          mkdir -p npm-package/bin/native
+          cd npm-package
+
+          cat > package.json <<EOF
+          {
+            "name": "@ghyper9023/u2secure",
+            "version": "${{ steps.version.outputs.version }}",
+            "description": "Make your Linux system more secure through interactive CLI | 通过交互式的 CLI 让你的 Linux 系统更安全",
+            "bin": {
+              "u2secure": "bin/u2secure-wrapper.js"
+            },
+            "dependencies": {
+              "follow-redirects": "^1.16.0"
+            },
+            "publishConfig": {
+              "access": "public",
+              "provenance": true
+            },
+            "scripts": {
+              "postinstall": "node bin/install.js"
+            },
+            "files": [
+              "bin"
+            ],
+            "keywords": ["cli", "security", "linux", "hardening", "u2secure"],
+            "author": "cherish-ltt",
+            "license": "MIT",
+            "repository": {
+              "type": "git",
+              "url": "git+https://github.com/cherish-ltt/U2Secure.git"
+            },
+            "homepage": "https://github.com/cherish-ltt/U2Secure#readme",
+            "bugs": {
+              "url": "https://github.com/cherish-ltt/U2Secure/issues"
+            }
+          }
+          EOF
+
+          cat > bin/install.js <<'INSTALL_JS'
+          #!/usr/bin/env node
+
+          const fs = require('fs');
+          const path = require('path');
+          const os = require('os');
+          const { https } = require('follow-redirects');
+
+          const pkgJson = require('../package.json');
+          const version = pkgJson.version;
+          const repoUrl = pkgJson.repository && pkgJson.repository.url;
+          if (!repoUrl) {
+            console.error('Missing repository.url in package.json');
+            process.exit(1);
+          }
+          const match = repoUrl.match(/github\.com[\/:]([^\/]+\/[^\/]+)(\.git)?$/);
+          if (!match) {
+            console.error(`Failed to parse owner/repo from repository.url: ${repoUrl}`);
+            process.exit(1);
+          }
+          const repo = match[1];
+          const tag = `v${version}`;
+
+          function getPlatformAsset() {
+            const platform = os.platform();
+            const arch = os.arch();
+            console.log(`Detected platform: ${platform}, arch: ${arch}`);
+
+            if (platform === 'win32') {
+              // Windows: currently only x64 builds are provided.
+              if (arch === 'x64' || arch === 'ia32' || arch === 'arm64') {
+                console.log('Using Windows x64 binary (compatible with all Windows architectures)');
+                return 'u2secure-x86_64-pc-windows-msvc.exe';
+              } else {
+                throw new Error(`Unsupported Windows architecture: ${arch}`);
+              }
+            } else if (platform === 'linux') {
+              if (arch === 'x64') {
+                return 'u2secure-x86_64-unknown-linux-gnu';
+              } else if (arch === 'arm64') {
+                return 'u2secure-aarch64-unknown-linux-gnu';
+              } else {
+                throw new Error(`Unsupported Linux architecture: ${arch}`);
+              }
+            } else if (platform === 'darwin') {
+              if (arch === 'arm64') {
+                return 'u2secure-aarch64-apple-darwin';
+              } else if (arch === 'x64') {
+                return 'u2secure-x86_64-apple-darwin';
+              } else {
+                throw new Error(`Unsupported macOS architecture: ${arch}`);
+              }
+            } else {
+              throw new Error(`Unsupported platform: ${platform}`);
+            }
+          }
+
+          const assetName = getPlatformAsset();
+          const destDir = path.join(__dirname, 'native');
+          const destFile = path.join(destDir, os.platform() === 'win32' ? 'u2secure.exe' : 'u2secure');
+          const url = `https://github.com/${repo}/releases/download/${tag}/${assetName}`;
+
+          console.log(`Downloading from ${url} ...`);
+
+          if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+
+          const file = fs.createWriteStream(destFile);
+          https.get(url, (response) => {
+            if (response.statusCode !== 200) {
+              console.error(`Failed to download ${url}: HTTP ${response.statusCode}`);
+              process.exit(1);
+            }
+            response.pipe(file);
+            file.on('finish', () => {
+              file.close();
+              fs.chmodSync(destFile, 0o755);
+              console.log(`Binary saved to ${destFile}`);
+            });
+          }).on('error', (err) => {
+            console.error(err);
+            process.exit(1);
+          });
+          INSTALL_JS
+
+          cat > bin/u2secure-wrapper.js <<'WRAPPER_JS'
+          #!/usr/bin/env node
+          const { spawn } = require('child_process');
+          const path = require('path');
+          const os = require('os');
+
+          const exePath = path.join(__dirname, 'native', os.platform() === 'win32' ? 'u2secure.exe' : 'u2secure');
+          const args = process.argv.slice(2);
+          const child = spawn(exePath, args, { stdio: 'inherit' });
+          child.on('exit', (code) => process.exit(code));
+          WRAPPER_JS
+
+          cat > README.md <<'README_EOF'
+          # u2secure
+
+          Linux 服务器安全加固工具（CLI + TUI 双模式），基于 Rust 构建。运行一次即可完成从系统更新、用户创建、SSH 深度加固、防火墙、入侵防御、审计到自动更新的完整安全基线建设。
+
+          > Linux server security hardening tool (CLI + TUI) built with Rust. One run builds a complete security baseline: system updates, user creation, deep SSH hardening, firewall, intrusion prevention, auditing and automatic updates.
+          >
+          > 支持平台 / Supported platforms: Linux x86_64 & ARM64, macOS x86_64 & ARM64, Windows x64
+          >
+          > 详细文档与使用指南请访问 / For full documentation and usage guide, visit:
+          > [GitHub 主页](https://github.com/cherish-ltt/U2Secure)
+          README_EOF
+
+      - name: Publish to npm with provenance
+        run: |
+          cd npm-package
+          npm publish --provenance --access public --tag "${{ github.event.inputs.npm_tag || 'latest' }}"
