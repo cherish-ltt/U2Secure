@@ -13,7 +13,7 @@
     <img src="https://docs.rs/u2secure/badge.svg" alt="documentation"/>
   </a>
   <a href="https://github.com/cherish-ltt/u2secure/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"/>
+    <img src="https://img.shields.io/crates/l/u2secure" alt="license"/>
   </a>
   <a href="https://www.rust-lang.org">
     <img src="https://img.shields.io/badge/rust-1.98.1+-orange.svg" alt="rust version"/>
@@ -394,9 +394,12 @@ ufw status
 
 ## 许可证
 
-[MIT](LICENSE) © 2026 u2secure
+本项目采用 **MIT OR Apache-2.0** 双许可证开源，你可以任选其一满足许可条款（SPDX: `MIT OR Apache-2.0`）：
 
-本软件按 MIT 许可证开源。使用时需保留版权声明和许可声明。
+- [MIT 许可证](LICENSE) © 2026 u2secure
+- [Apache 许可证 2.0](LICENSE-APACHE)
+
+使用时需根据所选许可证保留对应的版权声明和许可声明。
 
 
 ---

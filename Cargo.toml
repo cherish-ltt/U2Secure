@@ -6,7 +6,7 @@ rust-version = "1.98.1"
 authors = ["cherish-ltt <125760530+cherish-ltt@users.noreply.github.com>"]
 description = "Make your Linux system more secure through interactive CLI | 通过交互式的cli让你的Linux系统更安全"
 readme = "README.md"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/cherish-ltt/U2Secure"
 
 # cargo-binstall 预编译二进制安装支持（从 GitHub Releases 下载）

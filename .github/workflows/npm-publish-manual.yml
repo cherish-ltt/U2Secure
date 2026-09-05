@@ -83,7 +83,7 @@ jobs:
             ],
             "keywords": ["cli", "security", "linux", "hardening", "u2secure"],
             "author": "cherish-ltt",
-            "license": "MIT",
+            "license": "MIT OR Apache-2.0",
             "repository": {
               "type": "git",
               "url": "git+https://github.com/cherish-ltt/U2Secure.git"
