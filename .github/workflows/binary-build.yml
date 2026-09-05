@@ -1,0 +1,139 @@
+name: Binary Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g., v0.3.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release?'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build u2secure (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # Linux ARM64（交叉编译）
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross_compile: true
+          # macOS ARM64（Apple Silicon，原生编译）
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          # macOS x86_64（从 arm64 runner 交叉编译）
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            cross_compile: true
+          # Windows x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Determine release tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            RAW_TAG="${{ github.event.inputs.tag_name }}"
+            CLEAN_TAG=$(echo "$RAW_TAG" | xargs)
+          else
+            CLEAN_TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ -z "$CLEAN_TAG" ]]; then
+            echo "Error: tag name is empty"
+            exit 1
+          fi
+          echo "Using release tag: $CLEAN_TAG"
+          echo "tag=$CLEAN_TAG" >> $GITHUB_OUTPUT
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout specific tag (for manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          git fetch --tags
+          git checkout tags/${{ steps.tag.outputs.tag }}
+
+      - name: Resolve release notes file
+        id: notes
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          NOTES_FILE="docs/versions/${TAG}.md"
+          if [[ -f "$NOTES_FILE" ]]; then
+            echo "Found release notes: $NOTES_FILE"
+            echo "notes_file=$NOTES_FILE" >> $GITHUB_OUTPUT
+          else
+            echo "No release notes at $NOTES_FILE, falling back to auto-generated notes"
+            echo "notes_file=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install Linux ARM64 cross toolchain
+        if: matrix.cross_compile && matrix.target == 'aarch64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build release binary
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary with platform suffix
+        shell: bash
+        run: |
+          case "${{ matrix.target }}" in
+            *windows*)
+              EXT=".exe"
+              ;;
+            *)
+              EXT=""
+              ;;
+          esac
+          cp "target/${{ matrix.target }}/release/u2secure${EXT}" "u2secure-${{ matrix.target }}${EXT}"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          body_path: ${{ steps.notes.outputs.notes_file }}
+          files: u2secure-*
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
