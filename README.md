@@ -17,7 +17,7 @@
   <a href="https://www.rust-lang.org">
     <img src="https://img.shields.io/badge/rust-1.98.1+-orange.svg" alt="rust version"/>
   </a>
-  <img src="https://github.com/cherish-ltt/U2Secure/blob/main/doc/show-tui.png" width="720"/>
+  <img src="https://github.com/cherish-ltt/U2Secure/blob/main/docs/show-tui.png" width="720"/>
 </p>
 </div>
 
@@ -353,7 +353,7 @@ ufw status
 
 | 版本 | 日期 | 亮点 |
 |------|------|------|
-| [v0.2.0](doc/versions/v0.2.0.md) | 2026-06 | 新增 ratatui TUI 模式，支持单项执行、弹窗交互 |
+| [v0.2.0](docs/versions/v0.2.0.md) | 2026-06 | 新增 ratatui TUI 模式，支持单项执行、弹窗交互 |
 | v0.1.0 | 2026-05 | 初始版本，dialoguer CLI 交互式加固 |
 
 ## 许可证
