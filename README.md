@@ -81,6 +81,7 @@ src/
 │   ├── artifacts.rs        # 报告目录（扫描产物持久化）
 │   ├── package_mirror.rs   # 临时软件源：主机改写 / 延迟探测 / apt -o 覆盖
 │   ├── lynis.rs            # lynis-report.dat 解析
+│   ├── aide.rs             # aide 配置探测/兜底生成、数据库初始化与验证
 │   ├── logger.rs           # 日志记录（含公钥脱敏）
 │   └── rollback.rs         # 回退管理器：undo 栈 + Ctrl+C 信号处理
 └── presentation/           # 表示层
@@ -256,7 +257,7 @@ sudo u2secure
 | 8. Fail2ban 安装配置 | 安装 fail2ban，配置监狱规则（用当前 SSH 端口） | 检查 `fail2ban-server` 路径 | 无 | `systemctl stop` + `apt remove` |
 | 9. 自动安全更新 🕒 | 安装 `unattended-upgrades`，写入 APT 定时配置 | 检查服务或配置文件 | 无 | `systemctl stop` + `apt remove` |
 | 10. 安全扫描 🕒 | 安装 lynis（发行版官方源）并执行 `lynis audit system --quick --cronjob`，完整输出落盘 | 检查 `which lynis` | 无 | `apt remove lynis` |
-| 11. 日志与审计增强 🕒 | 安装 logwatch + aide，生成可查看的日志报告，初始化 aide 数据库并确保每日完整性检查 | 检查 `which logwatch/aide` | 无 | `apt remove logwatch aide` |
+| 11. 日志与审计增强 🕒 | 安装 logwatch + aide（apt 系并装 `aide-common`），生成日志报告，探测并校验 aide 配置后初始化数据库，确保每日完整性检查 | 检查 `which logwatch/aide`、aide 数据库是否已存在 | 无 | `apt remove logwatch aide aide-common` |
 | 12. SSH 服务重启 | `sshd -t` 验证语法 → `systemctl restart sshd` → 确认状态 | **配置未变更时直接跳过**（比较配置文件与 sshd 进程启动时间） | 无 | 从 `.bak` 恢复后重启 |
 
 > 🕒 标记的步骤（9/10/11）为**可选步骤**：需要联网安装软件、耗时较长，**默认不勾选**，只有用户主动勾选才会执行。
@@ -329,6 +330,8 @@ chown {user}:{user} /home/{user}/.ssh/authorized_keys
 ├── lynis-<时间戳>.log            # lynis 完整扫描输出（人类可读）
 ├── lynis-<时间戳>.dat            # lynis 机器可读报告（警告/建议/加固指数）
 ├── logwatch-<日期>.txt           # logwatch 日志审计报告
+├── aide-u2secure.conf            # 仅在系统缺少 aide 配置时生成的兜底配置
+├── aide-config-check-<时间戳>.log # aide 配置语法校验输出
 ├── aide-init-<时间戳>.log        # aide 数据库初始化日志
 └── aide-check-<日期>.log         # 每日 aide 完整性检查（由定时任务写入）
 ```
@@ -341,14 +344,39 @@ less /var/log/u2secure/lynis-<时间戳>.log
 ```
 
 步骤 10（安全扫描）的结果摘要会直接给出**加固指数、警告数、建议数**与报告路径；
-步骤 11 会给出本次 logwatch 报告、aide 初始化日志与每日检查任务的位置。
+步骤 11 会给出**实际使用的 aide 配置文件路径**、**数据库路径与权限**、
+logwatch 报告以及每日检查任务的位置。
+
+### aide 配置与数据库（步骤 11）
+
+Debian/Ubuntu 的 `aide` 包**只安装二进制**，配置文件与 `aideinit` 由 `aide-common`
+提供。U2Secure 会自动安装 `aide-common` 并按下述顺序确定配置：
+
+| 顺序 | 来源 | 说明 |
+|------|------|------|
+| 1 | `aideinit` / `aide.wrapper` 的 `CONFIG=` | Debian 的默认配置，通常是 `/etc/aide/aide.conf` |
+| 2 | 发行版标准路径 | apt 为 `/etc/aide/aide.conf`，rpm 系为 `/etc/aide.conf` |
+| 3 | 生成兜底配置 | 前两步都不可用时，写入 `/var/log/u2secure/aide-u2secure.conf` |
+
+要点：
+
+- 找到的配置会先用 `aide --config-check` **只读校验**，语法有问题才回退到兜底配置；
+- 兜底配置只使用各版本通用的配置项（不依赖发行版 `aide.conf.d`），
+  数据库使用独立文件名 `aide-u2secure.db`，**不会覆盖系统既有的 `aide.db` 基线**；
+- 若目标路径已存在**非本工具生成**的文件，则改写入带时间戳的新文件，绝不覆盖用户配置；
+- 初始化后立即执行一次 `aide --check` 验证可用（退出码 1–7 表示"发现文件差异"，属正常结果，
+  ≥14 才是执行错误），数据库权限收紧为 0600；
+- 已存在数据库时不重新初始化，保留既有基线。
 
 ### 每日定时任务
 
 | 任务 | 写入位置 | 条件 |
 |------|---------|------|
 | logwatch 每日报告 | `/etc/cron.daily/99u2secure-logwatch` → `logwatch-<日期>.txt` | 仅当系统没有发行版自带的 `/etc/cron.daily/00logwatch` 时创建（不覆盖发行版文件） |
-| aide 每日完整性检查 | `/etc/cron.daily/99u2secure-aide` → `aide-check-<日期>.log` | 仅当系统没有 `cron.daily/aide` 或 `dailyaidecheck.timer` 时创建 |
+| aide 每日完整性检查 | `/etc/cron.daily/99u2secure-aide` → `aide-check-<日期>.log` | 仅当系统没有 `cron.daily/aide`、`cron.daily/dailyaidecheck` 或 `dailyaidecheck.timer` 时创建 |
+
+aide 每日脚本会显式带上步骤 11 探测到的 `--config`，并按 AIDE 的退出码语义判读结果：
+`1–7` 表示检测到文件差异（正常结果，退出 0），`≥14` 才是执行错误（非零退出并写入日志）。
 
 ---
 
