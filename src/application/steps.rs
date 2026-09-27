@@ -1,3 +1,4 @@
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::time::Duration;
 
@@ -5,7 +6,7 @@ use crate::domain::audit::PackageManager;
 use crate::domain::errors::DomainError;
 use crate::domain::steps::{ExecuteParams, HardeningStep, SshKeyAction, StepKind, StepResult};
 use crate::infrastructure::system::StreamStatus;
-use crate::infrastructure::{artifacts, lynis, package_mirror, rollback, system};
+use crate::infrastructure::{aide, artifacts, lynis, package_mirror, rollback, system};
 
 // 超时（长耗时步骤必须有上限，避免"假卡住"）
 
@@ -14,7 +15,6 @@ const TIMEOUT_UPGRADE: Duration = Duration::from_secs(1800);
 const TIMEOUT_INSTALL: Duration = Duration::from_secs(900);
 const TIMEOUT_LYNIS: Duration = Duration::from_secs(900);
 const TIMEOUT_LOGWATCH: Duration = Duration::from_secs(300);
-const TIMEOUT_AIDE_INIT: Duration = Duration::from_secs(1800);
 const TIMEOUT_SERVICE: Duration = Duration::from_secs(120);
 
 /// apt 非交互执行，避免卡在 conffile 提示
@@ -730,14 +730,25 @@ impl HardeningStep for LogAuditStep {
         let mut failures: Vec<String> = vec![];
 
         // ── 安装 logwatch / aide（安装后必须校验，不再"伪成功"）──
-        for (binary, package) in [("logwatch", "logwatch"), ("aide", "aide")] {
-            if system::which(binary) {
+        // Debian/Ubuntu 的 aide 包**只装二进制**，配置文件与 aideinit 由 aide-common 提供，
+        // 缺失时 `aide --init` 会以退出码 17（Configuration error）失败。
+        let mut aide_packages: Vec<&str> = vec!["aide"];
+        aide_packages.extend(aide::companion_packages(pm).iter().copied());
+        for (binary, package) in std::iter::once(("logwatch", "logwatch"))
+            .chain(aide_packages.iter().map(|p| ("aide", *p)))
+        {
+            let is_companion = package != "aide";
+            if !is_companion && system::which(binary) {
                 installed.push(package);
+                continue;
+            }
+            if is_companion && system::package_installed(pm, package) {
                 continue;
             }
             let argv = package_mirror::install_argv(pm, &params.mirror, package);
             let status = system::run_streaming_argv(&argv, apt_envs(pm), &log, TIMEOUT_INSTALL)?;
             if !status.is_success() {
+                // 配套包失败也记录：后续配置探测会发现没有可用 aide.conf 并走兜底配置
                 failures.push(
                     crate::i18n::tr("result_install_pkg_failed")
                         .replace("{pkg}", package)
@@ -745,8 +756,13 @@ impl HardeningStep for LogAuditStep {
                 );
                 continue;
             }
-            if system::which(binary) || (package == "aide" && system::which("aide.wrapper")) {
-                installed.push(package);
+            if is_companion
+                || system::which(binary)
+                || (package == "aide" && system::which("aide.wrapper"))
+            {
+                if !is_companion {
+                    installed.push(package);
+                }
                 rollback::register_package_remove(
                     crate::i18n::tr("undo_pkg_remove").replace("{pkg}", package),
                     package.into(),
@@ -808,48 +824,63 @@ impl HardeningStep for LogAuditStep {
             }
             std::fs::write(path, script)
                 .map_err(|e| DomainError::SystemCommandFailed(format!("写入 {path} 失败: {e}")))?;
-            let _ = Command::new("chmod").args(["+x", path]).output();
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
             cron_path = Some(path.to_string());
             artifacts_list.push(path.to_string());
         }
 
-        // ── aide：仅在没有数据库时初始化（避免覆盖既有基线）──
+        // ── aide：先确保有可用配置，再初始化数据库（历史缺陷：裸 `aide --init` 报退出码 17）──
+        let mut aide_config_display: Option<String> = None;
         let mut aide_init_log = None;
-        if system::which("aide") && !aide_database_exists() {
-            let path = artifact_path(params, "aide-init", "log");
-            let argv = if system::which("aideinit") {
-                // Debian/Ubuntu：aideinit -y -f 覆盖 database_out 并生效
-                vec!["aideinit".to_string(), "-y".into(), "-f".into()]
-            } else {
-                vec!["aide".to_string(), "--init".into()]
-            };
-            let status = system::run_streaming_argv(&argv, &[], &path, TIMEOUT_AIDE_INIT)?;
-            artifacts_list.push(path.clone());
-            aide_init_log = Some(path);
-            if !status.is_success() {
-                failures.push(
-                    crate::i18n::tr("result_aide_init_failed")
-                        .replace("{reason}", &status.describe()),
-                );
-            } else {
-                promote_aide_database();
+        let mut aide_db_display: Option<String> = None;
+        let mut aide_plan = None;
+        if system::which("aide") {
+            match resolve_aide_plan(pm, params) {
+                Ok(plan) => {
+                    if !plan.database_ready() {
+                        let path = artifact_path(params, "aide-init", "log");
+                        let check_log = artifact_path(params, "aide-check", "log");
+                        artifacts_list.push(path.clone());
+                        artifacts_list.push(check_log.clone());
+                        aide_init_log = Some(path.clone());
+                        let init = aide::initialize_database(
+                            &plan,
+                            std::path::Path::new(&path),
+                            std::path::Path::new(&check_log),
+                        );
+                        if let Err(err) = init {
+                            // 原始错误 + 日志路径一并给出，不伪造成成功
+                            let reason = format!("{err}；日志: {path}");
+                            failures.push(
+                                crate::i18n::tr("result_aide_init_failed")
+                                    .replace("{reason}", &reason),
+                            );
+                        }
+                    }
+                    if let Some(conf) = &plan.config {
+                        display_path(&mut aide_config_display, conf);
+                    }
+                    if plan.database_ready() {
+                        aide_db_display = Some(plan.database_metadata());
+                    } else {
+                        // 数据库尚未就绪时也给出预期路径，便于人工排查
+                        display_path(&mut aide_db_display, &plan.database_in);
+                    }
+                    aide_plan = Some(plan);
+                },
+                Err(reason) => failures.push(
+                    crate::i18n::tr("result_aide_config_failed").replace("{reason}", &reason),
+                ),
             }
         }
 
-        // ── 每日完整性检查：发行版已有机制则不重复添加 ──
+        // ── 每日完整性检查：用本次实际生效的配置，避免脚本重复踩"缺配置"的坑 ──
         let mut aide_cron = false;
-        if system::which("aide") && !aide_check_scheduled() {
+        if let Some(plan) = aide_plan.as_ref().filter(|p| p.database_ready())
+            && !aide_check_scheduled()
+        {
             let path = "/etc/cron.daily/99u2secure-aide";
-            // Debian 通过 aide.wrapper 组装 conf.d 配置，优先使用它
-            let aide_bin = if std::path::Path::new("/usr/bin/aide.wrapper").exists() {
-                "/usr/bin/aide.wrapper"
-            } else {
-                "/usr/bin/aide"
-            };
-            let script = format!(
-                "#!/bin/bash\n# 由 U2Secure 生成：每日文件完整性检查\n{aide_bin} --check > {}/aide-check-$(date +\\%F).log 2>&1\n",
-                report_dir(params)
-            );
+            let script = aide::render_daily_script(plan.config.as_deref(), &report_dir(params));
             if let Some(backup) = backup_file(path) {
                 rollback::register_file_backup(
                     crate::i18n::tr("undo_file_restore_generic").replace("{path}", path),
@@ -858,7 +889,7 @@ impl HardeningStep for LogAuditStep {
                 );
             }
             if std::fs::write(path, script).is_ok() {
-                let _ = Command::new("chmod").args(["+x", path]).output();
+                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
                 aide_cron = true;
                 artifacts_list.push(path.to_string());
             }
@@ -878,6 +909,12 @@ impl HardeningStep for LogAuditStep {
         if let Some(log_path) = &aide_init_log {
             message.push_str(&crate::i18n::tr("result_aide_init").replace("{path}", log_path));
         }
+        if let Some(conf) = &aide_config_display {
+            message.push_str(&crate::i18n::tr("result_aide_config").replace("{path}", conf));
+        }
+        if let Some(db) = &aide_db_display {
+            message.push_str(&crate::i18n::tr("result_aide_db").replace("{path}", db));
+        }
         if aide_cron {
             message.push_str(crate::i18n::tr("result_aide_cron"));
         }
@@ -893,36 +930,52 @@ impl HardeningStep for LogAuditStep {
     }
 }
 
-/// aide 数据库是否已存在（存在则不重新初始化，保留既有基线）
-fn aide_database_exists() -> bool {
-    ["/var/lib/aide/aide.db", "/var/lib/aide/aide.db.gz"]
-        .iter()
-        .any(|p| std::path::Path::new(p).exists())
+/// 确定 aide 实际使用的配置与数据库路径
+///
+/// 顺序：探测发行版配置 → 只读校验语法 → 缺失或不可用时生成兜底配置到报告目录。
+/// 历史缺陷：直接执行 `aide --init`，在只装了 `aide` 没装 `aide-common` 的系统上
+/// 会以退出码 17（Configuration error）失败。
+fn resolve_aide_plan(pm: PackageManager, params: &ExecuteParams) -> Result<aide::AidePlan, String> {
+    let log = artifact_path(params, "aide-config-check", "log");
+    let mut plan = aide::detect_plan(pm);
+    let mut problem = None;
+    if plan.config.is_some() {
+        match aide::config_problem(&plan, std::path::Path::new(&log)) {
+            Ok(None) => return Ok(plan),
+            Ok(Some(reason)) => problem = Some(reason),
+            // 无法执行 aide：不掩盖原始错误，交由调用方报告
+            Err(err) => return Err(format!("{err}；日志: {log}")),
+        }
+    }
+
+    plan = aide::fallback_plan(std::path::Path::new(&report_dir(params)));
+    aide::ensure_fallback_config(&mut plan).map_err(|e| {
+        format!(
+            "{e}（原配置问题: {}）",
+            problem.unwrap_or_else(|| "未找到配置".into())
+        )
+    })?;
+    Ok(plan)
 }
 
-/// Debian 的 aideinit 只生成 aide.db.new，需要提升为正式数据库
-fn promote_aide_database() {
-    let new_db = std::path::Path::new("/var/lib/aide/aide.db.new");
-    let target = std::path::Path::new("/var/lib/aide/aide.db");
-    if new_db.exists() && !target.exists() {
-        let _ = std::fs::rename(new_db, target);
-    }
-    for (new_db, target) in [
-        ("/var/lib/aide/aide.db.new.gz", "/var/lib/aide/aide.db.gz"),
-        ("/var/lib/aide/aide.db.new.gz", "/var/lib/aide/aide.db"),
-    ] {
-        let new_db = std::path::Path::new(new_db);
-        let target = std::path::Path::new(target);
-        if new_db.exists() && !target.exists() {
-            let _ = std::fs::rename(new_db, target);
-        }
+/// 把路径写入可选的展示字段
+fn display_path(slot: &mut Option<String>, path: &std::path::Path) {
+    if slot.is_none() {
+        *slot = Some(path.to_string_lossy().into_owned());
     }
 }
 
 /// 是否已存在每日 aide 检查机制（发行版自带则不重复添加）
 fn aide_check_scheduled() -> bool {
-    if std::path::Path::new("/etc/cron.daily/aide").exists() {
-        return true;
+    // Debian/Ubuntu 为 dailyaidecheck（cron 脚本 + dailyaidecheck.timer）
+    for path in [
+        "/etc/cron.daily/aide",
+        "/etc/cron.daily/dailyaidecheck",
+        "/usr/share/aide/config/cron.daily/dailyaidecheck",
+    ] {
+        if std::path::Path::new(path).exists() {
+            return true;
+        }
     }
     // Debian aide-common 提供 dailyaidecheck.timer
     system::run_cmd("systemctl", &["is-enabled", "dailyaidecheck.timer"])

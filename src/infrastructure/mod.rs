@@ -1,3 +1,4 @@
+pub mod aide;
 pub mod artifacts;
 pub mod logger;
 pub mod lynis;

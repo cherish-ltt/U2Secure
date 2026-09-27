@@ -402,6 +402,47 @@ pub fn detect_aide_installed() -> bool {
     which("aide") || which("aide.wrapper")
 }
 
+/// 检测软件包是否已安装
+///
+/// 部分配套包没有可执行文件（如 Debian 的 `aide-common` 只提供配置与 `aideinit`），
+/// 无法用 [`which`] 判断，必须查询包管理器。
+pub fn package_installed(pm: PackageManager, package: &str) -> bool {
+    let result = match pm {
+        PackageManager::Apt => run_cmd("dpkg-query", &["-W", "-f=${Status}", package]),
+        PackageManager::Dnf | PackageManager::Yum => run_cmd("rpm", &["-q", package]),
+        PackageManager::Unknown => return false,
+    };
+    result
+        .map(|out| installed_from_output(&out))
+        .unwrap_or(false)
+}
+
+/// 判断包管理器输出是否表示"已安装"
+///
+/// 只认各包管理器的**确定性标志**，不用"含连字符/词数"之类启发式
+/// （`deinstall ok config-files` 会被启发式误判为已安装）：
+///
+/// - `dpkg-query -W -f=${Status}`：已安装为 `<want> ok installed`，
+///   已卸载为 `deinstall ok config-files`，未安装为 `unknown ok not-installed`
+/// - `rpm -q`：已安装输出首行 `aide-0.18.6-1.el9.x86_64`；未安装为
+///   `package aide is not installed`（rpm 自 4.11 起 stderr 也输出同样文本）
+/// - 因此 rpm 分支判据为"不含 not installed 且含版本分隔连字符"
+fn installed_from_output(output: &str) -> bool {
+    let text = output.trim();
+    if text.is_empty() {
+        return false;
+    }
+    // dpkg：状态字段固定为 installed / config-files / not-installed
+    if let Some(rest) = text.strip_prefix("install ok ") {
+        return rest.trim() == "installed";
+    }
+    if text.starts_with("deinstall ok ") || text.starts_with("unknown ok ") {
+        return false;
+    }
+    // rpm / pacman：`name-version-release` 形如 `aide-0.18.6-1.el9.x86_64`
+    !text.contains("not installed") && text.contains('-')
+}
+
 /// 运行中的 sshd 主进程 PID
 fn sshd_main_pid() -> Option<u32> {
     // Debian/Ubuntu: /run/sshd.pid
@@ -865,5 +906,41 @@ pub fn home_dir(username: &str) -> String {
         }
         // fallback: 默认 /home/{username}
         format!("/home/{username}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::installed_from_output;
+
+    #[test]
+    fn test_dpkg_query_installed_status() {
+        // dpkg-query -W -f=${Status} 的真实输出
+        assert!(installed_from_output("install ok installed"));
+        assert!(installed_from_output("install ok installed\n"));
+    }
+
+    #[test]
+    fn test_dpkg_query_removed_status_is_not_installed() {
+        // 已卸载但残留配置：不得判定为已安装
+        assert!(!installed_from_output("deinstall ok config-files"));
+        assert!(!installed_from_output("unknown ok not-installed"));
+        assert!(!installed_from_output(""));
+        assert!(!installed_from_output("   "));
+    }
+
+    #[test]
+    fn test_rpm_query_output() {
+        assert!(installed_from_output("aide-0.18.6-1.el9.x86_64"));
+        assert!(!installed_from_output("package aide is not installed"));
+    }
+
+    #[test]
+    fn test_package_installed_unknown_manager_is_false() {
+        // Unknown 直接返回 false，不应尝试执行任何包管理器命令
+        assert!(!super::package_installed(
+            crate::domain::audit::PackageManager::Unknown,
+            "aide"
+        ));
     }
 }
