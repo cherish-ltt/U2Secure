@@ -267,7 +267,29 @@ msrv = "1.98.1"
 10. **测试约束**：测试中**禁止**执行会修改真实系统的命令（尤其 macOS 开发机）；
     执行策略类测试使用假步骤（`tests/job_tests.rs`），文件操作用 `tempfile` 临时目录，
     报告目录通过 `StepRunner::with_report_dir()` 注入，禁止写 `/var/log`、`/etc`。
+11. **临时软件源失败语义**：连接镜像源失败（含 30 秒无输出）必须
+    **自动重试 3 次后交由用户决策**（重试 / 更换源 / 取消执行），**不得静默回退**原始源；
+    仅"用户取消选择"与"临时源准备失败"才回退原始源继续执行。相关常量见
+    `infrastructure::package_mirror::{WARM_UP_ATTEMPTS, WARM_UP_STALL}`。
 
-### 10.3 追加内容xxx
+### 10.3 代码检查（prek / ast-grep）
+
+`prek run --all-files` 覆盖：空白与冲突标记、TOML/YAML/JSON 语法、私钥与密钥泄露（betterleaks）、
+ast-grep 规则、`cargo fmt` / `check` / `clippy -D warnings` / `test`。提交前必须全绿。
+
+ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项目有意保留**，不视为缺陷：
+
+| 规则 | 保留原因 |
+|------|---------|
+| `rust-no-public-struct-fields` | 领域层 DTO / 值对象本就是被动数据类型（规则注释亦豁免）；改为私有字段 + getter 只增加样板代码 |
+| `rust-require-thiserror-error-enum`、`rust-no-string-error-variant` | 领域层要求零外部依赖（见 `domain` 模块说明），`DomainError` 携带上下文字符串是有意设计 |
+| `rust-no-anyhow-in-public-api` | 仅 `presentation::tui::run_tui` 使用 `anyhow::Result`，属表示层入口，封装类型化错误收益有限 |
+| `rust-no-single-field-struct` | `HardeningOrchestrator` 是持有具名依赖（logger）的应用服务，不是 newtype |
+| `rust-no-code-barricade` | 仅 `tui.rs` 模块文档中的界面布局示意图（盒线字符），非装饰性分隔线 |
+
+除上述豁免外，新增代码不得引入新的 ast-grep 告警；`error` 级规则必须全部修复
+（当前唯一 error 级规则为 `rust-no-panicking-fallback`）。
+
+### 10.4 追加内容xxx
 
 ...
