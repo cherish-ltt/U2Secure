@@ -1,14 +1,8 @@
-mod application;
-mod domain;
-mod infrastructure;
-mod presentation;
-
+use u2secure::application::orchestrator::HardeningOrchestrator;
 use u2secure::i18n;
 use u2secure::i18n::Lang;
-
-use application::orchestrator::HardeningOrchestrator;
-use infrastructure::rollback;
-use presentation::{cli, tui};
+use u2secure::infrastructure::rollback;
+use u2secure::presentation::{cli, tui};
 
 enum ModeChoice {
     Cli,
@@ -68,6 +62,7 @@ fn main() {
         ModeChoice::Tui => {
             if let Err(e) = tui::run_tui(&orchestrator) {
                 eprintln!("\n TUI {e}");
+                std::process::exit(1);
             }
         },
     }

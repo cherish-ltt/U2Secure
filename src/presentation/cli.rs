@@ -1,10 +1,12 @@
 use colored::*;
 use dialoguer::{Confirm, Input, MultiSelect, Select};
 
+use crate::application::job::{JobEvent, StepRunner};
 use crate::application::orchestrator::HardeningOrchestrator;
 use crate::domain::audit::{AuditReport, AuditStatus};
-use crate::domain::steps::{ExecuteParams, SshKeyAction, StepKind};
-use crate::infrastructure::system;
+use crate::domain::mirror::PackageMirror;
+use crate::domain::steps::{ExecuteParams, SshKeyAction, StepKind, StepOutcome, StepResult};
+use crate::infrastructure::{artifacts, package_mirror, system};
 
 /// 运行交互式 CLI
 pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
@@ -42,14 +44,7 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
         return;
     }
 
-    // ── 为每个需要交互的步骤收集输入 ──
-    println!(
-        "\n{} {}\n",
-        "📝".bright_blue(),
-        crate::i18n::tr("cli_collecting")
-    );
-
-    // 确认后再收集交互输入
+    // ── 确认执行清单 ──
     println!(
         "\n{} {}",
         "📋".bright_blue(),
@@ -71,18 +66,112 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     }
 
     // ── 收集交互式步骤的参数 ──
+    println!(
+        "\n{} {}\n",
+        "📝".bright_blue(),
+        crate::i18n::tr("cli_collecting")
+    );
     let params = collect_step_params(&selected_steps, &report);
 
-    // ── 执行 ──
+    // ── 临时软件源（涉及安装软件包时才询问）──
+    let mirror = select_mirror(&selected_steps);
+
+    // ── 执行（实时输出，长耗时步骤不会"假卡住"）──
     println!(
         "\n{} {}\n",
         "⚙️".bright_green(),
         crate::i18n::tr("cli_executing")
     );
-    let results = orchestrator.execute_steps(&report, &selected_steps, &params);
+    let runner = StepRunner::new(orchestrator.logger.clone()).with_mirror(mirror);
+    let mut on_event = |event: JobEvent| print_event(&event);
+    let results = runner.run(&selected_steps, &params, &mut on_event);
 
     // ── 总结报告 ──
-    render_summary(&results);
+    render_summary(&results, orchestrator.logger.path());
+}
+
+/// 实时事件输出
+fn print_event(event: &JobEvent) {
+    match event {
+        JobEvent::StepStarted {
+            kind,
+            index,
+            total,
+            live_log,
+        } => {
+            println!(
+                "\n{} [{}] {}",
+                format!("{}/{}", index + 1, total).dimmed(),
+                "▶".bright_cyan(),
+                kind.label().bold()
+            );
+            println!(
+                "    {}",
+                crate::i18n::tr("cli_live_log")
+                    .replace("{log}", live_log)
+                    .dimmed()
+            );
+        },
+        JobEvent::StepFinished(result) => {
+            let first = result.message.lines().next().unwrap_or("");
+            match result.outcome {
+                StepOutcome::Changed => println!("    {} {}", "✅".green(), first.green()),
+                StepOutcome::Skipped => println!("    {} {}", "⏭".yellow(), first.yellow()),
+                StepOutcome::Failed => println!("    {} {}", "❌".red(), first.red()),
+            }
+        },
+        JobEvent::Log(message) => println!("    {} {}", "ℹ️".dimmed(), message.dimmed()),
+        JobEvent::Interrupted => println!(
+            "\n{} {}",
+            "⚠️".yellow(),
+            crate::i18n::tr("cli_interrupted").yellow()
+        ),
+        JobEvent::AllFinished => {},
+    }
+}
+
+/// 询问临时软件源（仅在本次运行会安装/更新软件包时）
+fn select_mirror(selected: &[StepKind]) -> PackageMirror {
+    if !selected.iter().any(|s| s.touches_package_manager()) {
+        return PackageMirror::Original;
+    }
+
+    println!(
+        "\n{} {}",
+        "🔎".bright_blue(),
+        crate::i18n::tr("cli_mirror_probing")
+    );
+
+    let mirrors = PackageMirror::all();
+    let items: Vec<String> = mirrors.iter().map(|m| describe_mirror(*m)).collect();
+
+    let selection = Select::new()
+        .with_prompt(crate::i18n::tr("cli_mirror_prompt"))
+        .items(&items)
+        .default(0)
+        .interact()
+        .unwrap_or(0);
+
+    mirrors[selection]
+}
+
+fn describe_mirror(mirror: PackageMirror) -> String {
+    match mirror.probe_host() {
+        None => crate::i18n::tr("mirror_original").to_string(),
+        Some(_) => match package_mirror::probe_latency(mirror) {
+            Some(latency) => format!(
+                "{} ({}{}ms)",
+                mirror.label(),
+                crate::i18n::tr("mirror_latency_prefix"),
+                latency.as_millis()
+            ),
+            None => format!(
+                "{} ({})",
+                mirror.label(),
+                crate::i18n::tr("mirror_unreachable")
+            ),
+        },
+    }
 }
 
 /// 收集所有需要交互的步骤的用户输入
@@ -320,8 +409,12 @@ fn step_selection(report: &AuditReport) -> Vec<StepKind> {
         .iter()
         .map(|step| {
             let status = step.check_default_status(report);
-            let status_icon = status.icon();
-            format!("{status_icon} {}", step.label())
+            let suffix = if step.is_opt_in() {
+                format!("  {}", crate::i18n::tr("step_opt_in_tag"))
+            } else {
+                String::new()
+            };
+            format!("{} {}{}", status.icon(), step.label(), suffix)
         })
         .collect();
 
@@ -330,14 +423,15 @@ fn step_selection(report: &AuditReport) -> Vec<StepKind> {
         "📋".bright_blue(),
         crate::i18n::tr("cli_select_steps"),
     );
-    println!("{} {}\n", "💡".dimmed(), crate::i18n::tr("cli_hint_nav"),);
+    println!("{} {}", "💡".dimmed(), crate::i18n::tr("cli_hint_nav"));
+    println!("{} {}\n", "💡".dimmed(), crate::i18n::tr("cli_hint_opt_in"));
 
     let selections = MultiSelect::new()
         .items(&items)
         .defaults(
             &all_steps
                 .iter()
-                .map(|step| !matches!(step.check_default_status(report), AuditStatus::Safe))
+                .map(|step| step.default_checked(report))
                 .collect::<Vec<_>>(),
         )
         .interact()
@@ -346,8 +440,8 @@ fn step_selection(report: &AuditReport) -> Vec<StepKind> {
     selections.into_iter().map(|i| all_steps[i]).collect()
 }
 
-/// 渲染执行总结
-fn render_summary(results: &[crate::domain::steps::StepResult]) {
+/// 渲染执行总结（成功 / 跳过 / 失败 三态）
+fn render_summary(results: &[StepResult], log_path: &str) {
     println!("\n{}", "=".repeat(50).bright_green());
     println!(
         "{} {}",
@@ -356,40 +450,64 @@ fn render_summary(results: &[crate::domain::steps::StepResult]) {
     );
     println!("{}", "=".repeat(50).bright_green());
 
-    let mut success_count = 0;
-    let mut fail_count = 0;
+    let mut changed = 0;
+    let mut skipped = 0;
+    let mut failed = 0;
 
     for result in results {
-        if result.changes_made {
-            print!("  {} {}: ", "✅".green(), result.kind.label().bold());
-            for line in result.message.lines() {
-                println!("{}", line.green());
-                if line != result.message.lines().next().unwrap_or("") {
-                    print!("           ");
-                }
-            }
-            println!();
-            success_count += 1;
-        } else {
-            println!(
-                "  {} {}: {}",
-                "❌".red(),
-                result.kind.label().bold(),
-                result.message.red()
-            );
-            fail_count += 1;
+        match result.outcome {
+            StepOutcome::Changed => changed += 1,
+            StepOutcome::Skipped => skipped += 1,
+            StepOutcome::Failed => failed += 1,
         }
+        let (icon, color) = match result.outcome {
+            StepOutcome::Changed => ("✅", "green"),
+            StepOutcome::Skipped => ("⏭", "yellow"),
+            StepOutcome::Failed => ("❌", "red"),
+        };
+        println!(
+            "  {} {} [{}]",
+            icon,
+            result.kind.label().bold(),
+            result.outcome.label().color(color)
+        );
+        for line in result.message.lines() {
+            println!("      {}", line.color(color));
+        }
+        for artifact in &result.artifacts {
+            println!(
+                "      {} {}",
+                crate::i18n::tr("cli_artifact").dimmed(),
+                artifact.dimmed()
+            );
+        }
+        println!();
     }
 
     println!("{}", "─".repeat(50).dimmed());
     println!(
         "  {}",
         crate::i18n::tr("cli_summary_total")
-            .replace("{ok}", &success_count.to_string())
-            .replace("{fail}", &fail_count.to_string())
+            .replace("{ok}", &changed.to_string())
+            .replace("{skip}", &skipped.to_string())
+            .replace("{fail}", &failed.to_string())
             .green()
     );
     println!("{}", "=".repeat(50).bright_green());
-    println!("{} {}", "📝".dimmed(), crate::i18n::tr("cli_log_saved"));
+    println!(
+        "{} {}",
+        "📝".dimmed(),
+        crate::i18n::tr("cli_log_saved").replace("{log}", log_path)
+    );
+    println!(
+        "{} {}",
+        "📂".dimmed(),
+        crate::i18n::tr("cli_report_dir").replace("{dir}", &artifacts::dir_display())
+    );
+    println!(
+        "{} {}",
+        "💡".dimmed(),
+        crate::i18n::tr("cli_report_view").replace("{dir}", &artifacts::dir_display())
+    );
     println!();
 }

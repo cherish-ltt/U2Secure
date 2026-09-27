@@ -8,13 +8,20 @@
 //! │ (左面板)  │ (右面板)                                 │
 //! ├───────────┴──────────────────────────────────────────┤
 //! └─ Keybindings ────────────────────────────────────────┘
+//!
+//! 执行阶段在后台线程进行，主循环保持响应：
+//! - 实时展示当前步骤、已耗时、最近日志与命令输出尾部
+//! - Ctrl+C 取消并回滚（raw 模式下没有 SIGINT，必须自己处理按键）
 
-use std::collections::HashSet;
 use std::io::{self, Stdout};
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -27,19 +34,32 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, Paragraph, Wrap},
 };
 
+use crate::application::job::{JobEvent, JobHandle, StepRunner};
 use crate::application::orchestrator::HardeningOrchestrator;
-use crate::application::steps::AllSteps;
 use crate::domain::audit::{AuditReport, AuditStatus};
-use crate::domain::steps::{ExecuteParams, HardeningStep, SshKeyAction, StepKind, StepResult};
+use crate::domain::mirror::PackageMirror;
+use crate::domain::steps::{ExecuteParams, SshKeyAction, StepKind, StepOutcome, StepResult};
 use crate::infrastructure::rollback;
 use crate::infrastructure::system;
+use crate::infrastructure::{artifacts, package_mirror};
 use crate::presentation::cli;
 
 // ---------------------------------------------------------------------------
-// 类型别名
+// 类型别名与常量
 // ---------------------------------------------------------------------------
 
 type TuiTerminal = Terminal<CrosstermBackend<Stdout>>;
+
+/// 事件轮询间隔（保证执行期间 UI 仍在刷新）
+const POLL_INTERVAL: Duration = Duration::from_millis(150);
+/// 实时输出尾随行数
+const TAIL_LINES: usize = 8;
+/// 实时输出尾随字节上限
+const TAIL_BYTES: u64 = 32 * 1024;
+/// 执行日志面板保留行数
+const LOG_PANEL_LINES: usize = 12;
+
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 // ---------------------------------------------------------------------------
 // 状态定义
@@ -74,6 +94,20 @@ struct LogEntry {
     message: String,
 }
 
+/// 当前正在执行的步骤
+#[derive(Debug, Clone)]
+struct CurrentStep {
+    kind: StepKind,
+    live_log: String,
+}
+
+/// 等待启动的运行（镜像源选择完成后启动）
+#[derive(Clone)]
+struct PendingRun {
+    selected: Vec<StepKind>,
+    params: ExecuteParams,
+}
+
 /// TUI 弹窗状态（支持多步流程）
 enum Popup {
     /// SSH 密钥：输入用户名
@@ -94,6 +128,9 @@ enum Popup {
 
     /// 修改 SSH 端口：输入端口号
     SshPortInput { value: String },
+
+    /// 临时软件源选择
+    MirrorSelect { items: Vec<String>, selected: usize },
 }
 
 /// TUI 模式
@@ -117,9 +154,23 @@ struct TuiApp {
     /// 执行结果
     results: Vec<StepResult>,
     /// 当前执行进度
-    progress: (usize, usize), // (current, total)
+    progress: (usize, usize),
     /// TUI 弹窗（激活时覆盖主界面）
     popup: Option<Popup>,
+    /// 后台任务
+    job: Option<JobHandle>,
+    /// 当前步骤（用于实时输出尾随）
+    current: Option<CurrentStep>,
+    /// 当前步骤输出的尾部
+    live_tail: Vec<String>,
+    /// 本次运行选择的临时软件源
+    mirror: PackageMirror,
+    /// 待启动的运行
+    pending: Option<PendingRun>,
+    /// 状态栏提示
+    status: String,
+    /// 结果页滚动偏移
+    summary_scroll: u16,
 }
 
 // ---------------------------------------------------------------------------
@@ -149,10 +200,25 @@ pub fn run_tui(orchestrator: &HardeningOrchestrator) -> anyhow::Result<()> {
         results: vec![],
         progress: (0, 0),
         popup: None,
+        job: None,
+        current: None,
+        live_tail: vec![],
+        mirror: PackageMirror::Original,
+        pending: None,
+        status: String::new(),
+        summary_scroll: 0,
     };
 
     // 运行主循环
     let result = run_app(&mut terminal, &mut app, orchestrator);
+
+    // 若有后台任务仍在运行，取消并等待其结束，避免留下孤儿进程
+    if app.job.is_some() {
+        rollback::INTERRUPTED.store(true, Ordering::SeqCst);
+        if let Some(job) = app.job.take() {
+            job.join();
+        }
+    }
 
     // 清理终端
     disable_raw_mode()?;
@@ -179,624 +245,719 @@ fn run_app(
         // 渲染
         terminal.draw(|f| render(f, app))?;
 
-        // 处理事件
-        let event = event::read()?;
+        // 事件：非阻塞轮询，保证后台任务事件能被及时消费
+        if event::poll(POLL_INTERVAL)? {
+            let event = event::read()?;
 
-        // ── 弹窗激活时，优先处理 ──
-        if let Some(ref mut p) = app.popup {
-            if let Event::Key(key) = event
+            // Ctrl+C：raw 模式屏蔽了 SIGINT，必须显式处理按键
+            if let Event::Key(key) = &event
                 && key.kind == KeyEventKind::Press
+                && is_ctrl_c(key)
             {
-                match *p {
-                    Popup::SshKeyUsername { ref mut value } => match key.code {
-                        KeyCode::Char(c) => value.push(c),
-                        KeyCode::Backspace => {
-                            value.pop();
-                        },
-                        KeyCode::Enter if !value.is_empty() => {
-                            let username = value.clone();
-                            app.popup = Some(Popup::SshKeyAction {
-                                username,
-                                selected: 0,
-                            });
-                        },
-                        KeyCode::Esc => app.popup = None,
-                        _ => {},
-                    },
-                    Popup::SshKeyUserSelect {
-                        ref users,
-                        ref mut selected,
-                    } => match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            *selected = selected.saturating_sub(1);
-                        },
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            *selected = selected
-                                .saturating_add(1)
-                                .min(users.len().saturating_sub(1));
-                        },
-                        KeyCode::Enter => {
-                            let username = users[*selected].clone();
-                            app.popup = Some(Popup::SshKeyAction {
-                                username,
-                                selected: 0,
-                            });
-                        },
-                        KeyCode::Esc => app.popup = None,
-                        _ => {},
-                    },
-                    Popup::SshKeyAction {
-                        ref username,
-                        ref mut selected,
-                    } => match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            *selected = selected.saturating_sub(1);
-                        },
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            *selected = selected.saturating_add(1).min(2);
-                        },
-                        KeyCode::Enter => match *selected {
-                            0 => {
-                                let u = username.clone();
-                                // 检查密钥是否已存在
-                                let home = system::home_dir(&u);
-                                let key_path = format!("{}/.ssh/id_ed25519", home);
-                                if std::path::Path::new(&key_path).exists() {
-                                    app.popup = Some(Popup::SshKeyOverwrite {
-                                        username: u,
-                                        selected: 0,
-                                    });
-                                } else {
-                                    app.popup = None;
-                                    run_ssh_key_setup(
-                                        app,
-                                        terminal,
-                                        orchestrator,
-                                        u,
-                                        Some(SshKeyAction::GenerateNew),
-                                    )?;
-                                }
-                            },
-                            1 => {
-                                let u = username.clone();
-                                app.popup = Some(Popup::SshKeyPaste {
-                                    username: u,
-                                    value: String::new(),
-                                });
-                            },
-                            _ => {
-                                app.popup = None;
-                            },
-                        },
-                        KeyCode::Esc => app.popup = None,
-                        _ => {},
-                    },
-                    Popup::SshKeyPaste {
-                        ref username,
-                        ref mut value,
-                    } => match key.code {
-                        KeyCode::Char(c) => value.push(c),
-                        KeyCode::Backspace => {
-                            value.pop();
-                        },
-                        KeyCode::Enter if !value.is_empty() => {
-                            let u = username.clone();
-                            let pk = value.clone();
-                            app.popup = None;
-                            run_ssh_key_setup(
-                                app,
-                                terminal,
-                                orchestrator,
-                                u,
-                                Some(SshKeyAction::PasteKey(pk)),
-                            )?;
-                        },
-                        KeyCode::Esc => {
-                            let u = username.clone();
-                            app.popup = Some(Popup::SshKeyAction {
-                                username: u,
-                                selected: 0,
-                            });
-                        },
-                        _ => {},
-                    },
-                    Popup::SshKeyOverwrite {
-                        ref username,
-                        ref mut selected,
-                    } => match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            *selected = 0;
-                        },
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            *selected = 1;
-                        },
-                        KeyCode::Enter => match *selected {
-                            0 => {
-                                let u = username.clone();
-                                app.popup = None;
-                                // 先删旧密钥再重建
-                                let home = system::home_dir(&u);
-                                for f in ["id_ed25519", "id_ed25519.pub"] {
-                                    let p = format!("{}/.ssh/{}", home, f);
-                                    let _ = std::fs::remove_file(&p);
-                                }
-                                run_ssh_key_setup(
-                                    app,
-                                    terminal,
-                                    orchestrator,
-                                    u,
-                                    Some(SshKeyAction::GenerateNew),
-                                )?;
-                            },
-                            _ => {
-                                let u = username.clone();
-                                app.popup = Some(Popup::SshKeyAction {
-                                    username: u,
-                                    selected: 0,
-                                });
-                            },
-                        },
-                        KeyCode::Esc => {
-                            let u = username.clone();
-                            app.popup = Some(Popup::SshKeyAction {
-                                username: u,
-                                selected: 0,
-                            });
-                        },
-                        _ => {},
-                    },
-                    // ── 创建用户 ──
-                    Popup::CreateUserUsername { ref mut value } => match key.code {
-                        KeyCode::Char(c) if c.is_alphanumeric() || c == '-' || c == '_' => {
-                            if value.len() < 32 {
-                                value.push(c);
-                            }
-                        },
-                        KeyCode::Backspace => {
-                            value.pop();
-                        },
-                        KeyCode::Enter if !value.is_empty() => {
-                            let username = value.clone();
-                            app.popup = Some(Popup::CreateUserLockPw {
-                                username,
-                                lock: true,
-                            });
-                        },
-                        KeyCode::Esc => app.popup = None,
-                        _ => {},
-                    },
-                    Popup::CreateUserLockPw {
-                        ref username,
-                        ref mut lock,
-                    } => match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => *lock = true,
-                        KeyCode::Down | KeyCode::Char('j') => *lock = false,
-                        KeyCode::Enter => {
-                            let u = username.clone();
-                            let l = *lock;
-                            app.popup = None;
-                            run_user_creation(app, terminal, orchestrator, u, l)?;
-                        },
-                        KeyCode::Esc => {
-                            let u = username.clone();
-                            app.popup = Some(Popup::CreateUserUsername { value: u });
-                        },
-                        _ => {},
-                    },
-                    // ── SSH 端口 ──
-                    Popup::SshPortInput { ref mut value } => match key.code {
-                        KeyCode::Char(c) if c.is_ascii_digit() => {
-                            if value.len() < 5 {
-                                value.push(c);
-                            }
-                        },
-                        KeyCode::Backspace => {
-                            value.pop();
-                        },
-                        KeyCode::Enter if !value.is_empty() => {
-                            if let Ok(port) = value.parse::<u16>()
-                                && port > 0
-                            {
-                                app.popup = None;
-                                run_ssh_port_change(app, terminal, orchestrator, port)?;
-                            }
-                        },
-                        KeyCode::Esc => app.popup = None,
-                        _ => {},
-                    },
+                if app.job.is_some() {
+                    request_cancel(app);
+                } else {
+                    return Ok(());
                 }
+                continue;
             }
-            terminal.draw(|f| render(f, app))?;
-            continue;
+
+            // ── 弹窗激活时，优先处理 ──
+            if app.popup.is_some() {
+                handle_popup(app, terminal, orchestrator, event)?;
+                continue;
+            }
+
+            match app.mode {
+                AppMode::Select => {
+                    if handle_select_mode(app, terminal, orchestrator, event)? {
+                        return Ok(());
+                    }
+                },
+                AppMode::Executing => handle_executing_mode(app, event),
+                AppMode::Summary => handle_summary_mode(app, event, orchestrator),
+            }
         }
 
-        match app.mode {
-            AppMode::Select => {
-                if let Event::Key(key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            app.cursor = app.cursor.saturating_sub(1);
-                        },
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            app.cursor = app
-                                .cursor
-                                .saturating_add(1)
-                                .min(app.steps.len().saturating_sub(1));
-                        },
-                        KeyCode::Char(' ') => {
-                            if app.cursor < app.steps.len() {
-                                app.steps[app.cursor].checked ^= true;
-                            }
-                        },
-                        KeyCode::Enter => {
-                            let selected: Vec<StepKind> = app
-                                .steps
-                                .iter()
-                                .filter(|s| s.checked)
-                                .map(|s| s.kind)
-                                .collect();
-                            if !selected.is_empty() {
-                                let params = suspend_for_params(terminal, &selected, &app.report);
-                                let total = selected.len();
-                                app.logs.clear();
-                                app.results.clear();
-                                app.progress = (0, total);
-                                // 重置步骤状态
-                                for s in &mut app.steps {
-                                    s.state = StepExecState::Idle;
-                                }
-                                app.mode = AppMode::Executing;
-                                execute_batch(app, terminal, orchestrator, &selected, &params)?;
-                                app.mode = AppMode::Summary;
-                            }
-                        },
-                        KeyCode::Char('e') => {
-                            if app.cursor < app.steps.len() {
-                                let kind = app.steps[app.cursor].kind;
+        // 推进后台任务
+        pump_job(app);
+    }
+}
 
-                                // 单项执行：有交互需求的步骤用 TUI 弹窗
-                                match kind {
-                                    StepKind::UserCreation => {
-                                        app.popup = Some(Popup::CreateUserUsername {
-                                            value: String::new(),
-                                        });
-                                        continue;
-                                    },
-                                    StepKind::SshKeySetup => {
-                                        let users = system::detect_sudo_users();
-                                        if users.is_empty() {
-                                            app.popup = Some(Popup::SshKeyUsername {
-                                                value: String::new(),
-                                            });
-                                        } else {
-                                            // 包含 root 在内供用户选择
-                                            let mut choices = vec!["root".to_string()];
-                                            for u in users {
-                                                if u != "root" {
-                                                    choices.push(u);
-                                                }
-                                            }
-                                            app.popup = Some(Popup::SshKeyUserSelect {
-                                                users: choices,
-                                                selected: 0,
-                                            });
-                                        }
-                                        continue;
-                                    },
-                                    StepKind::SshPortChange => {
-                                        app.popup = Some(Popup::SshPortInput {
-                                            value: String::new(),
-                                        });
-                                        continue;
-                                    },
-                                    _ => {},
-                                }
+fn is_ctrl_c(key: &KeyEvent) -> bool {
+    key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
+}
 
-                                let params = suspend_for_params(terminal, &[kind], &app.report);
-                                app.logs.clear();
-                                app.results.clear();
-                                app.progress = (0, 1);
-                                for s in &mut app.steps {
-                                    s.state = StepExecState::Idle;
-                                }
-                                app.mode = AppMode::Executing;
-                                execute_single(app, terminal, orchestrator, kind, &params)?;
-                                app.mode = AppMode::Summary;
-                            }
-                        },
-                        KeyCode::Char('r') => {
-                            app.report = orchestrator.audit();
-                            app.steps = init_steps(&app.report);
-                            app.logs.clear();
-                            app.results.clear();
-                        },
-                        KeyCode::Char('q') => return Ok(()),
-                        _ => {},
-                    }
-                }
+/// 请求取消当前后台任务（由 StepRunner 负责停止并回滚）
+fn request_cancel(app: &mut TuiApp) {
+    rollback::INTERRUPTED.store(true, Ordering::SeqCst);
+    app.status = crate::i18n::tr("tui_cancelling").into();
+    app.logs.push(LogEntry {
+        icon: "⚠️",
+        message: crate::i18n::tr("tui_cancel_requested").into(),
+    });
+}
+
+/// 消费后台任务事件
+fn pump_job(app: &mut TuiApp) {
+    let events = match &app.job {
+        Some(job) => job.drain(),
+        None => return,
+    };
+
+    let mut finished = false;
+    for event in events {
+        match event {
+            JobEvent::StepStarted {
+                kind,
+                index,
+                total,
+                live_log,
+            } => {
+                mark_step_state(app, kind, StepExecState::Running);
+                app.progress = (index, total);
+                app.current = Some(CurrentStep { kind, live_log });
+                app.live_tail.clear();
+                app.logs.push(LogEntry {
+                    icon: "▶",
+                    message: crate::i18n::tr("tui_exec_running").replace("{step}", kind.label()),
+                });
             },
-            AppMode::Executing => {
-                // 执行期间事件循环被同步执行阻塞，不会到达此处
-                // Ctrl+C 中断由信号处理器通过 INTERRUPTED 标志处理
+            JobEvent::StepFinished(result) => {
+                let icon = match result.outcome {
+                    StepOutcome::Changed => {
+                        mark_step_state(app, result.kind, StepExecState::Success);
+                        "✅"
+                    },
+                    StepOutcome::Skipped => {
+                        mark_step_state(app, result.kind, StepExecState::Idle);
+                        "⏭"
+                    },
+                    StepOutcome::Failed => {
+                        mark_step_state(app, result.kind, StepExecState::Failure);
+                        "❌"
+                    },
+                };
+                let first_line = result.message.lines().next().unwrap_or("").to_string();
+                app.logs.push(LogEntry {
+                    icon,
+                    message: format!("{}: {}", result.kind.label(), first_line),
+                });
+                app.results.push(result);
             },
-            AppMode::Summary => {
-                if let Event::Key(key) = event
-                    && key.kind == KeyEventKind::Press
-                {
-                    // 重新审计并返回选择
-                    app.report = orchestrator.audit();
-                    app.steps = init_steps(&app.report);
-                    app.mode = AppMode::Select;
-                }
-            },
+            JobEvent::Log(message) => app.logs.push(LogEntry {
+                icon: "ℹ️",
+                message,
+            }),
+            JobEvent::Interrupted => app.logs.push(LogEntry {
+                icon: "⚠️",
+                message: crate::i18n::tr("tui_exec_interrupted").into(),
+            }),
+            JobEvent::AllFinished => finished = true,
         }
+    }
+
+    // 尾随当前步骤的输出文件
+    if let Some(current) = &app.current {
+        app.live_tail = artifacts::read_tail(&current.live_log, TAIL_LINES, TAIL_BYTES)
+            .map(|text| text.lines().map(|l| l.to_string()).collect())
+            .unwrap_or_default();
+    }
+
+    // 后台线程异常退出（如步骤 panic）：显式暴露，避免界面永久停在执行中
+    if !finished
+        && let Some(job) = &app.job
+        && job.is_disconnected()
+    {
+        let kind = app
+            .current
+            .as_ref()
+            .map(|current| current.kind)
+            .unwrap_or(StepKind::SystemUpdate);
+        app.logs.push(LogEntry {
+            icon: "❌",
+            message: crate::i18n::tr("tui_job_crashed").into(),
+        });
+        app.results
+            .push(StepResult::failed(kind, crate::i18n::tr("tui_job_crashed")));
+        finished = true;
+    }
+
+    if finished {
+        if let Some(job) = app.job.take() {
+            job.join();
+        }
+        app.progress = (app.progress.1, app.progress.1);
+        app.current = None;
+        app.status.clear();
+        app.mode = AppMode::Summary;
     }
 }
 
 // ---------------------------------------------------------------------------
-// 执行逻辑
+// 各模式按键处理
 // ---------------------------------------------------------------------------
 
-/// 批量执行选中的步骤
-fn execute_batch(
+/// 返回 true 表示需要退出 TUI
+fn handle_select_mode(
     app: &mut TuiApp,
     terminal: &mut TuiTerminal,
     orchestrator: &HardeningOrchestrator,
-    selected: &[StepKind],
-    params: &ExecuteParams,
-) -> anyhow::Result<()> {
-    let all_steps = AllSteps::new();
-    let selected_set: HashSet<StepKind> = selected.iter().copied().collect();
-
-    // 按定义顺序过滤出要执行的步骤
-    let steps_to_run: Vec<&Box<dyn HardeningStep>> = all_steps
-        .steps()
-        .iter()
-        .filter(|s| selected_set.contains(&s.kind()))
-        .collect();
-
-    let total = steps_to_run.len();
-
-    for (i, step) in steps_to_run.iter().enumerate() {
-        // 检查 Ctrl+C 中断
-        if rollback::INTERRUPTED.load(Ordering::SeqCst) {
-            rollback::INTERRUPTED.store(false, Ordering::SeqCst);
-            app.logs.push(LogEntry {
-                icon: "⚠️",
-                message: crate::i18n::tr("tui_exec_interrupted").into(),
-            });
-            app.progress = (i, total);
-            terminal.draw(|f| render(f, app))?;
-            break;
-        }
-
-        let kind = step.kind();
-
-        // 标记步骤为执行中
-        mark_step_state(app, kind, StepExecState::Running);
-        app.logs.push(LogEntry {
-            icon: "▶",
-            message: crate::i18n::tr("tui_exec_running").replace("{step}", kind.label()),
-        });
-        app.progress = (i, total);
-        terminal.draw(|f| render(f, app))?;
-
-        // 执行步骤
-        match step.execute(params) {
-            Ok(result) => {
-                if result.changes_made {
-                    mark_step_state(app, kind, StepExecState::Success);
-                    app.logs.push(LogEntry {
-                        icon: "✅",
-                        message: crate::i18n::tr("tui_exec_done").replace("{step}", kind.label()),
-                    });
-                } else {
-                    // changes_made = false 认为是跳过而非失败
-                    mark_step_state(app, kind, StepExecState::Idle);
-                    app.logs.push(LogEntry {
-                        icon: "⏭",
-                        message: crate::i18n::tr("tui_exec_skip").replace("{msg}", &result.message),
-                    });
-                }
-                app.results.push(result);
-                orchestrator
-                    .logger
-                    .log_operation(crate::i18n::tr("log_step_complete"), kind.label());
-            },
-            Err(e) => {
-                mark_step_state(app, kind, StepExecState::Failure);
-                app.logs.push(LogEntry {
-                    icon: "❌",
-                    message: crate::i18n::tr("tui_exec_failed").replace("{err}", &format!("{}", e)),
-                });
-                let err_result = StepResult {
-                    kind,
-                    changes_made: false,
-                    message: crate::i18n::tr("tui_exec_failed").replace("{err}", &format!("{e}")),
-                };
-                app.results.push(err_result);
-                orchestrator.logger.log_operation(
-                    crate::i18n::tr("log_step_failed"),
-                    &format!("{}: {e}", kind.label()),
-                );
-
-                // 自动回退
-                orchestrator
-                    .logger
-                    .log(crate::i18n::tr("log_rollback_auto"));
-                rollback::undo_all();
-
-                app.progress = (i + 1, total);
-                terminal.draw(|f| render(f, app))?;
-                break;
-            },
-        }
-
-        app.progress = (i + 1, total);
-        terminal.draw(|f| render(f, app))?;
+    event: Event,
+) -> anyhow::Result<bool> {
+    let Event::Key(key) = event else {
+        return Ok(false);
+    };
+    if key.kind != KeyEventKind::Press {
+        return Ok(false);
     }
 
-    Ok(())
-}
-
-/// 单个步骤执行
-fn execute_single(
-    app: &mut TuiApp,
-    terminal: &mut TuiTerminal,
-    _orchestrator: &HardeningOrchestrator,
-    kind: StepKind,
-    params: &ExecuteParams,
-) -> anyhow::Result<()> {
-    let all_steps = AllSteps::new();
-
-    // 找到对应的步骤
-    let step = all_steps.steps().iter().find(|s| s.kind() == kind);
-    let step = match step {
-        Some(s) => s,
-        None => {
-            app.logs.push(LogEntry {
-                icon: "❌",
-                message: crate::i18n::tr("tui_exec_failed").replace("{err}", kind.label()),
-            });
-            return Ok(());
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.cursor = app.cursor.saturating_sub(1);
         },
-    };
-
-    // 标记为执行中
-    mark_step_state(app, kind, StepExecState::Running);
-    app.logs.push(LogEntry {
-        icon: "▶",
-        message: crate::i18n::tr("tui_exec_running").replace("{step}", kind.label()),
-    });
-    app.progress = (0, 1);
-    terminal.draw(|f| render(f, app))?;
-
-    // 执行
-    match step.execute(params) {
-        Ok(result) => {
-            if result.changes_made {
-                mark_step_state(app, kind, StepExecState::Success);
-                app.logs.push(LogEntry {
-                    icon: "✅",
-                    message: crate::i18n::tr("tui_exec_done").replace("{step}", kind.label()),
-                });
-            } else {
-                mark_step_state(app, kind, StepExecState::Idle);
-                app.logs.push(LogEntry {
-                    icon: "⏭",
-                    message: crate::i18n::tr("tui_exec_skip").replace("{msg}", &result.message),
-                });
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.cursor = app
+                .cursor
+                .saturating_add(1)
+                .min(app.steps.len().saturating_sub(1));
+        },
+        KeyCode::Char(' ') => {
+            if app.cursor < app.steps.len() {
+                app.steps[app.cursor].checked ^= true;
             }
-            app.results.push(result);
         },
-        Err(e) => {
-            mark_step_state(app, kind, StepExecState::Failure);
-            app.logs.push(LogEntry {
-                icon: "❌",
-                message: crate::i18n::tr("tui_exec_failed").replace("{err}", &format!("{}", e)),
+        KeyCode::Char('a') => {
+            // 全选/取消全选（可选步骤 9/10/11 仍需手动勾选）
+            let all_on = app
+                .steps
+                .iter()
+                .filter(|s| !s.kind.is_opt_in())
+                .all(|s| s.checked);
+            for step in &mut app.steps {
+                if !step.kind.is_opt_in() {
+                    step.checked = !all_on;
+                }
+            }
+        },
+        KeyCode::Enter => {
+            let selected: Vec<StepKind> = app
+                .steps
+                .iter()
+                .filter(|s| s.checked)
+                .map(|s| s.kind)
+                .collect();
+            if selected.is_empty() {
+                app.status = crate::i18n::tr("tui_no_selection").into();
+                return Ok(false);
+            }
+            let params = suspend_for_params(terminal, &selected, &app.report);
+            app.pending = Some(PendingRun { selected, params });
+            begin_or_ask_mirror(app, terminal, orchestrator);
+        },
+        KeyCode::Char('e') => {
+            if app.cursor >= app.steps.len() {
+                return Ok(false);
+            }
+            let kind = app.steps[app.cursor].kind;
+
+            // 单项执行：有交互需求的步骤用 TUI 弹窗
+            match kind {
+                StepKind::UserCreation => {
+                    app.popup = Some(Popup::CreateUserUsername {
+                        value: String::new(),
+                    });
+                    return Ok(false);
+                },
+                StepKind::SshKeySetup => {
+                    let users = system::detect_sudo_users();
+                    if users.is_empty() {
+                        app.popup = Some(Popup::SshKeyUsername {
+                            value: String::new(),
+                        });
+                    } else {
+                        let mut choices = vec!["root".to_string()];
+                        for u in users {
+                            if u != "root" {
+                                choices.push(u);
+                            }
+                        }
+                        app.popup = Some(Popup::SshKeyUserSelect {
+                            users: choices,
+                            selected: 0,
+                        });
+                    }
+                    return Ok(false);
+                },
+                StepKind::SshPortChange => {
+                    app.popup = Some(Popup::SshPortInput {
+                        value: String::new(),
+                    });
+                    return Ok(false);
+                },
+                _ => {},
+            }
+
+            let params = suspend_for_params(terminal, &[kind], &app.report);
+            app.pending = Some(PendingRun {
+                selected: vec![kind],
+                params,
             });
-            app.results.push(StepResult {
-                kind,
-                changes_made: false,
-                message: crate::i18n::tr("tui_exec_failed").replace("{err}", &format!("{}", e)),
-            });
+            begin_or_ask_mirror(app, terminal, orchestrator);
+        },
+        KeyCode::Char('r') => {
+            app.status = crate::i18n::tr("tui_reauditing").into();
+            terminal.draw(|f| render(f, app))?;
+            app.report = orchestrator.audit();
+            app.steps = init_steps(&app.report);
+            app.logs.clear();
+            app.results.clear();
+            app.status.clear();
+        },
+        KeyCode::Char('q') => return Ok(true),
+        _ => {},
+    }
+    Ok(false)
+}
+
+fn handle_executing_mode(app: &mut TuiApp, event: Event) {
+    if let Event::Key(key) = event
+        && key.kind == KeyEventKind::Press
+        && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+    {
+        app.status = crate::i18n::tr("tui_running_hint").into();
+    }
+}
+
+fn handle_summary_mode(app: &mut TuiApp, event: Event, orchestrator: &HardeningOrchestrator) {
+    let Event::Key(key) = event else {
+        return;
+    };
+    if key.kind != KeyEventKind::Press {
+        return;
+    }
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.summary_scroll = app.summary_scroll.saturating_sub(1);
+            return;
+        },
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.summary_scroll = app.summary_scroll.saturating_add(1);
+            return;
+        },
+        KeyCode::PageUp => {
+            app.summary_scroll = app.summary_scroll.saturating_sub(10);
+            return;
+        },
+        KeyCode::PageDown => {
+            app.summary_scroll = app.summary_scroll.saturating_add(10);
+            return;
+        },
+        _ => {},
+    }
+    // 返回步骤列表并重新审计
+    app.report = orchestrator.audit();
+    app.steps = init_steps(&app.report);
+    app.summary_scroll = 0;
+    app.mode = AppMode::Select;
+}
+
+// ---------------------------------------------------------------------------
+// 弹窗按键处理
+// ---------------------------------------------------------------------------
+
+fn handle_popup(
+    app: &mut TuiApp,
+    terminal: &mut TuiTerminal,
+    orchestrator: &HardeningOrchestrator,
+    event: Event,
+) -> anyhow::Result<()> {
+    let Event::Key(key) = event else {
+        return Ok(());
+    };
+    if key.kind != KeyEventKind::Press {
+        return Ok(());
+    }
+
+    let Some(ref mut p) = app.popup else {
+        return Ok(());
+    };
+
+    match *p {
+        Popup::MirrorSelect {
+            ref items,
+            ref mut selected,
+        } => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                *selected = selected.saturating_sub(1);
+            },
+            KeyCode::Down | KeyCode::Char('j') => {
+                *selected = selected
+                    .saturating_add(1)
+                    .min(items.len().saturating_sub(1));
+            },
+            KeyCode::Enter => {
+                let index = *selected;
+                app.mirror = PackageMirror::all()[index];
+                app.popup = None;
+                start_pending(app, orchestrator);
+            },
+            KeyCode::Esc => {
+                app.popup = None;
+                app.pending = None;
+                app.status = crate::i18n::tr("tui_mirror_cancelled").into();
+            },
+            _ => {},
+        },
+        Popup::SshKeyUsername { ref mut value } => match key.code {
+            KeyCode::Char(c) => value.push(c),
+            KeyCode::Backspace => {
+                value.pop();
+            },
+            KeyCode::Enter if !value.is_empty() => {
+                let username = value.clone();
+                app.popup = Some(Popup::SshKeyAction {
+                    username,
+                    selected: 0,
+                });
+            },
+            KeyCode::Esc => app.popup = None,
+            _ => {},
+        },
+        Popup::SshKeyUserSelect {
+            ref users,
+            ref mut selected,
+        } => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                *selected = selected.saturating_sub(1);
+            },
+            KeyCode::Down | KeyCode::Char('j') => {
+                *selected = selected
+                    .saturating_add(1)
+                    .min(users.len().saturating_sub(1));
+            },
+            KeyCode::Enter => {
+                let username = users[*selected].clone();
+                app.popup = Some(Popup::SshKeyAction {
+                    username,
+                    selected: 0,
+                });
+            },
+            KeyCode::Esc => app.popup = None,
+            _ => {},
+        },
+        Popup::SshKeyAction {
+            ref username,
+            ref mut selected,
+        } => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                *selected = selected.saturating_sub(1);
+            },
+            KeyCode::Down | KeyCode::Char('j') => {
+                *selected = selected.saturating_add(1).min(2);
+            },
+            KeyCode::Enter => match *selected {
+                0 => {
+                    let u = username.clone();
+                    // 检查密钥是否已存在
+                    let home = system::home_dir(&u);
+                    let key_path = format!("{}/.ssh/id_ed25519", home);
+                    if std::path::Path::new(&key_path).exists() {
+                        app.popup = Some(Popup::SshKeyOverwrite {
+                            username: u,
+                            selected: 0,
+                        });
+                    } else {
+                        app.popup = None;
+                        queue_single_run(
+                            app,
+                            StepKind::SshKeySetup,
+                            ExecuteParams {
+                                ssh_key_username: Some(u),
+                                ssh_key_action: Some(SshKeyAction::GenerateNew),
+                                ..Default::default()
+                            },
+                            orchestrator,
+                        );
+                    }
+                },
+                1 => {
+                    let u = username.clone();
+                    app.popup = Some(Popup::SshKeyPaste {
+                        username: u,
+                        value: String::new(),
+                    });
+                },
+                _ => {
+                    app.popup = None;
+                },
+            },
+            KeyCode::Esc => app.popup = None,
+            _ => {},
+        },
+        Popup::SshKeyPaste {
+            ref username,
+            ref mut value,
+        } => match key.code {
+            KeyCode::Char(c) => value.push(c),
+            KeyCode::Backspace => {
+                value.pop();
+            },
+            KeyCode::Enter if !value.is_empty() => {
+                let u = username.clone();
+                let pk = value.clone();
+                app.popup = None;
+                queue_single_run(
+                    app,
+                    StepKind::SshKeySetup,
+                    ExecuteParams {
+                        ssh_key_username: Some(u),
+                        ssh_key_action: Some(SshKeyAction::PasteKey(pk)),
+                        ..Default::default()
+                    },
+                    orchestrator,
+                );
+            },
+            KeyCode::Esc => {
+                let u = username.clone();
+                app.popup = Some(Popup::SshKeyAction {
+                    username: u,
+                    selected: 0,
+                });
+            },
+            _ => {},
+        },
+        Popup::SshKeyOverwrite {
+            ref username,
+            ref mut selected,
+        } => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                *selected = 0;
+            },
+            KeyCode::Down | KeyCode::Char('j') => {
+                *selected = 1;
+            },
+            KeyCode::Enter => match *selected {
+                0 => {
+                    let u = username.clone();
+                    app.popup = None;
+                    // 先删旧密钥再重建（删除动作随后由步骤重新注册回滚）
+                    let home = system::home_dir(&u);
+                    for f in ["id_ed25519", "id_ed25519.pub"] {
+                        let p = format!("{}/.ssh/{}", home, f);
+                        let _ = std::fs::remove_file(&p);
+                    }
+                    queue_single_run(
+                        app,
+                        StepKind::SshKeySetup,
+                        ExecuteParams {
+                            ssh_key_username: Some(u),
+                            ssh_key_action: Some(SshKeyAction::GenerateNew),
+                            ..Default::default()
+                        },
+                        orchestrator,
+                    );
+                },
+                _ => {
+                    let u = username.clone();
+                    app.popup = Some(Popup::SshKeyAction {
+                        username: u,
+                        selected: 0,
+                    });
+                },
+            },
+            KeyCode::Esc => {
+                let u = username.clone();
+                app.popup = Some(Popup::SshKeyAction {
+                    username: u,
+                    selected: 0,
+                });
+            },
+            _ => {},
+        },
+        // ── 创建用户 ──
+        Popup::CreateUserUsername { ref mut value } => match key.code {
+            KeyCode::Char(c) if c.is_alphanumeric() || c == '-' || c == '_' => {
+                if value.len() < 32 {
+                    value.push(c);
+                }
+            },
+            KeyCode::Backspace => {
+                value.pop();
+            },
+            KeyCode::Enter if !value.is_empty() => {
+                let username = value.clone();
+                app.popup = Some(Popup::CreateUserLockPw {
+                    username,
+                    lock: true,
+                });
+            },
+            KeyCode::Esc => app.popup = None,
+            _ => {},
+        },
+        Popup::CreateUserLockPw {
+            ref username,
+            ref mut lock,
+        } => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => *lock = true,
+            KeyCode::Down | KeyCode::Char('j') => *lock = false,
+            KeyCode::Enter => {
+                let username = username.clone();
+                let lock_password = *lock;
+                app.popup = None;
+                queue_single_run(
+                    app,
+                    StepKind::UserCreation,
+                    ExecuteParams {
+                        new_username: Some(username.clone()),
+                        lock_password,
+                        ssh_key_username: Some(username),
+                        ssh_key_action: Some(SshKeyAction::GenerateNew),
+                        ..Default::default()
+                    },
+                    orchestrator,
+                );
+            },
+            KeyCode::Esc => {
+                let u = username.clone();
+                app.popup = Some(Popup::CreateUserUsername { value: u });
+            },
+            _ => {},
+        },
+        // ── SSH 端口 ──
+        Popup::SshPortInput { ref mut value } => match key.code {
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                if value.len() < 5 {
+                    value.push(c);
+                }
+            },
+            KeyCode::Backspace => {
+                value.pop();
+            },
+            KeyCode::Enter if !value.is_empty() => {
+                if let Ok(port) = value.parse::<u16>()
+                    && port > 0
+                {
+                    app.popup = None;
+                    queue_single_run(
+                        app,
+                        StepKind::SshPortChange,
+                        ExecuteParams {
+                            new_ssh_port: Some(port),
+                            ..Default::default()
+                        },
+                        orchestrator,
+                    );
+                }
+            },
+            KeyCode::Esc => app.popup = None,
+            _ => {},
         },
     }
 
-    app.progress = (1, 1);
     terminal.draw(|f| render(f, app))?;
-
     Ok(())
 }
 
-/// 执行 SSH 密钥设置（从弹窗流程调用）
-fn run_ssh_key_setup(
+// ---------------------------------------------------------------------------
+// 执行启动
+// ---------------------------------------------------------------------------
+
+/// 需要询问临时软件源时先弹窗，否则直接启动
+fn begin_or_ask_mirror(
     app: &mut TuiApp,
     terminal: &mut TuiTerminal,
-    _orchestrator: &HardeningOrchestrator,
-    username: String,
-    action: Option<SshKeyAction>,
-) -> anyhow::Result<()> {
-    let params = ExecuteParams {
-        ssh_key_username: Some(username),
-        ssh_key_action: action,
-        ..Default::default()
-    };
-    app.logs.clear();
-    app.results.clear();
-    app.progress = (0, 1);
-    for s in &mut app.steps {
-        s.state = StepExecState::Idle;
+    orchestrator: &HardeningOrchestrator,
+) {
+    let needs_mirror = app
+        .pending
+        .as_ref()
+        .is_some_and(|p| p.selected.iter().any(|s| s.touches_package_manager()));
+
+    if !needs_mirror {
+        start_pending(app, orchestrator);
+        return;
     }
-    app.mode = AppMode::Executing;
-    execute_single(app, terminal, _orchestrator, StepKind::SshKeySetup, &params)?;
-    app.mode = AppMode::Summary;
-    Ok(())
+
+    // 探测延迟期间先给出提示，避免看起来卡住
+    app.status = crate::i18n::tr("tui_mirror_probing").into();
+    let _ = terminal.draw(|f| render(f, app));
+    open_mirror_popup(app);
+    app.status.clear();
 }
 
-/// 执行非 root 用户创建（从弹窗流程调用）
-fn run_user_creation(
-    app: &mut TuiApp,
-    terminal: &mut TuiTerminal,
-    _orchestrator: &HardeningOrchestrator,
-    username: String,
-    lock_password: bool,
-) -> anyhow::Result<()> {
-    let params = ExecuteParams {
-        new_username: Some(username.clone()),
-        lock_password,
-        ssh_key_username: Some(username),
-        ssh_key_action: Some(SshKeyAction::GenerateNew),
-        ..Default::default()
-    };
-    app.logs.clear();
-    app.results.clear();
-    app.progress = (0, 1);
-    for s in &mut app.steps {
-        s.state = StepExecState::Idle;
-    }
-    app.mode = AppMode::Executing;
-    execute_single(
-        app,
-        terminal,
-        _orchestrator,
-        StepKind::UserCreation,
-        &params,
-    )?;
-    app.mode = AppMode::Summary;
-    Ok(())
+/// 打开镜像源选择弹窗（默认选中上次使用的镜像）
+fn open_mirror_popup(app: &mut TuiApp) {
+    let items = mirror_items();
+    let selected = PackageMirror::all()
+        .iter()
+        .position(|m| *m == app.mirror)
+        .unwrap_or(0);
+    app.popup = Some(Popup::MirrorSelect { items, selected });
 }
 
-/// 执行 SSH 端口修改（从弹窗流程调用）
-fn run_ssh_port_change(
+/// 镜像选项（含延迟）
+fn mirror_items() -> Vec<String> {
+    PackageMirror::all()
+        .iter()
+        .map(|mirror| match mirror.probe_host() {
+            None => crate::i18n::tr("mirror_original").to_string(),
+            Some(_) => match package_mirror::probe_latency(*mirror) {
+                Some(latency) => format!(
+                    "{} ({}{}ms)",
+                    mirror.label(),
+                    crate::i18n::tr("mirror_latency_prefix"),
+                    latency.as_millis()
+                ),
+                None => format!(
+                    "{} ({})",
+                    mirror.label(),
+                    crate::i18n::tr("mirror_unreachable")
+                ),
+            },
+        })
+        .collect()
+}
+
+/// 单项执行：直接排队并启动（若涉及包管理器则先询问镜像源）
+fn queue_single_run(
     app: &mut TuiApp,
-    terminal: &mut TuiTerminal,
-    _orchestrator: &HardeningOrchestrator,
-    port: u16,
-) -> anyhow::Result<()> {
-    let params = ExecuteParams {
-        new_ssh_port: Some(port),
-        ..Default::default()
+    kind: StepKind,
+    params: ExecuteParams,
+    orchestrator: &HardeningOrchestrator,
+) {
+    app.pending = Some(PendingRun {
+        selected: vec![kind],
+        params,
+    });
+    if kind.touches_package_manager() {
+        open_mirror_popup(app);
+        app.status.clear();
+    } else {
+        start_pending(app, orchestrator);
+    }
+}
+
+/// 启动排队中的运行（后台线程）
+fn start_pending(app: &mut TuiApp, orchestrator: &HardeningOrchestrator) {
+    let Some(pending) = app.pending.take() else {
+        return;
     };
+
     app.logs.clear();
     app.results.clear();
-    app.progress = (0, 1);
-    for s in &mut app.steps {
-        s.state = StepExecState::Idle;
+    app.live_tail.clear();
+    app.summary_scroll = 0;
+    app.progress = (0, pending.selected.len());
+    for step in &mut app.steps {
+        step.state = StepExecState::Idle;
     }
+    app.current = None;
     app.mode = AppMode::Executing;
-    execute_single(
-        app,
-        terminal,
-        _orchestrator,
-        StepKind::SshPortChange,
-        &params,
-    )?;
-    app.mode = AppMode::Summary;
-    Ok(())
+    app.status.clear();
+
+    let runner = StepRunner::new(orchestrator.logger.clone()).with_mirror(app.mirror);
+    app.job = Some(runner.spawn(pending.selected, pending.params));
 }
 
 /// 标记某个步骤的执行状态
@@ -836,13 +997,12 @@ fn suspend_for_params(
 // ---------------------------------------------------------------------------
 
 fn init_steps(report: &AuditReport) -> Vec<StepItem> {
-    let all_kinds = StepKind::all();
-    all_kinds
+    StepKind::all()
         .iter()
         .map(|kind| StepItem {
             kind: *kind,
-            // 默认勾选未安全配置的项
-            checked: !matches!(kind.check_default_status(report), AuditStatus::Safe),
+            // 可选步骤（9/10/11）默认不勾选，其余默认勾选未安全配置的项
+            checked: kind.default_checked(report),
             state: StepExecState::Idle,
         })
         .collect()
@@ -967,6 +1127,11 @@ fn render_step_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp
         .map(|step| {
             let status_icon = step.kind.check_default_status(&app.report).icon();
             let checkbox = if step.checked { "[✓]" } else { "[ ]" };
+            let opt_in = if step.kind.is_opt_in() {
+                crate::i18n::tr("step_opt_in_tag")
+            } else {
+                ""
+            };
             let label = step.kind.label();
 
             // 根据执行状态调整样式
@@ -977,7 +1142,10 @@ fn render_step_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp
                 StepExecState::Idle => ("  ", Style::default()),
             };
 
-            let content = format!(" {} {} {} {}", prefix, checkbox, label, status_icon);
+            let content = format!(
+                " {} {} {} {} {}",
+                prefix, checkbox, label, opt_in, status_icon
+            );
             ListItem::new(Line::from(Span::styled(content, style)))
         })
         .collect();
@@ -1017,15 +1185,19 @@ fn render_right_help(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiAp
 
     let selected_count = app.steps.iter().filter(|s| s.checked).count();
 
-    let help = Text::from(vec![
+    let mut lines = vec![
         Line::from(vec![Span::raw("")]),
         Line::from(vec![
-            Span::styled("  ↑↓", Style::default().bold()),
+            Span::styled("  ↑↓/jk", Style::default().bold()),
             Span::raw(format!("  {}", crate::i18n::tr("tui_help_move"))),
         ]),
         Line::from(vec![
             Span::styled(" Space", Style::default().bold()),
             Span::raw(format!("  {}", crate::i18n::tr("tui_help_toggle"))),
+        ]),
+        Line::from(vec![
+            Span::styled(" a", Style::default().bold()),
+            Span::raw(format!("  {}", crate::i18n::tr("tui_help_all"))),
         ]),
         Line::from(vec![
             Span::styled(" Enter", Style::default().bold()),
@@ -1049,18 +1221,31 @@ fn render_right_help(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiAp
             Style::default().fg(Color::Cyan),
         )]),
         Line::from(vec![Span::styled(
+            crate::i18n::tr("tui_opt_in_hint"),
+            Style::default().dim(),
+        )]),
+        Line::from(vec![Span::styled(
             crate::i18n::tr("tui_single_hint"),
             Style::default().dim(),
         )]),
-    ]);
+    ];
+
+    if !app.status.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            format!(" {} ", app.status),
+            Style::default().fg(Color::Yellow),
+        )]));
+    }
 
     frame.render_widget(
-        Paragraph::new(help).block(block).wrap(Wrap { trim: false }),
+        Paragraph::new(Text::from(lines))
+            .block(block)
+            .wrap(Wrap { trim: false }),
         area,
     );
 }
 
-/// 执行中：日志 + 进度条
+/// 执行中：当前步骤 + 耗时 + 实时输出 + 进度条
 fn render_right_executing(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let block = Block::default()
         .title(format!(" {} ", crate::i18n::tr("tui_exec_title")))
@@ -1070,54 +1255,125 @@ fn render_right_executing(frame: &mut Frame, area: ratatui::layout::Rect, app: &
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // 上下分割：日志区 + 进度条
+    // 上：状态头；中：日志；下：进度条
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(inner);
 
-    // 日志区：显示最近 10 条
-    let log_lines: Vec<Line> = app
+    // ── 状态头 ──
+    let elapsed = app
+        .job
+        .as_ref()
+        .map(|job| job.started_at.elapsed())
+        .unwrap_or_default();
+    let spin = SPINNER[(elapsed.as_millis() / 120) as usize % SPINNER.len()];
+
+    let (index, total) = app.progress;
+    let headline = match &app.current {
+        Some(current) => crate::i18n::tr("tui_exec_running")
+            .replace("{step}", current.kind.label())
+            .to_string(),
+        None => crate::i18n::tr("tui_exec_preparing").to_string(),
+    };
+    let mut header_lines = vec![
+        Line::from(vec![
+            Span::styled(format!(" {spin} "), Style::default().fg(Color::Cyan).bold()),
+            Span::styled(headline, Style::default().bold()),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("   {} ", crate::i18n::tr("tui_exec_progress")),
+                Style::default().dim(),
+            ),
+            Span::styled(
+                format!("{}/{}", index + 1, total),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(
+                format!(
+                    "   {} {}",
+                    crate::i18n::tr("tui_exec_elapsed"),
+                    format_duration(elapsed)
+                ),
+                Style::default().dim(),
+            ),
+        ]),
+        Line::from(vec![Span::styled(
+            format!("   {}", crate::i18n::tr("tui_exec_cancel_hint")),
+            Style::default().fg(Color::Yellow),
+        )]),
+    ];
+    if !app.status.is_empty() {
+        header_lines.push(Line::from(vec![Span::styled(
+            format!("   {}", app.status),
+            Style::default().fg(Color::Yellow),
+        )]));
+    }
+    frame.render_widget(Paragraph::new(Text::from(header_lines)), chunks[0]);
+
+    // ── 日志 + 实时输出 ──
+    let mut lines: Vec<Line> = app
         .logs
         .iter()
         .rev()
-        .take(10)
+        .take(LOG_PANEL_LINES)
         .rev()
         .map(|entry| {
-            let icon_style = if entry.icon == "▶" {
-                Style::default().fg(Color::Cyan)
-            } else if entry.icon == "✅" {
-                Style::default().fg(Color::Green)
-            } else if entry.icon == "❌" {
-                Style::default().fg(Color::Red)
-            } else if entry.icon == "⚠️" {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default()
+            let icon_style = match entry.icon {
+                "▶" => Style::default().fg(Color::Cyan),
+                "✅" => Style::default().fg(Color::Green),
+                "❌" => Style::default().fg(Color::Red),
+                "⚠️" => Style::default().fg(Color::Yellow),
+                "⏭" => Style::default().fg(Color::Yellow),
+                _ => Style::default().dim(),
             };
             Line::from(vec![
                 Span::styled(format!(" {} ", entry.icon), icon_style),
-                Span::styled(&entry.message, Style::default()),
+                Span::styled(entry.message.clone(), Style::default()),
             ])
         })
         .collect();
 
-    let log_widget = Paragraph::new(Text::from(log_lines)).wrap(Wrap { trim: false });
-    frame.render_widget(log_widget, chunks[0]);
+    if !app.live_tail.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            format!(" {} ", crate::i18n::tr("tui_exec_live_output")),
+            Style::default().fg(Color::DarkGray),
+        )]));
+        for line in &app.live_tail {
+            lines.push(Line::from(vec![Span::styled(
+                format!("   {line}"),
+                Style::default().fg(Color::DarkGray),
+            )]));
+        }
+    }
 
-    // 进度条
-    let (current, total) = app.progress;
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+        chunks[1],
+    );
+
+    // ── 进度条 ──
     let ratio = if total > 0 {
-        current as f64 / total as f64
+        (index as f64 / total as f64).min(1.0)
     } else {
         0.0
     };
     let gauge = Gauge::default()
-        .ratio(ratio.min(1.0))
-        .label(format!(" {}/{} ", current, total))
+        .ratio(ratio)
+        .label(format!(" {}/{} ", index, total))
         .style(Style::default().fg(Color::Cyan))
         .gauge_style(Style::default().bg(Color::DarkGray).fg(Color::Green));
-    frame.render_widget(gauge, chunks[1]);
+    frame.render_widget(gauge, chunks[2]);
+}
+
+fn format_duration(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    format!("{:02}:{:02}", secs / 60, secs % 60)
 }
 
 /// 摘要模式：执行结果
@@ -1127,45 +1383,83 @@ fn render_right_summary(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tu
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded);
 
-    let success = app.results.iter().filter(|r| r.changes_made).count();
-    let failed = app.results.len().saturating_sub(success);
+    let changed = app
+        .results
+        .iter()
+        .filter(|r| r.outcome == StepOutcome::Changed)
+        .count();
+    let skipped = app
+        .results
+        .iter()
+        .filter(|r| r.outcome == StepOutcome::Skipped)
+        .count();
+    let failed = app
+        .results
+        .iter()
+        .filter(|r| r.outcome == StepOutcome::Failed)
+        .count();
 
     let mut lines = vec![Line::from(vec![Span::raw("")])];
 
-    // 每步结果
-    for r in &app.results {
-        let (icon, fg) = if r.changes_made {
-            ("✅", Color::Green)
-        } else {
-            ("❌", Color::Red)
+    for result in &app.results {
+        let fg = match result.outcome {
+            StepOutcome::Changed => Color::Green,
+            StepOutcome::Skipped => Color::Yellow,
+            StepOutcome::Failed => Color::Red,
         };
-        if r.changes_made {
-            // 成功：只显示步骤名
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(" {} ", result.outcome.icon()),
+                Style::default().fg(fg),
+            ),
+            Span::styled(result.kind.label(), Style::default().bold()),
+            Span::styled(
+                format!(" [{}]", result.outcome.label()),
+                Style::default().fg(fg),
+            ),
+        ]));
+        for line in result.message.lines() {
+            lines.push(Line::from(vec![Span::styled(
+                format!("     {line}"),
+                Style::default().dim(),
+            )]));
+        }
+        for artifact in &result.artifacts {
             lines.push(Line::from(vec![
-                Span::styled(format!(" {} ", icon), Style::default().fg(fg)),
-                Span::styled(r.kind.label(), Style::default()),
-            ]));
-        } else {
-            // 失败/跳过：显示原因
-            lines.push(Line::from(vec![
-                Span::styled(format!(" {} ", icon), Style::default().fg(fg)),
-                Span::styled(r.kind.label(), Style::default()),
-                Span::styled(format!(": {}", r.message), Style::default().dim()),
+                Span::styled(
+                    format!("     {} ", crate::i18n::tr("tui_result_artifact")),
+                    Style::default().dim(),
+                ),
+                Span::styled(artifact.clone(), Style::default().fg(Color::DarkGray)),
             ]));
         }
     }
 
     lines.push(Line::from(vec![Span::raw("")]));
-
-    // 总计
     let stats = crate::i18n::tr("tui_result_summary")
-        .replace("{ok}", &success.to_string())
+        .replace("{ok}", &changed.to_string())
+        .replace("{skip}", &skipped.to_string())
         .replace("{fail}", &failed.to_string());
     lines.push(Line::from(vec![Span::styled(
         stats,
         Style::default().bold(),
     )]));
-
+    lines.push(Line::from(vec![Span::styled(
+        format!(
+            " {} {}",
+            crate::i18n::tr("tui_result_report_dir"),
+            artifacts::dir_display()
+        ),
+        Style::default().fg(Color::Cyan),
+    )]));
+    lines.push(Line::from(vec![Span::styled(
+        format!(
+            " {} {}",
+            crate::i18n::tr("tui_result_view"),
+            artifacts::dir_display()
+        ),
+        Style::default().dim(),
+    )]));
     lines.push(Line::from(vec![Span::raw("")]));
     lines.push(Line::from(vec![Span::styled(
         crate::i18n::tr("tui_result_return"),
@@ -1174,7 +1468,8 @@ fn render_right_summary(frame: &mut Frame, area: ratatui::layout::Rect, app: &Tu
 
     let text = Paragraph::new(Text::from(lines))
         .block(block)
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((app.summary_scroll, 0));
 
     frame.render_widget(text, area);
 }
@@ -1214,6 +1509,12 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
 
     // 统一弹窗尺寸逻辑
     let (title, height, content_lines, hint_line) = match popup {
+        Popup::MirrorSelect { items, selected } => (
+            format!(" {} ", crate::i18n::tr("tui_mirror_title")),
+            (items.len() + 5).clamp(6, 12) as u16,
+            render_mirror_options(items, *selected),
+            crate::i18n::tr("tui_hint_updown_enter_esc"),
+        ),
         Popup::SshKeyUsername { value } => (
             format!(" {} ", crate::i18n::tr("tui_popup_username")),
             5,
@@ -1323,6 +1624,27 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     );
 }
 
+/// 镜像选项列表（含延迟说明）
+fn render_mirror_options(items: &[String], selected: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![Span::styled(
+        format!("  {}", crate::i18n::tr("tui_mirror_hint")),
+        Style::default().dim(),
+    )])];
+    for (i, item) in items.iter().enumerate() {
+        let prefix = if i == selected { " ▸ " } else { "   " };
+        let style = if i == selected {
+            Style::default().fg(Color::Cyan).bold()
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(item.clone(), style),
+        ]));
+    }
+    lines
+}
+
 /// 用户名输入框内容
 fn render_username_input(value: &str) -> Vec<Line<'static>> {
     if value.is_empty() {
@@ -1349,7 +1671,7 @@ fn render_username_input(value: &str) -> Vec<Line<'static>> {
     }
 }
 
-/// 公钥粘贴框内容
+/// 公钥粘贴框内容（按 char 边界截断，避免多字节 panic）
 fn render_pubkey_input(value: &str) -> Vec<Line<'static>> {
     if value.is_empty() {
         vec![
@@ -1364,12 +1686,11 @@ fn render_pubkey_input(value: &str) -> Vec<Line<'static>> {
             ]),
         ]
     } else {
-        // 显示开头部分+光标
-        let display = if value.len() > 50 {
-            format!("{}...█", &value[..50])
-        } else {
-            format!("{}█", value)
-        };
+        let mut display: String = value.chars().take(50).collect();
+        if value.chars().count() > 50 {
+            display.push_str("...");
+        }
+        display.push('█');
         vec![
             Line::from(vec![Span::raw("")]),
             Line::from(vec![
