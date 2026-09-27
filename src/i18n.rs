@@ -296,7 +296,6 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "mirror_applied" => "已临时切换到 {mirror}（改写 {files} 个源文件、{entries} 处地址）",
         "mirror_repo_skipped" => "；{n} 个 repo 仅配置 mirrorlist，本次未加速",
         "mirror_warming" => "正在预热 {mirror}（实时日志: {log}）...",
-        "mirror_warmup_failed" => "镜像源预热失败，回退原始源: {err}",
         "mirror_apply_failed" => "临时源准备失败，回退原始源: {err}",
         "result_pkg_unknown" => "无法识别包管理器，跳过该步骤",
         "result_cmd_timeout" => "命令超时被终止",
@@ -603,9 +602,6 @@ fn en(key: &str) -> Option<&'static str> {
             "; {n} repo file(s) only define mirrorlist and were not accelerated"
         },
         "mirror_warming" => "Warming up {mirror} (live log: {log}) ...",
-        "mirror_warmup_failed" => {
-            "Mirror warm-up failed, falling back to original repositories: {err}"
-        },
         "mirror_apply_failed" => "Failed to prepare temporary repositories, falling back: {err}",
         "result_pkg_unknown" => "Unknown package manager, step skipped",
         "result_cmd_timeout" => "Command timed out and was terminated",
@@ -694,6 +690,7 @@ fn en(key: &str) -> Option<&'static str> {
         },
         "cli_mirror_failed_prompt" => "Repository unavailable, choose the next step",
         "result_cmd_no_response" => "No response (no data received for 30 seconds)",
+        "err_setup_signal" => "Failed to register the Ctrl+C signal handler: {err}",
         _ => return None,
     })
 }
@@ -915,7 +912,6 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "mirror_applied" => "已臨時切換到 {mirror}（改寫 {files} 個源檔案、{entries} 處位址）",
         "mirror_repo_skipped" => "；{n} 個 repo 僅配置 mirrorlist，本次未加速",
         "mirror_warming" => "正在預熱 {mirror}（即時日誌: {log}）...",
-        "mirror_warmup_failed" => "鏡像源預熱失敗，回退原始源: {err}",
         "mirror_apply_failed" => "臨時源準備失敗，回退原始源: {err}",
         "result_pkg_unknown" => "無法識別套件管理器，跳過該步驟",
         "result_cmd_timeout" => "命令逾時被終止",
