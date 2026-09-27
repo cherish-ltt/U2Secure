@@ -132,82 +132,18 @@ pub struct AuditReport {
     pub auto_updates_enabled: bool,
     /// 系统包列表是否已是最新
     pub system_up_to_date: bool,
+    /// 是否已安装 lynis（步骤 10）
+    pub lynis_installed: bool,
+    /// 是否已安装 logwatch（步骤 11）
+    pub logwatch_installed: bool,
+    /// 是否已安装 aide（步骤 11）
+    pub aide_installed: bool,
+    /// sshd_config 是否比运行中的服务更新（步骤 12 是否需要重启）
+    pub ssh_restart_needed: bool,
 }
 
 impl AuditReport {
-    /// 生成审计摘要（用于步骤选择界面的状态标注）
-    #[allow(dead_code)]
-    pub fn summary_lines(&self) -> Vec<(&'static str, AuditStatus)> {
-        use AuditStatus as S;
-        vec![
-            (
-                "系统更新",
-                if self.system_up_to_date {
-                    S::Safe
-                } else {
-                    S::NeedsUpdate
-                },
-            ),
-            (
-                "非 root 用户创建",
-                if self.sudo_users.is_empty() {
-                    S::Missing
-                } else {
-                    S::Safe
-                },
-            ),
-            (
-                "禁止 root SSH 登录",
-                if self.root_login_disabled {
-                    S::Safe
-                } else {
-                    S::Missing
-                },
-            ),
-            (
-                "SSH 端口修改",
-                if self.ssh_port != 22 {
-                    S::Safe
-                } else {
-                    S::Missing
-                },
-            ),
-            (
-                "禁止密码登录",
-                if self.password_auth_disabled {
-                    S::Safe
-                } else {
-                    S::Missing
-                },
-            ),
-            (
-                "UFW 防火墙",
-                if self.ufw_enabled {
-                    S::Safe
-                } else {
-                    S::Missing
-                },
-            ),
-            (
-                "Fail2ban",
-                if self.fail2ban_installed {
-                    S::Safe
-                } else {
-                    S::Missing
-                },
-            ),
-            (
-                "自动安全更新",
-                if self.auto_updates_enabled {
-                    S::Safe
-                } else {
-                    S::Missing
-                },
-            ),
-        ]
-    }
-
-    /// 根据步骤类型返回当前审计状态
+    /// 根据步骤类型返回当前审计状态（全项目唯一真值来源）
     pub fn status_for(&self, step: StepKind) -> AuditStatus {
         match step {
             StepKind::SystemUpdate => {
@@ -274,8 +210,24 @@ impl AuditReport {
                     AuditStatus::Missing
                 }
             },
-            StepKind::SecurityScan | StepKind::LogAudit | StepKind::RestartSsh => {
-                AuditStatus::Missing
+            StepKind::SecurityScan => {
+                if self.lynis_installed {
+                    AuditStatus::Safe
+                } else {
+                    AuditStatus::Missing
+                }
+            },
+            StepKind::LogAudit => match (self.logwatch_installed, self.aide_installed) {
+                (true, true) => AuditStatus::Safe,
+                (false, false) => AuditStatus::Missing,
+                _ => AuditStatus::Partial,
+            },
+            StepKind::RestartSsh => {
+                if self.ssh_restart_needed {
+                    AuditStatus::NeedsUpdate
+                } else {
+                    AuditStatus::Safe
+                }
             },
         }
     }
