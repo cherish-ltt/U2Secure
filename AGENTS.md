@@ -236,8 +236,8 @@ msrv = "1.98.1"
 
 - 版本号统一维护在 `Cargo.toml`（源码通过 `env!("CARGO_PKG_VERSION")` 读取）；每个版本的发布说明写入 `docs/versions/v{X.Y.Z}.md`。
 - 推送 `v*` 标签后，发布流水线按**两阶段**执行，保证二进制先于包上线：
-  - **第一阶段**：`binary-build.yml` 由 tag push 直接触发，构建 5 个平台的预编译二进制
-    （Linux/macOS 各 x86_64+ARM64、Windows x64）并上传 GitHub Release，
+  - **第一阶段**：`binary-build.yml` 由 tag push 直接触发，构建 Linux 预编译二进制
+    （x86_64 与 aarch64，见 10.4 平台边界）并上传 GitHub Release，
     Release 正文优先读取 `docs/versions/<tag>.md`。
   - **第二阶段**：`npm-publish-manual.yml`（npm 包 `@ghyper9023/u2secure`，走 Trusted Publishing）
     与 `cargo-publish.yml`（crates.io）改为监听 `workflow_run`
@@ -317,6 +317,20 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 除上述豁免外，新增代码不得引入新的 ast-grep 告警；`error` 级规则必须全部修复
 （当前唯一 error 级规则为 `rust-no-panicking-fallback`）。
 
-### 10.4 追加内容xxx
+### 10.4 平台支持边界（v0.4.1 起）
 
-...
+**本项目只支持 Linux，只发布 Linux 二进制**。理由：核心能力依赖 Linux 专有组件
+（apt/dnf、ufw、sshd、systemd、`/var/log`、`/etc`），部分检测逻辑（如比较
+`/etc/ssh/sshd_config` 与 `/proc/<pid>` 时间戳）在其它平台不成立。
+
+- 构建矩阵只允许 `x86_64-unknown-linux-gnu` 与 `aarch64-unknown-linux-gnu`
+  （见 `.github/workflows/binary-build.yml`）；不得重新加入 macOS / Windows 目标
+- `src/main.rs` 有 `#[cfg(windows)] compile_error!` 守卫，防止误产出 Windows 二进制
+- **macOS 仍必须可编译**：开发机是 macOS，`cargo test` / `clippy` / `prek` 都在其上运行。
+  因此**禁止**无 `#[cfg]` 保护地使用 unix-only API（`std::os::unix`）；
+  需要时收敛到带 `#[cfg(unix)]` 的小辅助函数（如 `steps::set_executable`、
+  `artifacts::restrict_file`、`aide::restrict`），非 unix 分支留空实现
+- npm 包 `postinstall` 在非 Linux 平台必须**明确报错**，不得去下载不存在的资产
+- 新增任何平台相关代码后，必须确认这三件事：`cargo test`（macOS）通过、
+  `cargo check --target x86_64-unknown-linux-gnu` 通过、构建矩阵未被加入其它平台
+

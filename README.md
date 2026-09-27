@@ -103,7 +103,10 @@ U2Secure 通过**环境审计 → 五大防护域 12 步加固 → 生效校验*
 
 ### 安装
 
-> **推荐使用 npm / bun 或 cargo-binstall 安装**：自动根据当前平台（Linux x86_64/ARM64、macOS x86_64/ARM64、Windows x64）下载预编译二进制，无需本地 Rust 环境。
+> **推荐使用 npm / bun 或 cargo-binstall 安装**：自动根据当前架构（Linux x86_64 / ARM64）下载预编译二进制，无需本地 Rust 环境。
+>
+> **仅支持 Linux**：U2Secure 依赖 apt/dnf、ufw、sshd、systemd 与 `/var/log` 等 Linux 专有组件，
+> 只发布 Linux 二进制；在 macOS/Windows 上请通过 Docker 或 Linux 服务器/虚拟机使用。
 
 #### 方式一：npm / bun（推荐）
 
@@ -533,6 +536,7 @@ ufw status
 
 | 版本 | 日期 | 亮点 |
 |------|------|------|
+| [v0.4.1](docs/versions/v0.4.1.md) | 2026-09 | 修复步骤 11 AIDE 数据库初始化失败（退出码 17）：安装 aide-common、探测并校验配置、生成不覆盖基线的兜底配置；发布流水线改为二进制构建成功后再发包；构建目标收敛为 Linux x86_64/ARM64 |
 | [v0.4.0](docs/versions/v0.4.0.md) | 2026-09 | 可选步骤默认关闭、异步执行与实时进度、扫描结果持久化、临时软件源加速（含自定义源与失败重试）、Ctrl+C 中断真正回滚 |
 | v0.3.1 | 2026-09 | 许可证变更为 MIT OR Apache-2.0 双协议 |
 | v0.3.0 | 2026-09 | 支持 npm / bun / cargo-binstall 安装预编译二进制，新增 Linux & macOS ARM64 构建 |

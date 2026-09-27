@@ -1,4 +1,3 @@
-use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::time::Duration;
 
@@ -824,7 +823,7 @@ impl HardeningStep for LogAuditStep {
             }
             std::fs::write(path, script)
                 .map_err(|e| DomainError::SystemCommandFailed(format!("写入 {path} 失败: {e}")))?;
-            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
+            set_executable(path);
             cron_path = Some(path.to_string());
             artifacts_list.push(path.to_string());
         }
@@ -889,7 +888,7 @@ impl HardeningStep for LogAuditStep {
                 );
             }
             if std::fs::write(path, script).is_ok() {
-                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
+                set_executable(path);
                 aide_cron = true;
                 artifacts_list.push(path.to_string());
             }
@@ -981,6 +980,20 @@ fn aide_check_scheduled() -> bool {
     system::run_cmd("systemctl", &["is-enabled", "dailyaidecheck.timer"])
         .map(|s| s.trim() == "enabled")
         .unwrap_or(false)
+}
+
+/// 给脚本加上可执行位
+///
+/// `PermissionsExt` 只存在于 unix；非 unix 平台（Windows 构建）为空实现，
+/// 避免为了一个 chmod 让整个二进制无法在 Windows 上编译。
+fn set_executable(path: &str) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// 备份已存在的文件（返回备份路径）；文件不存在时返回 None

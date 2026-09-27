@@ -1,3 +1,9 @@
+// U2Secure 是 Linux 专用加固工具（依赖 apt/dnf、ufw、sshd、systemd、/var/log 等），
+// 只发布 Linux 二进制。在 Windows 上直接编译失败，避免产出"能编译但不能用"的产物；
+// macOS 仍可编译，便于在开发机上跑单元测试（见 AGENTS.md 10.4）。
+#[cfg(windows)]
+compile_error!("U2Secure 仅支持 Linux 目标（请使用 x86_64/aarch64-unknown-linux-gnu）");
+
 use u2secure::application::orchestrator::HardeningOrchestrator;
 use u2secure::i18n;
 use u2secure::i18n::Lang;
