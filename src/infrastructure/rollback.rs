@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
+use crate::domain::errors::DomainError;
 use crate::domain::undo::UndoAction;
 
 /// 全局 undo 栈
@@ -15,13 +16,19 @@ pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 /// 初始化 Ctrl+C 信号处理器
 ///
 /// 仅设置 INTERRUPTED 标记，不在此处执行回退。
-/// 实际回退在主线程 `execute_steps` 循环中由业务逻辑触发，
+/// 实际回退由 `StepRunner` 在检测到中断标记后触发，
 /// 避免信号上下文的 Mutex 锁竞争和死锁风险。
-pub fn init_signal_handler() {
+///
+/// 注册失败时返回错误由调用方处理（不 panic）。
+pub fn init_signal_handler() -> Result<(), DomainError> {
     ctrlc::set_handler(move || {
         INTERRUPTED.store(true, Ordering::SeqCst);
     })
-    .unwrap_or_else(|_| panic!("{}", crate::i18n::tr("err_setup_signal")));
+    .map_err(|e| {
+        DomainError::SystemCommandFailed(
+            crate::i18n::tr("err_setup_signal").replace("{err}", &e.to_string()),
+        )
+    })
 }
 
 /// 注册一个撤销操作

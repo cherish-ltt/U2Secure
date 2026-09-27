@@ -53,7 +53,10 @@ impl ModeChoice {
 
 fn main() {
     // 初始化 Ctrl+C 信号处理器（确保在任何修改前就位）
-    rollback::init_signal_handler();
+    if let Err(e) = rollback::init_signal_handler() {
+        eprintln!("[!] {e}");
+        std::process::exit(1);
+    }
 
     let orchestrator = HardeningOrchestrator::new();
 
