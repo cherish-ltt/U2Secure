@@ -1,29 +1,10 @@
-use u2secure::application::steps::{
-    AllSteps, AutoUpdatesStep, Fail2banStep, SshPasswordAuthStep, SshRootLoginStep,
-    SystemUpdateStep, UfwStep,
-};
+//! 步骤状态与默认勾选策略测试（纯逻辑，不触碰真实系统）
+
+use u2secure::application::steps::{AllSteps, step_for};
 use u2secure::domain::audit::{AuditReport, AuditStatus, PackageManager};
-use u2secure::domain::steps::{HardeningStep, StepKind};
-use u2secure::infrastructure::system;
+use u2secure::domain::steps::{ExecuteParams, HardeningStep, StepKind, StepOutcome, StepResult};
 
-// ---------------------------------------------------------------------------
-// AllSteps 集合测试
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_all_steps_contains_all_kinds() {
-    let all = AllSteps::new();
-    let kinds: Vec<StepKind> = all.steps().iter().map(|s| s.kind()).collect();
-    assert_eq!(kinds.len(), 12);
-    assert!(kinds.contains(&StepKind::SystemUpdate));
-    assert!(kinds.contains(&StepKind::Ufw));
-    assert!(kinds.contains(&StepKind::RestartSsh));
-}
-
-// ---------------------------------------------------------------------------
-// 步骤状态检测测试（无系统调用，纯逻辑）
-// ---------------------------------------------------------------------------
-
+/// 构造审计报告（默认全部"未配置"）
 #[allow(clippy::too_many_arguments)]
 fn make_report(
     ssh_port: u16,
@@ -47,157 +28,308 @@ fn make_report(
         ufw_enabled: ufw,
         auto_updates_enabled: auto_updates,
         system_up_to_date: sys_up_to_date,
+        lynis_installed: false,
+        logwatch_installed: false,
+        aide_installed: false,
+        ssh_restart_needed: false,
+    }
+}
+
+fn hardened_report() -> AuditReport {
+    AuditReport {
+        items: vec![],
+        is_root: true,
+        package_manager: PackageManager::Apt,
+        ssh_port: 2222,
+        password_auth_disabled: true,
+        root_login_disabled: true,
+        sudo_users: vec!["admin".into()],
+        fail2ban_installed: true,
+        ufw_enabled: true,
+        auto_updates_enabled: true,
+        system_up_to_date: true,
+        lynis_installed: true,
+        logwatch_installed: true,
+        aide_installed: true,
+        ssh_restart_needed: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AllSteps 集合测试
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_all_steps_contains_all_kinds() {
+    let all = AllSteps::new();
+    let kinds: Vec<StepKind> = all.steps().iter().map(|s| s.kind()).collect();
+    assert_eq!(kinds.len(), 12);
+    assert_eq!(kinds, StepKind::all().to_vec());
+}
+
+#[test]
+fn test_step_for_matches_kind() {
+    for kind in StepKind::all() {
+        assert_eq!(step_for(*kind).kind(), *kind);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 步骤状态检测（领域层单一真值）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_status_for_hardened_system() {
+    let report = hardened_report();
+    for kind in StepKind::all() {
+        if *kind == StepKind::SshKeySetup {
+            // 密钥设置无法可靠判定：有 sudo 用户即认为"部分配置"
+            continue;
+        }
+        assert_eq!(
+            report.status_for(*kind),
+            AuditStatus::Safe,
+            "{} 应为已安全配置",
+            kind.label()
+        );
+    }
+    assert_eq!(
+        report.status_for(StepKind::SshKeySetup),
+        AuditStatus::Partial
+    );
+}
+
+#[test]
+fn test_status_for_fresh_system() {
+    let report = make_report(22, false, false, vec![], false, false, false, false);
+
+    assert_eq!(
+        report.status_for(StepKind::SystemUpdate),
+        AuditStatus::NeedsUpdate
+    );
+    for kind in [
+        StepKind::UserCreation,
+        StepKind::SshRootLogin,
+        StepKind::SshPortChange,
+        StepKind::SshPasswordAuth,
+        StepKind::Ufw,
+        StepKind::Fail2ban,
+        StepKind::AutoUpdates,
+        StepKind::SecurityScan,
+        StepKind::LogAudit,
+    ] {
+        assert_eq!(
+            report.status_for(kind),
+            AuditStatus::Missing,
+            "{} 应为未配置",
+            kind.label()
+        );
     }
 }
 
 #[test]
-fn test_system_update_step_status() {
-    let step = SystemUpdateStep;
+fn test_security_scan_status_follows_lynis() {
+    let mut report = make_report(22, false, false, vec![], false, false, false, false);
+    assert_eq!(
+        report.status_for(StepKind::SecurityScan),
+        AuditStatus::Missing
+    );
+    report.lynis_installed = true;
+    assert_eq!(report.status_for(StepKind::SecurityScan), AuditStatus::Safe);
+}
 
-    let report = make_report(22, false, false, vec![], false, false, false, true);
-    assert_eq!(step.check_status(&report), AuditStatus::Safe);
+#[test]
+fn test_log_audit_status_partial_when_half_installed() {
+    let mut report = make_report(22, false, false, vec![], false, false, false, false);
+    assert_eq!(report.status_for(StepKind::LogAudit), AuditStatus::Missing);
+    report.logwatch_installed = true;
+    assert_eq!(report.status_for(StepKind::LogAudit), AuditStatus::Partial);
+    report.aide_installed = true;
+    assert_eq!(report.status_for(StepKind::LogAudit), AuditStatus::Safe);
+}
 
+#[test]
+fn test_restart_ssh_status_follows_pending_config() {
+    let mut report = hardened_report();
+    assert_eq!(report.status_for(StepKind::RestartSsh), AuditStatus::Safe);
+    report.ssh_restart_needed = true;
+    assert_eq!(
+        report.status_for(StepKind::RestartSsh),
+        AuditStatus::NeedsUpdate
+    );
+}
+
+#[test]
+fn test_ssh_key_setup_partial_with_sudo_users() {
+    let report = make_report(
+        22,
+        false,
+        false,
+        vec!["bob".into()],
+        false,
+        false,
+        false,
+        false,
+    );
+    assert_eq!(
+        report.status_for(StepKind::SshKeySetup),
+        AuditStatus::Partial
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 默认勾选策略：9/10/11 默认关闭
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_opt_in_steps_are_nine_ten_eleven() {
+    let opt_in: Vec<StepKind> = StepKind::all()
+        .iter()
+        .copied()
+        .filter(|k| k.is_opt_in())
+        .collect();
+    assert_eq!(
+        opt_in,
+        vec![
+            StepKind::AutoUpdates,
+            StepKind::SecurityScan,
+            StepKind::LogAudit
+        ]
+    );
+    // 可选步骤失败不触发全局回滚
+    for kind in StepKind::all() {
+        assert_eq!(kind.is_optional(), kind.is_opt_in());
+    }
+}
+
+#[test]
+fn test_opt_in_steps_never_default_checked() {
     let report = make_report(22, false, false, vec![], false, false, false, false);
-    assert_eq!(step.check_status(&report), AuditStatus::NeedsUpdate);
+    for kind in [
+        StepKind::AutoUpdates,
+        StepKind::SecurityScan,
+        StepKind::LogAudit,
+    ] {
+        assert!(
+            !kind.default_checked(&report),
+            "{} 默认不应勾选",
+            kind.label()
+        );
+    }
 }
 
 #[test]
-fn test_root_login_step_status() {
-    let step = SshRootLoginStep;
+fn test_default_checked_skips_safe_steps() {
+    let report = hardened_report();
+    for kind in StepKind::all() {
+        if *kind == StepKind::SshKeySetup {
+            // Partial 状态仍会默认勾选（保持既有交互行为）
+            continue;
+        }
+        assert!(
+            !kind.default_checked(&report),
+            "{} 已安全配置，默认不应勾选",
+            kind.label()
+        );
+    }
 
-    let report = make_report(
-        22,
-        false,
-        true,
-        vec!["admin".into()],
-        false,
-        false,
-        false,
-        true,
-    );
-    assert_eq!(step.check_status(&report), AuditStatus::Safe);
-
-    let report = make_report(
-        22,
-        false,
-        false,
-        vec!["admin".into()],
-        false,
-        false,
-        false,
-        true,
-    );
-    assert_eq!(step.check_status(&report), AuditStatus::Missing);
+    let fresh = make_report(22, false, false, vec![], false, false, false, false);
+    assert!(StepKind::SshRootLogin.default_checked(&fresh));
+    assert!(StepKind::Ufw.default_checked(&fresh));
+    // 仅在配置待生效时才需要重启 SSH
+    assert!(!StepKind::RestartSsh.default_checked(&fresh));
+    let mut pending = fresh.clone();
+    pending.ssh_restart_needed = true;
+    assert!(StepKind::RestartSsh.default_checked(&pending));
 }
 
 #[test]
-fn test_password_auth_step_status() {
-    let step = SshPasswordAuthStep;
-
-    let report = make_report(
-        22,
-        true,
-        false,
-        vec!["admin".into()],
-        false,
-        false,
-        false,
-        true,
+fn test_touches_package_manager() {
+    let pm_steps: Vec<StepKind> = StepKind::all()
+        .iter()
+        .copied()
+        .filter(|k| k.touches_package_manager())
+        .collect();
+    assert_eq!(
+        pm_steps,
+        vec![
+            StepKind::SystemUpdate,
+            StepKind::Fail2ban,
+            StepKind::AutoUpdates,
+            StepKind::SecurityScan,
+            StepKind::LogAudit,
+        ]
     );
-    assert_eq!(step.check_status(&report), AuditStatus::Safe);
-
-    let report = make_report(
-        22,
-        false,
-        false,
-        vec!["admin".into()],
-        false,
-        false,
-        false,
-        true,
-    );
-    assert_eq!(step.check_status(&report), AuditStatus::Missing);
 }
 
 #[test]
-fn test_ufw_step_status() {
-    let step = UfwStep;
+fn test_step_kind_slug_unique() {
+    let mut slugs: Vec<&str> = StepKind::all().iter().map(|k| k.slug()).collect();
+    let count = slugs.len();
+    slugs.sort_unstable();
+    slugs.dedup();
+    assert_eq!(slugs.len(), count, "slug 必须唯一");
+}
 
-    let report = make_report(22, false, false, vec![], false, true, false, true);
-    assert_eq!(step.check_status(&report), AuditStatus::Safe);
-
+#[test]
+fn test_step_kind_check_default_status_delegates() {
     let report = make_report(22, false, false, vec![], false, false, false, true);
-    assert_eq!(step.check_status(&report), AuditStatus::Missing);
-}
-
-#[test]
-fn test_fail2ban_step_status() {
-    let step = Fail2banStep;
-
-    let report = make_report(22, false, false, vec![], true, false, false, true);
-    assert_eq!(step.check_status(&report), AuditStatus::Safe);
-
-    let report = make_report(22, false, false, vec![], false, false, false, true);
-    assert_eq!(step.check_status(&report), AuditStatus::Missing);
-}
-
-#[test]
-fn test_auto_updates_step_status() {
-    let step = AutoUpdatesStep;
-
-    let report = make_report(22, false, false, vec![], false, false, true, true);
-    assert_eq!(step.check_status(&report), AuditStatus::Safe);
-
-    let report = make_report(22, false, false, vec![], false, false, false, true);
-    assert_eq!(step.check_status(&report), AuditStatus::Missing);
-}
-
-#[test]
-fn test_ssh_key_setup_step_own_implementation() {
-    // SshKeySetupStep 的 check_status 检查 authorized_keys 文件，无法在 CI 可靠测试
-    // 只验证它实现了 HardeningStep trait
-    let step = u2secure::application::steps::SshKeySetupStep;
-    assert_eq!(step.kind(), StepKind::SshKeySetup);
+    assert_eq!(
+        StepKind::SystemUpdate.check_default_status(&report),
+        AuditStatus::Safe
+    );
+    assert_eq!(
+        StepKind::SshRootLogin.check_default_status(&report),
+        AuditStatus::Missing
+    );
 }
 
 // ---------------------------------------------------------------------------
-// 基础设施测试（安全只读调用）
+// StepResult / StepOutcome
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_detect_package_manager() {
-    // 在 CI 或本地，至少应返回一个已知的包管理器
-    let pm = system::detect_package_manager();
-    // 只要是 Known 或 Unknown 都可以，不会 panic
-    let _name = pm.name();
+fn test_step_outcome_helpers() {
+    let changed = StepResult::changed(StepKind::Ufw, "ok");
+    assert!(changed.is_changed());
+    assert!(!changed.is_failed());
+    assert!(changed.artifacts.is_empty());
+
+    let skipped = StepResult::skipped(StepKind::SecurityScan, "不支持");
+    assert_eq!(skipped.outcome, StepOutcome::Skipped);
+
+    let failed = StepResult::failed(StepKind::LogAudit, "安装失败");
+    assert!(failed.is_failed());
+
+    let with_artifacts = failed.with_artifacts(vec!["/tmp/a.log".into()]);
+    assert_eq!(with_artifacts.artifacts, vec!["/tmp/a.log".to_string()]);
 }
 
 #[test]
-fn test_detect_is_root_can_run() {
-    // 调用不 panic
-    let _is_root = system::detect_is_root();
-}
-
-#[test]
-fn test_which_existing_command() {
-    assert!(system::which("sh"));
-    assert!(system::which("echo"));
-}
-
-#[test]
-fn test_which_non_existing_command() {
-    assert!(!system::which("nonexistent_cmd_xyz123"));
+fn test_step_outcome_labels_and_icons() {
+    assert_eq!(StepOutcome::Changed.icon(), "✅");
+    assert_eq!(StepOutcome::Skipped.icon(), "⏭");
+    assert_eq!(StepOutcome::Failed.icon(), "❌");
+    assert_eq!(StepOutcome::Changed.label(), "成功");
+    assert_eq!(StepOutcome::Skipped.label(), "跳过");
+    assert_eq!(StepOutcome::Failed.label(), "失败");
 }
 
 // ---------------------------------------------------------------------------
-// SshPasswordAuthStep 前置条件测试
+// ExecuteParams
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_password_auth_precondition() {
-    // 如果没有 sudo 用户，execute 应返回 PreconditionFailed
-    // 但 execute 会调用系统命令修改 sshd_config，在测试环境中跳过
-    // 验证步骤的 kind 正确即可
-    let step = SshPasswordAuthStep;
-    assert_eq!(step.kind(), StepKind::SshPasswordAuth);
+fn test_execute_params_default_has_no_mirror() {
+    let params = ExecuteParams::default();
+    assert!(params.mirror.is_empty());
+    assert!(params.report_dir.is_none());
+    assert!(params.live_log.is_none());
+}
+
+#[test]
+fn test_step_for_returns_send_step() {
+    // 编译期校验：步骤必须可跨线程执行（异步执行的前提）
+    let step: Box<dyn HardeningStep + Send> = step_for(StepKind::Ufw);
+    assert_eq!(step.kind(), StepKind::Ufw);
 }

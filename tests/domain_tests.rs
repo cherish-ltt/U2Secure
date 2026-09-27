@@ -1,5 +1,6 @@
 use u2secure::domain::audit::{AuditItem, AuditReport, AuditStatus, PackageManager};
-use u2secure::domain::steps::{ExecuteParams, SshKeyAction, StepKind};
+use u2secure::domain::mirror::PackageMirror;
+use u2secure::domain::steps::{ExecuteParams, MirrorOverride, SshKeyAction, StepKind};
 
 #[test]
 fn test_audit_status_icons() {
@@ -79,6 +80,10 @@ fn test_audit_report_status_for_all_secure() {
         ufw_enabled: true,
         auto_updates_enabled: true,
         system_up_to_date: true,
+        lynis_installed: false,
+        logwatch_installed: false,
+        aide_installed: false,
+        ssh_restart_needed: false,
     };
 
     assert_eq!(report.status_for(StepKind::SystemUpdate), AuditStatus::Safe);
@@ -111,6 +116,10 @@ fn test_audit_report_status_for_all_missing() {
         ufw_enabled: false,
         auto_updates_enabled: false,
         system_up_to_date: false,
+        lynis_installed: false,
+        logwatch_installed: false,
+        aide_installed: false,
+        ssh_restart_needed: true,
     };
 
     assert_eq!(
@@ -148,9 +157,10 @@ fn test_audit_report_status_for_all_missing() {
         AuditStatus::Missing
     );
     assert_eq!(report.status_for(StepKind::LogAudit), AuditStatus::Missing);
+    // 配置待生效 → 需要重启（不再是恒为 Missing）
     assert_eq!(
         report.status_for(StepKind::RestartSsh),
-        AuditStatus::Missing
+        AuditStatus::NeedsUpdate
     );
 }
 
@@ -168,6 +178,10 @@ fn test_audit_report_status_for_key_setup_with_sudo_users() {
         ufw_enabled: false,
         auto_updates_enabled: false,
         system_up_to_date: false,
+        lynis_installed: false,
+        logwatch_installed: false,
+        aide_installed: false,
+        ssh_restart_needed: false,
     };
 
     // 有 sudo 用户 -> Partial（可能有密钥）
@@ -175,34 +189,6 @@ fn test_audit_report_status_for_key_setup_with_sudo_users() {
         report.status_for(StepKind::SshKeySetup),
         AuditStatus::Partial
     );
-}
-
-#[test]
-fn test_audit_report_summary_lines() {
-    let report = AuditReport {
-        items: vec![],
-        is_root: false,
-        package_manager: PackageManager::Apt,
-        ssh_port: 2222,
-        password_auth_disabled: true,
-        root_login_disabled: true,
-        sudo_users: vec!["admin".into()],
-        fail2ban_installed: false,
-        ufw_enabled: true,
-        auto_updates_enabled: false,
-        system_up_to_date: true,
-    };
-
-    let summary = report.summary_lines();
-    assert_eq!(summary.len(), 8);
-    assert_eq!(summary[0].1, AuditStatus::Safe);
-    assert_eq!(summary[1].1, AuditStatus::Safe);
-    assert_eq!(summary[2].1, AuditStatus::Safe);
-    assert_eq!(summary[3].1, AuditStatus::Safe);
-    assert_eq!(summary[4].1, AuditStatus::Safe);
-    assert_eq!(summary[5].1, AuditStatus::Safe);
-    assert_eq!(summary[6].1, AuditStatus::Missing);
-    assert_eq!(summary[7].1, AuditStatus::Missing);
 }
 
 #[test]
@@ -225,6 +211,10 @@ fn test_step_kind_check_default_status() {
         ufw_enabled: true,
         auto_updates_enabled: false,
         system_up_to_date: true,
+        lynis_installed: false,
+        logwatch_installed: false,
+        aide_installed: false,
+        ssh_restart_needed: false,
     };
 
     assert_eq!(
@@ -308,6 +298,12 @@ fn test_execute_params_all_fields() {
         new_ssh_port: Some(2222),
         ssh_key_username: Some("deploy".into()),
         ssh_key_action: Some(SshKeyAction::GenerateNew),
+        mirror: MirrorOverride {
+            apt_sourcelist: Some("/tmp/u2s/sources.list".into()),
+            apt_sourceparts: None,
+            yum_reposdir: None,
+        },
+        ..Default::default()
     };
     assert_eq!(params.new_username.as_deref(), Some("deploy"));
     assert!(!params.lock_password);
@@ -483,4 +479,34 @@ fn test_execute_params_debug_redacts_key() {
         !debug_str.contains("AAAAC3NzaC1lZDI1NTE5AAAAIK8O1oQK7Q8z6fVc9pZ3sX2yR4mW5jH0nBvLkPqR1sT"),
         "ExecuteParams Debug 不应泄露密钥: {debug_str}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 临时软件源（领域值对象）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_package_mirror_metadata() {
+    let all = PackageMirror::all();
+    assert_eq!(all.len(), 3);
+    assert!(all[0].is_original());
+    assert!(all[0].probe_host().is_none());
+    assert_eq!(all[1].probe_host(), Some("mirrors.tuna.tsinghua.edu.cn"));
+    assert_eq!(all[2].probe_host(), Some("mirrors.ustc.edu.cn"));
+    assert_eq!(PackageMirror::Tsinghua.to_string(), "清华大学 TUNA 镜像");
+}
+
+#[test]
+fn test_mirror_override_empty_detection() {
+    assert!(MirrorOverride::default().is_empty());
+    let apt_only = MirrorOverride {
+        apt_sourcelist: Some("/tmp/x.list".into()),
+        ..Default::default()
+    };
+    assert!(!apt_only.is_empty());
+    let yum_only = MirrorOverride {
+        yum_reposdir: Some("/tmp/repos".into()),
+        ..Default::default()
+    };
+    assert!(!yum_only.is_empty());
 }
