@@ -7,38 +7,39 @@ on:
         description: 'Release tag name (e.g., v0.4.0)'
         required: true
         type: string
-  # 自动化路径：Binary Build 跑完后触发（成功与否由 job 级 if 闸门判定）。
-  # 与 npm 保持一致：二进制未就绪就不发布，对齐 AGENTS 10.1 的发布顺序。
-  # 注意：workflow_run 使用的是**默认分支**上的本文件，修好工作流无需重新打标签。
-  workflow_run:
-    workflows: ["Binary Build"]   # 必须与 binary-build.yml 的 name 完全一致
-    types: [completed]
+  # 自动化路径：GitHub Release 发布后触发。
+  # Release 由 Binary Build 在二进制全部上传成功后创建，天然满足
+  # "二进制先就绪、再发包"的顺序，无需额外门禁。
+  # 注意：**不能**改成 workflow_run —— crates.io Trusted Publishing 出于安全考虑
+  # 明确拒绝该触发器（返回 400: Trusted Publishing does not support the
+  # workflow_run event trigger），这是平台限制。
+  release:
+    types: [published]   # 排除 draft 与 prerelease
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     # 可选但强烈推荐，需要与你在crates.io上设置的Environment名称完全一致
     environment: release
-    # 手动派发始终放行；自动路径只在 Binary Build 成功时发布
+    # 手动派发与 Release 发布都放行；prerelease 不再重复触发（已在 triggers 过滤）
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.event_name == 'release'
 
     permissions:
       id-token: write  # 必须：用于请求OIDC令牌
-      contents: read   # workflow_run 下 checkout 需要
+      contents: read   # checkout 需要
 
     steps:
       - name: Resolve release tag
         id: tag
         shell: bash
         run: |
-          # 手动派发用 inputs.tag_name；自动路径（Binary Build 完成）用触发那次运行的标签。
-          # workflow_run 事件的 payload 不含 ref_type / ref_name，标签只能取自 head_branch。
+          # 手动派发用 inputs.tag_name；自动路径用 Release 的标签名
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             RAW_REF="${{ github.event.inputs.tag_name }}"
           else
-            RAW_REF="${{ github.event.workflow_run.head_branch }}"
+            RAW_REF="${{ github.event.release.tag_name }}"
           fi
           TAG="v${RAW_REF#v}"
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then

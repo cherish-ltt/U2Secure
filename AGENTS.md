@@ -239,15 +239,22 @@ msrv = "1.98.1"
   - **第一阶段**：`binary-build.yml` 由 tag push 直接触发，构建 Linux 预编译二进制
     （x86_64 与 aarch64，见 10.4 平台边界）并上传 GitHub Release，
     Release 正文优先读取 `docs/versions/<tag>.md`。
-  - **第二阶段**：`npm-publish-manual.yml`（npm 包 `@ghyper9023/u2secure`，走 Trusted Publishing）
-    与 `cargo-publish.yml`（crates.io）改为监听 `workflow_run`
-    （`workflows: ["Binary Build"]`、`types: [completed]`），仅在
-    `workflow_run.conclusion == 'success'` 时发布；避免出现"npm 版本号已上线、
-    GitHub Release 二进制还是 404"导致用户 postinstall 安装失败。
+  - **第二阶段**：等二进制就绪后再发包，两个发布工作流使用**不同**触发器：
+    - `npm-publish-manual.yml`（npm 包 `@ghyper9023/u2secure`，Trusted Publishing）监听
+      `workflow_run`（`workflows: ["Binary Build"]`、`types: [completed]`），
+      仅在 `workflow_run.conclusion == 'success'` 时发布
+    - `cargo-publish.yml`（crates.io）监听 `release: types: [published]`；
+      Release 由 Binary Build 在上传完全部资产后创建，顺序天然成立
+    - **crates.io 不能用 `workflow_run`**：Trusted Publishing 出于安全考虑拒绝该触发器
+      （返回 `400: Trusted Publishing does not support the workflow_run event trigger`），
+      这是平台限制，不要再改回去
+    - 两者都避免出现"npm 版本号已上线、GitHub Release 二进制还是 404"导致
+      postinstall 安装失败
   - 两个发布工作流都保留 `workflow_dispatch` 作为应急手动补发入口。
-    `head_branch` 是 `workflow_run` payload 中唯一的标签来源（该事件不含
-    `ref_type` / `ref_name`），解析失败会立即报错退出，不会误发。
-  - `workflow_run` 执行的是**默认分支**上的工作流文件，因此修复发布流程只需推送主分支，
+    自动路径的标签来源不同：npm 用 `workflow_run.head_branch`
+    （该事件 payload 不含 `ref_type` / `ref_name`），crates.io 用 `release.tag_name`；
+    解析失败会立即报错退出，不会误发。
+  - `workflow_run` 执行的是**默认分支**上的工作流文件，因此修复 npm 发布流程只需推送主分支，
     不必重新打标签；重跑依赖幂等保护（npm 已存在同版本则跳过发布）。
 - 支持 `cargo binstall u2secure` 安装预编译二进制（依赖 `[package.metadata.binstall]` 元数据，资产命名须保持 `u2secure-<target>[.exe]`）。
 - 发布顺序无需人工干预：推送 tag → 等待 Binary Build 全部成功 → npm 与 crates.io 自动发布。
