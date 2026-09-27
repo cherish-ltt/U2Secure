@@ -8,13 +8,17 @@ on:
         required: true
         type: string
       npm_tag:
-        description: 'npm dist-tag (latest, beta, next, etc.)'
+        description: 'npm dist-tag (latest, beta, next, etc.)；仅手动派发生效，留空即 latest'
         required: false
-        default: 'latest'
+        default: ''
         type: string
-  push:
-    tags:
-      - 'v*'
+  # 自动化路径：Binary Build 跑完后触发（成功与否由 job 级 if 闸门判定）。
+  # 不再监听 tag push —— 避免 npm 版本号先于 GitHub Release 二进制上线，
+  # 导致 postinstall 下载二进制 404。
+  # 注意：workflow_run 使用的是**默认分支**上的本文件，修好工作流无需重新打标签。
+  workflow_run:
+    workflows: ["Binary Build"]   # 必须与 binary-build.yml 的 name 完全一致
+    types: [completed]
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,26 +32,39 @@ jobs:
     name: Publish to npm (manual)
     runs-on: ubuntu-latest
     environment: release
+    # 手动派发始终放行；自动路径只在 Binary Build 成功时发布
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: Normalize version
         id: version
+        shell: bash
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            RAW_VERSION="${{ github.event.inputs.version }}"
-          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
-            RAW_VERSION="${{ github.ref_name }}"
+          # 手动派发用 inputs.version；自动路径（Binary Build 完成）用触发那次运行的标签。
+          # workflow_run 事件的 payload 不含 ref_type / ref_name，标签只能取自 head_branch。
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            RAW_REF="${{ github.event.inputs.version }}"
           else
-            echo "Cannot determine version. Aborting."
+            RAW_REF="${{ github.event.workflow_run.head_branch }}"
+          fi
+          CLEAN_VERSION="${RAW_REF#v}"
+          if [[ ! "$CLEAN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::无法解析版本号，原始值: '${RAW_REF}'"
             exit 1
           fi
-          CLEAN_VERSION="${RAW_VERSION#v}"
-          TAG="v${CLEAN_VERSION}"
           echo "version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "tag=v${CLEAN_VERSION}" >> $GITHUB_OUTPUT
+          echo "Resolved ref  : ${RAW_REF}"
+          echo "Resolved tag  : v${CLEAN_VERSION}"
+          echo "Resolved ver  : ${CLEAN_VERSION}"
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # workflow_run 下默认检出默认分支，必须显式指向触发那次运行的 ref
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -209,7 +226,19 @@ jobs:
           > [GitHub 主页](https://github.com/cherish-ltt/U2Secure)
           README_EOF
 
+      - name: Check whether version already published
+        id: exists
+        shell: bash
+        run: |
+          if npm view "@ghyper9023/u2secure@${{ steps.version.outputs.version }}" version >/dev/null 2>&1; then
+            echo "已有 npm 版本 ${{ steps.version.outputs.version }}，跳过发布（重跑安全）"
+            echo "published=true" >> $GITHUB_OUTPUT
+          else
+            echo "published=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish to npm with provenance
+        if: steps.exists.outputs.published != 'true'
         run: |
           cd npm-package
           npm publish --provenance --access public --tag "${{ github.event.inputs.npm_tag || 'latest' }}"
