@@ -7,39 +7,52 @@ on:
         description: 'Release tag name (e.g., v0.4.0)'
         required: true
         type: string
-  # 自动化路径：GitHub Release 发布后触发。
-  # Release 由 Binary Build 在二进制全部上传成功后创建，天然满足
-  # "二进制先就绪、再发包"的顺序，无需额外门禁。
-  # 注意：**不能**改成 workflow_run —— crates.io Trusted Publishing 出于安全考虑
-  # 明确拒绝该触发器（返回 400: Trusted Publishing does not support the
-  # workflow_run event trigger），这是平台限制。
-  release:
-    types: [published]   # 排除 draft 与 prerelease
+  # 自动化路径：Binary Build 跑完后触发。
+  #
+  # 为什么是 workflow_run（本项目实测结论，不要试图改回去）：
+  #  1. `release: [published]` **无效**：本项目的 Release 由
+  #     `softprops/action-gh-release` 用 GITHUB_TOKEN 创建，而 GitHub 规定
+  #     GITHUB_TOKEN 触发的事件不会创建新的 workflow run（仅 workflow_dispatch /
+  #     repository_dispatch 例外），因此 release 事件永远到不了这里。
+  #     实测结果：Release 发布后没有任何 release 事件的运行记录。
+  #  2. 用 workflow_dispatch 的替代方案需要 PAT（secrets.GITHUB_TOKEN 无权派发），
+  #     会引入长期凭据，不予采用。
+  #  3. crates.io Trusted Publishing 允许 workflow_run 触发（实测通过鉴权）；
+  #     它拒绝的是"由 workflow_run 触发的不可信代码"使用 OIDC，
+  #     本工作流运行在默认分支的可信代码上，因此不受影响。
+  #
+  # 顺序保证：本工作流启动时 Binary Build 可能仍在收尾，因此下面有一步轮询
+  # 等待其结论；只有结论为 success 才继续发布。
+  workflow_run:
+    workflows: ["Binary Build"]   # 必须与 binary-build.yml 的 name 完全一致
+    types: [completed]
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # 可选但强烈推荐，需要与你在crates.io上设置的Environment名称完全一致
-    environment: release
-    # 手动派发与 Release 发布都放行；prerelease 不再重复触发（已在 triggers 过滤）
+    # 手动派发始终放行；自动路径只在 Binary Build 成功时进入
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'release'
+      github.event.workflow_run.conclusion == 'success'
+    # 需要与你在 crates.io 上设置的 Environment 名称完全一致
+    environment: release
 
     permissions:
-      id-token: write  # 必须：用于请求OIDC令牌
+      id-token: write  # 必须：用于请求 OIDC 令牌
       contents: read   # checkout 需要
+      actions: read    # 轮询 Binary Build 运行状态需要
 
     steps:
       - name: Resolve release tag
         id: tag
         shell: bash
         run: |
-          # 手动派发用 inputs.tag_name；自动路径用 Release 的标签名
+          # 手动派发用 inputs.tag_name；自动路径用触发本次运行的 Binary Build 的标签。
+          # workflow_run 的 payload 不含 ref_type / ref_name，标签只能取自 head_branch。
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             RAW_REF="${{ github.event.inputs.tag_name }}"
           else
-            RAW_REF="${{ github.event.release.tag_name }}"
+            RAW_REF="${{ github.event.workflow_run.head_branch }}"
           fi
           TAG="v${RAW_REF#v}"
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
@@ -48,6 +61,46 @@ jobs:
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "Resolved tag : ${TAG}"
+
+      - name: Wait for Binary Build to succeed
+        if: github.event_name == 'workflow_run'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          # job 级 if 只读取事件触发瞬间的 conclusion；job 排队期间它可能还是
+          # in_progress（此时该字段为空），因此这里必须实际等待终态，
+          # 否则会出现"二进制没上传完就把 crate 发出去"。
+          for i in $(seq 1 60); do
+            info="$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}" \
+              --jq '.status + " " + (.conclusion // "none")')" || {
+              echo "::error::无法查询 Binary Build 运行状态 (${RUN_ID})"
+              exit 1
+            }
+            status="${info%% *}"
+            conclusion="${info##* }"
+            echo "[$i/60] Binary Build status=${status} conclusion=${conclusion}"
+            case "${status}" in
+              completed)
+                if [[ "${conclusion}" == "success" ]]; then
+                  echo "Binary Build 已成功完成，继续发布"
+                  exit 0
+                fi
+                echo "::error::Binary Build 结论为 ${conclusion}，取消 crates.io 发布"
+                exit 1
+                ;;
+              queued|in_progress|requested|waiting|pending)
+                sleep 10
+                ;;
+              *)
+                echo "::error::未知运行状态: ${status}"
+                exit 1
+                ;;
+            esac
+          done
+          echo "::error::等待 Binary Build 超时（10 分钟）"
+          exit 1
 
       - uses: actions/checkout@v4
         with:

@@ -243,17 +243,19 @@ msrv = "1.98.1"
     - `npm-publish-manual.yml`（npm 包 `@ghyper9023/u2secure`，Trusted Publishing）监听
       `workflow_run`（`workflows: ["Binary Build"]`、`types: [completed]`），
       仅在 `workflow_run.conclusion == 'success'` 时发布
-    - `cargo-publish.yml`（crates.io）监听 `release: types: [published]`；
-      Release 由 Binary Build 在上传完全部资产后创建，顺序天然成立
-    - **crates.io 不能用 `workflow_run`**：Trusted Publishing 出于安全考虑拒绝该触发器
-      （返回 `400: Trusted Publishing does not support the workflow_run event trigger`），
-      这是平台限制，不要再改回去
+    - `cargo-publish.yml`（crates.io）同样监听 `workflow_run`，但额外用
+      `gh api` **轮询等待 Binary Build 到达 success 终态**后再发布
+      （job 级 `if` 读到的 conclusion 在排队期间可能为空，不能只依赖它）
+    - **crates.io 不能用 `release: [published]`**：Release 由
+      `softprops/action-gh-release` 用 GITHUB_TOKEN 创建，而 GitHub 规定
+      GITHUB_TOKEN 触发的事件不会创建新的 workflow run（仅 workflow_dispatch /
+      repository_dispatch 例外），实测 release 事件不产生任何运行；
+      改回 `release` 触发器会导致 crates.io 永不发布
     - 两者都避免出现"npm 版本号已上线、GitHub Release 二进制还是 404"导致
       postinstall 安装失败
   - 两个发布工作流都保留 `workflow_dispatch` 作为应急手动补发入口。
-    自动路径的标签来源不同：npm 用 `workflow_run.head_branch`
-    （该事件 payload 不含 `ref_type` / `ref_name`），crates.io 用 `release.tag_name`；
-    解析失败会立即报错退出，不会误发。
+    自动路径的标签都取自 `workflow_run.head_branch`（该事件 payload 不含
+    `ref_type` / `ref_name`），解析失败会立即报错退出，不会误发。
   - `workflow_run` 执行的是**默认分支**上的工作流文件，因此修复 npm 发布流程只需推送主分支，
     不必重新打标签；重跑依赖幂等保护（npm 已存在同版本则跳过发布）。
 - 支持 `cargo binstall u2secure` 安装预编译二进制（依赖 `[package.metadata.binstall]` 元数据，资产命名须保持 `u2secure-<target>[.exe]`）。
