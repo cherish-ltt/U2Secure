@@ -75,9 +75,6 @@ pub fn tr(key: &'static str) -> &'static str {
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
         // ── 主入口 ──
-        "lang_en" => "English",
-        "lang_zh_cn" => "简体中文",
-        "lang_zh_tw" => "繁體中文",
         "select_language" => "选择语言",
         "select_mode" => "请选择启动模式",
         "mode_cli" => "CLI 模式（传统交互式）",
@@ -85,7 +82,6 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "unknown_arg" => "未知参数: {arg}，使用 -c (CLI) 或 -t (TUI)",
 
         // ── 标题 ──
-        "app_title" => "U2Secure — Linux 服务器安全加固工具",
 
         // ── Step 标签（12项） ──
         "step_system_update" => "系统更新",
@@ -133,16 +129,8 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "audit_detail_sys_needs_update" => "缓存已过期，建议更新",
 
         // ── 审计状态 ──
-        "status_safe" => "✅",
-        "status_partial" => "⚠️",
-        "status_missing" => "❌",
-        "status_needs_update" => "🔄",
 
         // ── 包管理器 ──
-        "pkg_apt" => "apt",
-        "pkg_yum" => "yum",
-        "pkg_dnf" => "dnf",
-        "pkg_unknown" => "unknown",
 
         // ── 领域错误 ──
         "err_permission_denied" => "需要 root 权限运行",
@@ -152,9 +140,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "err_user_aborted" => "用户取消操作",
 
         // ── 错误详情（我们的包装说明，非原始系统错误） ──
-        "err_unknown_pkg_mgr" => "无法识别的包管理器",
         "err_unsupported_pkg" => "不支持的包管理器",
-        "err_auto_update_only_debian" => "自动安全更新仅支持 Debian/Ubuntu",
         "err_unknown_pkg_lynis" => "无法确定包管理器，请手动安装 lynis",
         "err_sshd_not_found" => "sshd_config 不存在",
         "err_no_username" => "未提供用户名",
@@ -165,13 +151,10 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "err_no_sudo_before_pw" => "禁止密码登录前请先创建 sudo 用户",
         "err_no_target_user" => "未提供目标用户名",
         "err_no_key_action" => "未选择密钥操作",
-        "err_update_failed" => "update 失败",
-        "err_upgrade_failed" => "upgrade 失败",
         "err_ufw_allow_failed" => "ufw allow 失败",
         "err_ufw_enable_failed" => "ufw enable 失败",
         "err_install_fail2ban" => "安装 fail2ban 失败",
         "err_install_unattended" => "安装 unattended-upgrades 失败",
-        "err_lynis_exec" => "lynis 执行失败",
         "err_sshd_check" => "sshd 语法检查失败",
         "err_sshd_syntax" => "sshd_config 语法错误，请检查配置",
         "err_ssh_restart" => "重启 SSH 服务失败",
@@ -185,7 +168,6 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "result_user_created" => {
             "用户 '{user}' 已创建并加入 sudo 组，密钥已设置（私钥: ~/.ssh/id_ed25519）"
         },
-        "result_root_login_set" => "PermitRootLogin 已设置为 prohibit-password（备份: {bak}）",
         "result_ssh_port_set" => "SSH 端口已修改为 {port}（{msg}）",
         "result_pw_auth_disabled" => "密码登录已禁用（仅允许密钥登录）",
         "result_key_generated" => {
@@ -195,24 +177,13 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "result_ufw_enabled" => "UFW 已启用，SSH 端口 {port} 已放行",
         "result_fail2ban_installed" => "Fail2ban 已安装并运行，SSH 端口 {port} 已加入监控",
         "result_auto_updates_enabled" => "自动安全更新已启用（每日检查，自动安装安全补丁）",
-        "result_lynis_ok" => {
-            "lynis 安全扫描完成（{warns} 个警告, {suggs} 个建议）\n  详细报告: /var/log/lynis.log"
-        },
-        "result_lynis_fail" => "lynis 无法自动安装，请手动安装后重新运行",
-        "result_logwatch_installed" => {
-            "日志与审计增强完成\n  已安装/配置: {installed}\n  logwatch: 每日邮件报告\n  aide: 文件完整性检查已初始化"
-        },
         "result_ssh_restarted" => {
             "SSH 服务已重启（状态: {status}）\n  ⚠️  请在另一终端验证连接后再关闭当前会话！\n  🔄 如需回滚：systemctl restart sshd 或恢复备份 /etc/ssh/sshd_config.bak.*"
         },
         "result_sshd_cfg_set" => "{key} 已设置为 {value}（备份: {bak}）",
-        "result_sshd_syntax_ok" => "sshd_config 语法检查通过",
-        "result_sshd_syntax_err" => "sshd_config 语法错误，请检查配置: {err}",
 
         // ── 日志前缀 ──
-        "log_audit" => "[审计]",
         "log_operation" => "[操作]",
-        "log_rollback" => "[回退]",
         "log_audit_start" => "开始环境审计...",
         "log_audit_done" => "完成，共 {n} 项检测",
         "log_step_start" => "开始执行",
@@ -242,8 +213,8 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "cli_no_selection" => "未选择任何步骤，退出。",
         "cli_executing" => "开始执行加固步骤...",
         "cli_summary_title" => "本次加固总结报告",
-        "cli_summary_total" => "总计: {ok} 成功, {fail} 失败/跳过",
-        "cli_log_saved" => "日志已保存至 /var/log/secure-init.log",
+        "cli_summary_total" => "总计: {ok} 成功, {skip} 跳过, {fail} 失败",
+        "cli_log_saved" => "执行日志: {log}",
         "cli_create_user" => "是否创建新的管理用户？",
         "cli_username_prompt" => "请输入新用户名",
         "cli_username_empty" => "用户名不能为空",
@@ -257,7 +228,6 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "cli_port_invalid" => "请输入有效数字",
         "cli_port_zero" => "端口 0 无效",
         "cli_existing_sudo" => "已有 sudo 用户: {users}",
-        "cli_no_sudo" => "没有可用的 sudo 用户，跳过密钥设置",
         "cli_manual_user" => "未检测到 sudo 用户，请输入要设置密钥的目标用户名",
         "cli_user_prompt" => "目标用户名",
         "cli_no_input" => "未输入用户名，跳过密钥设置",
@@ -268,8 +238,6 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "cli_key_paste" => "粘贴已有公钥",
         "cli_key_skip" => "跳过",
         "cli_key_prompt" => "请粘贴公钥内容（ssh-ed25519 AAA...）",
-        "cli_ssh_port_info" => "当前 SSH 端口: {port_str}",
-        "cli_ssh_suggest_info" => "建议端口: {port}",
 
         // ── TUI 界面 ──
         "tui_title" => "U2Secure — Linux 服务器安全加固工具",
@@ -286,18 +254,15 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "tui_single_hint" => "按 e 可强制执行任意单项",
         "tui_exec_title" => "执行状态",
         "tui_exec_running" => "正在执行: {step}",
-        "tui_exec_done" => "已完成: {step}",
-        "tui_exec_skip" => "跳过: {msg}",
-        "tui_exec_failed" => "失败: {err}",
         "tui_exec_interrupted" => "用户中断",
         "tui_result_title" => "执行结果",
-        "tui_result_summary" => "总计: {ok} 成功, {fail} 失败/跳过",
-        "tui_result_return" => "按任意键返回步骤列表",
+        "tui_result_summary" => "总计: {ok} 成功, {skip} 跳过, {fail} 失败",
+        "tui_result_return" => "↑↓ 滚动查看 | 其他键返回步骤列表",
         "tui_footer_select" => {
-            "↑↓/jk 移动 | Space 选择 | Enter 批量执行 | e 单项执行 | r 重新审计 | q 退出"
+            "↑↓/jk 移动 | Space 选择 | a 全选 | Enter 批量执行 | e 单项执行 | r 重新审计 | q 退出"
         },
         "tui_footer_exec" => "执行中... 按 Ctrl+C 中断",
-        "tui_footer_summary" => "执行完毕 | 按任意键返回步骤列表",
+        "tui_footer_summary" => "执行完毕 | ↑↓ 滚动 | 其他键返回步骤列表",
         "tui_popup_username" => "目标用户名",
         "tui_popup_enter_user" => "输入用户名...",
         "tui_popup_select_user" => "选择用户",
@@ -318,26 +283,84 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "tui_popup_port_suggest" => "建议端口: {port}",
         "tui_popup_port_current" => "当前: {port}",
         "tui_popup_port_placeholder" => "输入 0-65535...",
-        "tui_popup_enter" => "Enter 确认",
-        "tui_popup_esc" => "Esc 取消",
-        "tui_popup_esc_back" => "Esc 返回",
-        "tui_popup_updown" => "↑↓ 选择",
-        "tui_popup_enter_confirm" => "Enter 确认",
         "tui_hint_enter_esc" => "Enter 确认  Esc 取消",
         "tui_hint_updown_enter_esc" => "↑↓ 选择  Enter 确认  Esc 取消",
         "tui_hint_enter_esc_back" => "Enter 确认  Esc 返回",
         "tui_hint_updown_enter_esc_back" => "↑↓ 选择  Enter 确认  Esc 返回",
-        "tui_step_status_running" => "▶",
-        "tui_step_status_done" => "✓",
-        "tui_step_status_failed" => "✗",
 
         // ── 步骤执行中的日志 ──
-        "log_running" => "正在执行: {step}",
-        "log_completed" => "已完成: {step}",
-        "log_skip" => "跳过: {msg}",
-        "log_failed" => "失败: {err}",
-        "log_interrupted" => "用户中断",
 
+        // ── 可选步骤 / 临时软件源 / 三态结果 ──
+        "step_opt_in_tag" => "（可选·耗时）",
+        "outcome_changed" => "成功",
+        "outcome_skipped" => "跳过",
+        "outcome_failed" => "失败",
+        "mirror_original" => "使用系统原始软件源",
+        "mirror_tsinghua" => "清华大学 TUNA 镜像",
+        "mirror_ustc" => "中国科学技术大学镜像",
+        "mirror_latency_prefix" => "延迟: ",
+        "mirror_unreachable" => "不可达",
+        "mirror_not_applied" => "临时源未生效（没有可改写的源），继续使用原始源",
+        "mirror_applied" => "已临时切换到 {mirror}（改写 {files} 个源文件、{entries} 处地址）",
+        "mirror_repo_skipped" => "；{n} 个 repo 仅配置 mirrorlist，本次未加速",
+        "mirror_warming" => "正在预热 {mirror} ...",
+        "mirror_warmup_failed" => "镜像源预热失败，回退原始源: {err}",
+        "mirror_apply_failed" => "临时源准备失败，回退原始源: {err}",
+        "result_pkg_unknown" => "无法识别包管理器，跳过该步骤",
+        "result_cmd_timeout" => "命令超时被终止",
+        "result_cancelled" => "命令被用户中断",
+        "result_exit_code" => "退出码 {code}",
+        "result_cmd_failed" => "命令失败（{action}）: {reason}",
+        "result_see_log" => "{msg}；完整输出见 {log}",
+        "result_auto_update_only_debian" => "自动安全更新仅支持 Debian/Ubuntu，已跳过",
+        "result_install_pkg_failed" => "{pkg} 安装失败（{reason}）",
+        "result_install_pkg_unverified" => "{pkg} 安装后未检测到可执行文件",
+        "result_lynis_ok" => {
+            "lynis 扫描完成：加固指数 {index}，警告 {warns}，建议 {suggs}\n  报告: {report}"
+        },
+        "result_lynis_fail" => "lynis 安装未成功，请查看上方日志后重试",
+        "result_logwatch_installed" => {
+            "日志与审计增强完成\n  已安装/配置: {installed}\n  报告目录: {report_dir}"
+        },
+        "result_logwatch_report_path" => "\n  本次 logwatch 报告: {path}",
+        "result_logwatch_cron" => "\n  每日报告任务: {path}",
+        "result_logwatch_report_failed" => "logwatch 报告生成失败（{reason}）",
+        "result_aide_init" => "\n  aide 初始化日志: {path}",
+        "result_aide_init_failed" => "aide 数据库初始化失败（{reason}）",
+        "result_aide_cron" => "\n  已添加每日 aide 完整性检查（系统原本没有）",
+        "result_partial_failures" => "\n  ⚠️ 部分子项失败: {list}",
+        "result_ssh_no_restart" => "sshd 配置未变更（服务已加载最新配置），无需重启",
+        "log_interrupt_rollback" => "[中断] 用户中断，正在回滚已注册的修改",
+        "log_step_failed_detail" => "失败: {err}",
+        "undo_file_restore_generic" => "恢复文件 {path}",
+        "cli_live_log" => "实时输出: {log}",
+        "cli_interrupted" => "用户中断，已回滚全部已注册修改",
+        "cli_mirror_probing" => "正在探测镜像源延迟...",
+        "cli_mirror_prompt" => "选择本次运行使用的软件源（仅本次生效）",
+        "cli_artifact" => "报告:",
+        "cli_report_dir" => "报告目录: {dir}",
+        "cli_report_view" => "查看完整结果: less {dir}/<文件>",
+        "cli_hint_opt_in" => "提示：标记「可选·耗时」的步骤默认不勾选，需要时请手动选择",
+        "tui_no_selection" => "未勾选任何步骤",
+        "tui_job_crashed" => "执行线程异常退出，请查看报告目录中的日志",
+        "tui_reauditing" => "正在重新审计...",
+        "tui_cancelling" => "正在中断...",
+        "tui_cancel_requested" => "已请求中断，等待当前命令结束并回滚",
+        "tui_running_hint" => "执行中：按 Ctrl+C 中断并回滚",
+        "tui_exec_preparing" => "正在准备（软件源/环境检查）...",
+        "tui_exec_progress" => "进度",
+        "tui_exec_elapsed" => "已耗时",
+        "tui_exec_cancel_hint" => "Ctrl+C 中断并回滚",
+        "tui_exec_live_output" => "── 命令输出 ──",
+        "tui_help_all" => "全选 / 取消全选（可选步骤除外）",
+        "tui_opt_in_hint" => "「可选·耗时」步骤默认关闭，按 Space 勾选后才会执行",
+        "tui_mirror_title" => "选择临时软件源",
+        "tui_mirror_hint" => "仅本次运行生效，系统原始源不做改动",
+        "tui_mirror_probing" => "正在探测镜像源延迟...",
+        "tui_mirror_cancelled" => "已取消镜像源选择",
+        "tui_result_artifact" => "报告:",
+        "tui_result_report_dir" => "报告目录:",
+        "tui_result_view" => "查看完整结果:",
         _ => return None,
     })
 }
@@ -348,15 +371,11 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
-        "lang_en" => "English",
-        "lang_zh_cn" => "简体中文",
-        "lang_zh_tw" => "繁體中文",
         "select_language" => "Select Language",
         "select_mode" => "Select Launch Mode",
         "mode_cli" => "CLI Mode (Traditional Interactive)",
         "mode_tui" => "TUI Mode (Terminal GUI)",
         "unknown_arg" => "Unknown argument: {arg}, use -c (CLI) or -t (TUI)",
-        "app_title" => "U2Secure — Linux Server Security Hardening Tool",
 
         "step_system_update" => "System Update",
         "step_user_creation" => "Non-root User Creation",
@@ -401,16 +420,6 @@ fn en(key: &str) -> Option<&'static str> {
         "audit_detail_sys_uptodate" => "Cache not expired",
         "audit_detail_sys_needs_update" => "Cache expired, update recommended",
 
-        "status_safe" => "✅",
-        "status_partial" => "⚠️",
-        "status_missing" => "❌",
-        "status_needs_update" => "🔄",
-
-        "pkg_apt" => "apt",
-        "pkg_yum" => "yum",
-        "pkg_dnf" => "dnf",
-        "pkg_unknown" => "unknown",
-
         "err_permission_denied" => "Root permission required",
         "err_cmd_failed" => "System command failed: {msg}",
         "err_parse_error" => "Config parse error: {msg}",
@@ -418,9 +427,7 @@ fn en(key: &str) -> Option<&'static str> {
         "err_user_aborted" => "User cancelled operation",
 
         // ── 错误详情 ──
-        "err_unknown_pkg_mgr" => "Unrecognized package manager",
         "err_unsupported_pkg" => "Unsupported package manager",
-        "err_auto_update_only_debian" => "Auto security updates only support Debian/Ubuntu",
         "err_unknown_pkg_lynis" => {
             "Cannot determine package manager, please install lynis manually"
         },
@@ -433,13 +440,10 @@ fn en(key: &str) -> Option<&'static str> {
         "err_no_sudo_before_pw" => "Please create a sudo user before disabling password auth",
         "err_no_target_user" => "No target username provided",
         "err_no_key_action" => "No key action selected",
-        "err_update_failed" => "update failed",
-        "err_upgrade_failed" => "upgrade failed",
         "err_ufw_allow_failed" => "ufw allow failed",
         "err_ufw_enable_failed" => "ufw enable failed",
         "err_install_fail2ban" => "Installing fail2ban failed",
         "err_install_unattended" => "Installing unattended-upgrades failed",
-        "err_lynis_exec" => "Lynis execution failed",
         "err_sshd_check" => "sshd syntax check failed",
         "err_sshd_syntax" => "sshd_config syntax error, please check configuration",
         "err_ssh_restart" => "SSH service restart failed",
@@ -451,7 +455,6 @@ fn en(key: &str) -> Option<&'static str> {
         "result_user_created" => {
             "User '{user}' created with sudo, SSH key set (private key: ~/.ssh/id_ed25519)"
         },
-        "result_root_login_set" => "PermitRootLogin set to prohibit-password (backup: {bak})",
         "result_ssh_port_set" => "SSH port changed to {port} ({msg})",
         "result_pw_auth_disabled" => "Password auth disabled (key-only login)",
         "result_key_generated" => {
@@ -463,23 +466,12 @@ fn en(key: &str) -> Option<&'static str> {
         "result_auto_updates_enabled" => {
             "Auto security updates enabled (daily check, auto-install patches)"
         },
-        "result_lynis_ok" => {
-            "Lynis security scan completed ({warns} warnings, {suggs} suggestions)\n  Full report: /var/log/lynis.log"
-        },
-        "result_lynis_fail" => "Lynis could not be auto-installed, please install manually",
-        "result_logwatch_installed" => {
-            "Log & audit enhancement complete\n  Installed/configured: {installed}\n  logwatch: daily email report\n  aide: file integrity check initialized"
-        },
         "result_ssh_restarted" => {
             "SSH service restarted (status: {status})\n  ⚠️  Verify connection in another terminal before closing this session!\n  🔄 Rollback: systemctl restart sshd or restore /etc/ssh/sshd_config.bak.*"
         },
         "result_sshd_cfg_set" => "{key} set to {value} (backup: {bak})",
-        "result_sshd_syntax_ok" => "sshd_config syntax check passed",
-        "result_sshd_syntax_err" => "sshd_config syntax error: {err}",
 
-        "log_audit" => "[Audit]",
         "log_operation" => "[Operation]",
-        "log_rollback" => "[Rollback]",
         "log_audit_start" => "Starting environment audit...",
         "log_audit_done" => "Completed, {n} items checked",
         "log_step_start" => "Starting",
@@ -509,8 +501,8 @@ fn en(key: &str) -> Option<&'static str> {
         "cli_no_selection" => "No steps selected, exiting.",
         "cli_executing" => "Starting hardening steps...",
         "cli_summary_title" => "Hardening Summary Report",
-        "cli_summary_total" => "Total: {ok} success, {fail} failed/skipped",
-        "cli_log_saved" => "Log saved to /var/log/secure-init.log",
+        "cli_summary_total" => "Total: {ok} done, {skip} skipped, {fail} failed",
+        "cli_log_saved" => "Run log: {log}",
         "cli_create_user" => "Create a new admin user?",
         "cli_username_prompt" => "Enter new username",
         "cli_username_empty" => "Username cannot be empty",
@@ -524,7 +516,6 @@ fn en(key: &str) -> Option<&'static str> {
         "cli_port_invalid" => "Enter a valid number",
         "cli_port_zero" => "Port 0 is invalid",
         "cli_existing_sudo" => "Existing sudo users: {users}",
-        "cli_no_sudo" => "No sudo users available, skipping key setup",
         "cli_manual_user" => "No sudo users detected, enter target username for key setup",
         "cli_user_prompt" => "Target username",
         "cli_no_input" => "No username entered, skipping key setup",
@@ -535,8 +526,6 @@ fn en(key: &str) -> Option<&'static str> {
         "cli_key_paste" => "Paste existing public key",
         "cli_key_skip" => "Skip",
         "cli_key_prompt" => "Paste public key content (ssh-ed25519 AAA...)",
-        "cli_ssh_port_info" => "Current SSH port: {port_str}",
-        "cli_ssh_suggest_info" => "Suggested port: {port}",
 
         "tui_title" => "U2Secure — Linux Server Security Hardening Tool",
         "tui_audit_report" => "Audit Report",
@@ -552,18 +541,15 @@ fn en(key: &str) -> Option<&'static str> {
         "tui_single_hint" => "Press e to execute any single step",
         "tui_exec_title" => "Execution Status",
         "tui_exec_running" => "Running: {step}",
-        "tui_exec_done" => "Completed: {step}",
-        "tui_exec_skip" => "Skipped: {msg}",
-        "tui_exec_failed" => "Failed: {err}",
         "tui_exec_interrupted" => "Interrupted",
         "tui_result_title" => "Execution Result",
-        "tui_result_summary" => "Total: {ok} success, {fail} failed/skipped",
-        "tui_result_return" => "Press any key to return to step list",
+        "tui_result_summary" => "Total: {ok} done, {skip} skipped, {fail} failed",
+        "tui_result_return" => "↑↓ scroll | any other key returns to the step list",
         "tui_footer_select" => {
-            "↑↓/jk Move | Space Toggle | Enter Batch | e Single | r Re-audit | q Quit"
+            "↑↓/jk Move | Space Toggle | a Select all | Enter Batch | e Single | r Re-audit | q Quit"
         },
         "tui_footer_exec" => "Running... Press Ctrl+C to interrupt",
-        "tui_footer_summary" => "Done | Press any key to return",
+        "tui_footer_summary" => "Done | ↑↓ scroll | any other key returns",
         "tui_popup_username" => "Target Username",
         "tui_popup_enter_user" => "Enter username...",
         "tui_popup_select_user" => "Select User",
@@ -584,25 +570,100 @@ fn en(key: &str) -> Option<&'static str> {
         "tui_popup_port_suggest" => "Suggested: {port}",
         "tui_popup_port_current" => "Current: {port}",
         "tui_popup_port_placeholder" => "Enter 0-65535...",
-        "tui_popup_enter" => "Enter confirm",
-        "tui_popup_esc" => "Esc cancel",
-        "tui_popup_esc_back" => "Esc back",
-        "tui_popup_updown" => "↑↓ select",
-        "tui_popup_enter_confirm" => "Enter confirm",
         "tui_hint_enter_esc" => "Enter confirm  Esc cancel",
         "tui_hint_updown_enter_esc" => "↑↓ select  Enter confirm  Esc cancel",
         "tui_hint_enter_esc_back" => "Enter confirm  Esc back",
         "tui_hint_updown_enter_esc_back" => "↑↓ select  Enter confirm  Esc back",
-        "tui_step_status_running" => "▶",
-        "tui_step_status_done" => "✓",
-        "tui_step_status_failed" => "✗",
 
-        "log_running" => "Running: {step}",
-        "log_completed" => "Completed: {step}",
-        "log_skip" => "Skipped: {msg}",
-        "log_failed" => "Failed: {err}",
-        "log_interrupted" => "Interrupted",
-
+        // ── 可选步骤 / 临时软件源 / 三态结果 ──
+        "step_opt_in_tag" => "(optional, slow)",
+        "outcome_changed" => "done",
+        "outcome_skipped" => "skipped",
+        "outcome_failed" => "failed",
+        "mirror_original" => "Keep system repositories",
+        "mirror_tsinghua" => "Tsinghua TUNA mirror",
+        "mirror_ustc" => "USTC mirror",
+        "mirror_latency_prefix" => "latency: ",
+        "mirror_unreachable" => "unreachable",
+        "mirror_not_applied" => {
+            "Temporary mirror not applied (no rewritable source found); using original repositories"
+        },
+        "mirror_applied" => {
+            "Temporarily switched to {mirror} ({files} files, {entries} entries rewritten)"
+        },
+        "mirror_repo_skipped" => {
+            "; {n} repo file(s) only define mirrorlist and were not accelerated"
+        },
+        "mirror_warming" => "Warming up {mirror} ...",
+        "mirror_warmup_failed" => {
+            "Mirror warm-up failed, falling back to original repositories: {err}"
+        },
+        "mirror_apply_failed" => "Failed to prepare temporary repositories, falling back: {err}",
+        "result_pkg_unknown" => "Unknown package manager, step skipped",
+        "result_cmd_timeout" => "Command timed out and was terminated",
+        "result_cancelled" => "Command cancelled by user",
+        "result_exit_code" => "exit code {code}",
+        "result_cmd_failed" => "Command failed ({action}): {reason}",
+        "result_see_log" => "{msg}; full output: {log}",
+        "result_auto_update_only_debian" => {
+            "Auto security updates are supported on Debian/Ubuntu only, skipped"
+        },
+        "result_install_pkg_failed" => "Failed to install {pkg} ({reason})",
+        "result_install_pkg_unverified" => "{pkg} installed but no executable was found",
+        "result_lynis_ok" => {
+            "Lynis scan finished: hardening index {index}, {warns} warnings, {suggs} suggestions\n  Report: {report}"
+        },
+        "result_lynis_fail" => "Lynis could not be installed, check the log above and retry",
+        "result_logwatch_installed" => {
+            "Log & audit enhancement complete\n  Installed/configured: {installed}\n  Report dir: {report_dir}"
+        },
+        "result_logwatch_report_path" => "\n  Logwatch report: {path}",
+        "result_logwatch_cron" => "\n  Daily report job: {path}",
+        "result_logwatch_report_failed" => "Failed to generate logwatch report ({reason})",
+        "result_aide_init" => "\n  aide init log: {path}",
+        "result_aide_init_failed" => "Failed to initialize aide database ({reason})",
+        "result_aide_cron" => "\n  Added daily aide integrity check (none existed)",
+        "result_partial_failures" => "\n  ⚠️ Partial failures: {list}",
+        "result_ssh_no_restart" => {
+            "sshd configuration unchanged (service already loaded the latest config), restart not needed"
+        },
+        "log_interrupt_rollback" => "[Interrupt] Rolling back all registered changes",
+        "log_step_failed_detail" => "Failed: {err}",
+        "undo_file_restore_generic" => "Restore file {path}",
+        "cli_live_log" => "Live output: {log}",
+        "cli_interrupted" => "Interrupted by user, all registered changes were rolled back",
+        "cli_mirror_probing" => "Probing mirror latency...",
+        "cli_mirror_prompt" => "Select the repository mirror for this run (temporary)",
+        "cli_artifact" => "Report:",
+        "cli_report_dir" => "Report directory: {dir}",
+        "cli_report_view" => "View full results: less {dir}/<file>",
+        "cli_hint_opt_in" => {
+            "Note: steps tagged (optional, slow) are unchecked by default; select them manually"
+        },
+        "tui_no_selection" => "No step selected",
+        "tui_job_crashed" => {
+            "The execution thread terminated unexpectedly; check the logs in the report directory"
+        },
+        "tui_reauditing" => "Re-running audit...",
+        "tui_cancelling" => "Cancelling...",
+        "tui_cancel_requested" => {
+            "Cancellation requested; waiting for the current command to stop and roll back"
+        },
+        "tui_running_hint" => "Running: press Ctrl+C to cancel and roll back",
+        "tui_exec_preparing" => "Preparing (repositories / environment)...",
+        "tui_exec_progress" => "Progress",
+        "tui_exec_elapsed" => "Elapsed",
+        "tui_exec_cancel_hint" => "Ctrl+C to cancel and roll back",
+        "tui_exec_live_output" => "── command output ──",
+        "tui_help_all" => "Select / unselect all (optional steps excluded)",
+        "tui_opt_in_hint" => "(optional, slow) steps are off by default; press Space to enable",
+        "tui_mirror_title" => "Temporary repository mirror",
+        "tui_mirror_hint" => "Applies to this run only; system repositories are not modified",
+        "tui_mirror_probing" => "Probing mirror latency...",
+        "tui_mirror_cancelled" => "Mirror selection cancelled",
+        "tui_result_artifact" => "Report:",
+        "tui_result_report_dir" => "Report dir:",
+        "tui_result_view" => "View full results:",
         _ => return None,
     })
 }
@@ -613,15 +674,11 @@ fn en(key: &str) -> Option<&'static str> {
 
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
-        "lang_en" => "English",
-        "lang_zh_cn" => "简体中文",
-        "lang_zh_tw" => "繁體中文",
         "select_language" => "選擇語言",
         "select_mode" => "請選擇啟動模式",
         "mode_cli" => "CLI 模式（傳統互動式）",
         "mode_tui" => "TUI 模式（終端圖形界面）",
         "unknown_arg" => "未知參數: {arg}，使用 -c (CLI) 或 -t (TUI)",
-        "app_title" => "U2Secure — Linux 伺服器安全強化工具",
 
         "step_system_update" => "系統更新",
         "step_user_creation" => "非 root 用戶創建",
@@ -666,16 +723,6 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "audit_detail_sys_uptodate" => "快取未過期",
         "audit_detail_sys_needs_update" => "快取已過期，建議更新",
 
-        "status_safe" => "✅",
-        "status_partial" => "⚠️",
-        "status_missing" => "❌",
-        "status_needs_update" => "🔄",
-
-        "pkg_apt" => "apt",
-        "pkg_yum" => "yum",
-        "pkg_dnf" => "dnf",
-        "pkg_unknown" => "unknown",
-
         "err_permission_denied" => "需要 root 權限執行",
         "err_cmd_failed" => "系統命令執行失敗: {msg}",
         "err_parse_error" => "配置解析錯誤: {msg}",
@@ -683,10 +730,9 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "err_user_aborted" => "用戶取消操作",
 
         // ── 錯誤詳情 ──
-        "err_unknown_pkg_mgr" => "無法識別的套件管理器",
         "err_unsupported_pkg" => "不支援的套件管理器",
-        "err_auto_update_only_debian" => "自動安全更新僅支援 Debian/Ubuntu",
         "err_unknown_pkg_lynis" => "無法確定套件管理器，請手動安裝 lynis",
+        "err_setup_signal" => "無法註冊 Ctrl+C 訊號處理器",
         "err_sshd_not_found" => "sshd_config 不存在",
         "err_no_username" => "未提供用戶名",
         "err_user_exists" => "用戶 '{user}' 已存在",
@@ -696,13 +742,10 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "err_no_sudo_before_pw" => "禁止密碼登入前請先創建 sudo 用戶",
         "err_no_target_user" => "未提供目標用戶名",
         "err_no_key_action" => "未選擇金鑰操作",
-        "err_update_failed" => "update 失敗",
-        "err_upgrade_failed" => "upgrade 失敗",
         "err_ufw_allow_failed" => "ufw allow 失敗",
         "err_ufw_enable_failed" => "ufw enable 失敗",
         "err_install_fail2ban" => "安裝 fail2ban 失敗",
         "err_install_unattended" => "安裝 unattended-upgrades 失敗",
-        "err_lynis_exec" => "lynis 執行失敗",
         "err_sshd_check" => "sshd 語法檢查失敗",
         "err_sshd_syntax" => "sshd_config 語法錯誤，請檢查配置",
         "err_ssh_restart" => "重啟 SSH 服務失敗",
@@ -714,7 +757,6 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "result_user_created" => {
             "用戶 '{user}' 已創建並加入 sudo 群組，金鑰已設定（私鑰: ~/.ssh/id_ed25519）"
         },
-        "result_root_login_set" => "PermitRootLogin 已設定為 prohibit-password（備份: {bak}）",
         "result_ssh_port_set" => "SSH 連接埠已修改為 {port}（{msg}）",
         "result_pw_auth_disabled" => "密碼登入已停用（僅允許金鑰登入）",
         "result_key_generated" => {
@@ -724,23 +766,12 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "result_ufw_enabled" => "UFW 已啟用，SSH 連接埠 {port} 已放行",
         "result_fail2ban_installed" => "Fail2ban 已安裝並執行，SSH 連接埠 {port} 已加入監控",
         "result_auto_updates_enabled" => "自動安全更新已啟用（每日檢查，自動安裝安全修補程式）",
-        "result_lynis_ok" => {
-            "lynis 安全掃描完成（{warns} 個警告, {suggs} 個建議）\n  詳細報告: /var/log/lynis.log"
-        },
-        "result_lynis_fail" => "lynis 無法自動安裝，請手動安裝後重新執行",
-        "result_logwatch_installed" => {
-            "日誌與稽核增強完成\n  已安裝/配置: {installed}\n  logwatch: 每日郵件報告\n  aide: 檔案完整性檢查已初始化"
-        },
         "result_ssh_restarted" => {
             "SSH 服務已重新啟動（狀態: {status}）\n  ⚠️  請在另一個終端驗證連線後再關閉當前會話！\n  🔄 如需回退：systemctl restart sshd 或恢復備份 /etc/ssh/sshd_config.bak.*"
         },
         "result_sshd_cfg_set" => "{key} 已設定為 {value}（備份: {bak}）",
-        "result_sshd_syntax_ok" => "sshd_config 語法檢查通過",
-        "result_sshd_syntax_err" => "sshd_config 語法錯誤，請檢查配置: {err}",
 
-        "log_audit" => "[稽核]",
         "log_operation" => "[操作]",
-        "log_rollback" => "[回退]",
         "log_audit_start" => "開始環境稽核...",
         "log_audit_done" => "完成，共 {n} 項檢測",
         "log_step_start" => "開始執行",
@@ -768,8 +799,8 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "cli_no_selection" => "未選擇任何步驟，退出。",
         "cli_executing" => "開始執行強化步驟...",
         "cli_summary_title" => "本次強化總結報告",
-        "cli_summary_total" => "總計: {ok} 成功, {fail} 失敗/跳過",
-        "cli_log_saved" => "日誌已儲存至 /var/log/secure-init.log",
+        "cli_summary_total" => "總計: {ok} 成功, {skip} 跳過, {fail} 失敗",
+        "cli_log_saved" => "執行日誌: {log}",
         "cli_create_user" => "是否創建新的管理用戶？",
         "cli_username_prompt" => "請輸入新用戶名",
         "cli_username_empty" => "用戶名不能為空",
@@ -783,7 +814,6 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "cli_port_invalid" => "請輸入有效數字",
         "cli_port_zero" => "連接埠 0 無效",
         "cli_existing_sudo" => "已有 sudo 用戶: {users}",
-        "cli_no_sudo" => "沒有可用的 sudo 用戶，跳過金鑰設定",
         "cli_manual_user" => "未檢測到 sudo 用戶，請輸入要設定金鑰的目標用戶名",
         "cli_user_prompt" => "目標用戶名",
         "cli_no_input" => "未輸入用戶名，跳過金鑰設定",
@@ -794,8 +824,6 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "cli_key_paste" => "貼上已有公鑰",
         "cli_key_skip" => "跳過",
         "cli_key_prompt" => "請貼上公鑰內容（ssh-ed25519 AAA...）",
-        "cli_ssh_port_info" => "當前 SSH 連接埠: {port_str}",
-        "cli_ssh_suggest_info" => "建議連接埠: {port}",
 
         "tui_title" => "U2Secure — Linux 伺服器安全強化工具",
         "tui_audit_report" => "稽核報告",
@@ -811,18 +839,15 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "tui_single_hint" => "按 e 可強制執行任意單項",
         "tui_exec_title" => "執行狀態",
         "tui_exec_running" => "正在執行: {step}",
-        "tui_exec_done" => "已完成: {step}",
-        "tui_exec_skip" => "跳過: {msg}",
-        "tui_exec_failed" => "失敗: {err}",
         "tui_exec_interrupted" => "用戶中斷",
         "tui_result_title" => "執行結果",
-        "tui_result_summary" => "總計: {ok} 成功, {fail} 失敗/跳過",
-        "tui_result_return" => "按任意鍵返回步驟列表",
+        "tui_result_summary" => "總計: {ok} 成功, {skip} 跳過, {fail} 失敗",
+        "tui_result_return" => "↑↓ 捲動檢視 | 其他鍵返回步驟列表",
         "tui_footer_select" => {
-            "↑↓/jk 移動 | Space 選擇 | Enter 批次執行 | e 單項執行 | r 重新稽核 | q 退出"
+            "↑↓/jk 移動 | Space 選擇 | a 全選 | Enter 批次執行 | e 單項執行 | r 重新稽核 | q 退出"
         },
         "tui_footer_exec" => "執行中... 按 Ctrl+C 中斷",
-        "tui_footer_summary" => "執行完畢 | 按任意鍵返回步驟列表",
+        "tui_footer_summary" => "執行完畢 | ↑↓ 捲動 | 其他鍵返回步驟清單",
         "tui_popup_username" => "目標用戶名",
         "tui_popup_enter_user" => "輸入用戶名...",
         "tui_popup_select_user" => "選擇用戶",
@@ -843,25 +868,82 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "tui_popup_port_suggest" => "建議連接埠: {port}",
         "tui_popup_port_current" => "當前: {port}",
         "tui_popup_port_placeholder" => "輸入 0-65535...",
-        "tui_popup_enter" => "Enter 確認",
-        "tui_popup_esc" => "Esc 取消",
-        "tui_popup_esc_back" => "Esc 返回",
-        "tui_popup_updown" => "↑↓ 選擇",
-        "tui_popup_enter_confirm" => "Enter 確認",
         "tui_hint_enter_esc" => "Enter 確認  Esc 取消",
         "tui_hint_updown_enter_esc" => "↑↓ 選擇  Enter 確認  Esc 取消",
         "tui_hint_enter_esc_back" => "Enter 確認  Esc 返回",
         "tui_hint_updown_enter_esc_back" => "↑↓ 選擇  Enter 確認  Esc 返回",
-        "tui_step_status_running" => "▶",
-        "tui_step_status_done" => "✓",
-        "tui_step_status_failed" => "✗",
 
-        "log_running" => "正在執行: {step}",
-        "log_completed" => "已完成: {step}",
-        "log_skip" => "跳過: {msg}",
-        "log_failed" => "失敗: {err}",
-        "log_interrupted" => "用戶中斷",
-
+        // ── 可选步骤 / 临时软件源 / 三态结果 ──
+        "step_opt_in_tag" => "（可選·耗時）",
+        "outcome_changed" => "成功",
+        "outcome_skipped" => "跳過",
+        "outcome_failed" => "失敗",
+        "mirror_original" => "使用系統原始軟體源",
+        "mirror_tsinghua" => "清華大學 TUNA 鏡像",
+        "mirror_ustc" => "中國科學技術大學鏡像",
+        "mirror_latency_prefix" => "延遲: ",
+        "mirror_unreachable" => "不可達",
+        "mirror_not_applied" => "臨時源未生效（沒有可改寫的源），繼續使用原始源",
+        "mirror_applied" => "已臨時切換到 {mirror}（改寫 {files} 個源檔案、{entries} 處位址）",
+        "mirror_repo_skipped" => "；{n} 個 repo 僅配置 mirrorlist，本次未加速",
+        "mirror_warming" => "正在預熱 {mirror} ...",
+        "mirror_warmup_failed" => "鏡像源預熱失敗，回退原始源: {err}",
+        "mirror_apply_failed" => "臨時源準備失敗，回退原始源: {err}",
+        "result_pkg_unknown" => "無法識別套件管理器，跳過該步驟",
+        "result_cmd_timeout" => "命令逾時被終止",
+        "result_cancelled" => "命令被使用者中斷",
+        "result_exit_code" => "退出碼 {code}",
+        "result_cmd_failed" => "命令失敗（{action}）: {reason}",
+        "result_see_log" => "{msg}；完整輸出見 {log}",
+        "result_auto_update_only_debian" => "自動安全更新僅支援 Debian/Ubuntu，已跳過",
+        "result_install_pkg_failed" => "{pkg} 安裝失敗（{reason}）",
+        "result_install_pkg_unverified" => "{pkg} 安裝後未偵測到可執行檔",
+        "result_lynis_ok" => {
+            "lynis 掃描完成：加固指數 {index}，警告 {warns}，建議 {suggs}\n  報告: {report}"
+        },
+        "result_lynis_fail" => "lynis 安裝未成功，請查看上方日誌後重試",
+        "result_logwatch_installed" => {
+            "日誌與稽核增強完成\n  已安裝/配置: {installed}\n  報告目錄: {report_dir}"
+        },
+        "result_logwatch_report_path" => "\n  本次 logwatch 報告: {path}",
+        "result_logwatch_cron" => "\n  每日報告任務: {path}",
+        "result_logwatch_report_failed" => "logwatch 報告產生失敗（{reason}）",
+        "result_aide_init" => "\n  aide 初始化日誌: {path}",
+        "result_aide_init_failed" => "aide 資料庫初始化失敗（{reason}）",
+        "result_aide_cron" => "\n  已加入每日 aide 完整性檢查（系統原本沒有）",
+        "result_partial_failures" => "\n  ⚠️ 部分子項失敗: {list}",
+        "result_ssh_no_restart" => "sshd 設定未變更（服務已載入最新設定），無需重啟",
+        "log_interrupt_rollback" => "[中斷] 使用者中斷，正在回滾已註冊的修改",
+        "log_step_failed_detail" => "失敗: {err}",
+        "undo_file_restore_generic" => "還原檔案 {path}",
+        "cli_live_log" => "即時輸出: {log}",
+        "cli_interrupted" => "使用者中斷，已回滾全部已註冊修改",
+        "cli_mirror_probing" => "正在偵測鏡像源延遲...",
+        "cli_mirror_prompt" => "選擇本次執行使用的軟體源（僅本次生效）",
+        "cli_artifact" => "報告:",
+        "cli_report_dir" => "報告目錄: {dir}",
+        "cli_report_view" => "查看完整結果: less {dir}/<檔案>",
+        "cli_hint_opt_in" => "提示：標記「可選·耗時」的步驟預設不勾選，需要時請手動選擇",
+        "tui_no_selection" => "未勾選任何步驟",
+        "tui_job_crashed" => "執行執行緒異常結束，請查看報告目錄中的日誌",
+        "tui_reauditing" => "正在重新稽核...",
+        "tui_cancelling" => "正在中斷...",
+        "tui_cancel_requested" => "已要求中斷，等待目前命令結束並回滾",
+        "tui_running_hint" => "執行中：按 Ctrl+C 中斷並回滾",
+        "tui_exec_preparing" => "正在準備（軟體源/環境檢查）...",
+        "tui_exec_progress" => "進度",
+        "tui_exec_elapsed" => "已耗時",
+        "tui_exec_cancel_hint" => "Ctrl+C 中斷並回滾",
+        "tui_exec_live_output" => "── 命令輸出 ──",
+        "tui_help_all" => "全選 / 取消全選（可選步驟除外）",
+        "tui_opt_in_hint" => "「可選·耗時」步驟預設關閉，按 Space 勾選後才會執行",
+        "tui_mirror_title" => "選擇臨時軟體源",
+        "tui_mirror_hint" => "僅本次執行生效，系統原始源不做改動",
+        "tui_mirror_probing" => "正在偵測鏡像源延遲...",
+        "tui_mirror_cancelled" => "已取消鏡像源選擇",
+        "tui_result_artifact" => "報告:",
+        "tui_result_report_dir" => "報告目錄:",
+        "tui_result_view" => "查看完整結果:",
         _ => return None,
     })
 }

@@ -8,29 +8,49 @@ use chrono::Local;
 /// 简单文件日志器，线程安全
 pub struct FileLogger {
     file: Mutex<std::fs::File>,
+    path: String,
 }
 
 impl FileLogger {
     /// 创建日志器，优先写入 `/var/log/secure-init.log`，失败则 fallback 到当前目录
-    pub fn new() -> Self {
-        let path = if let Ok(f) = OpenOptions::new()
+    /// 指定日志文件路径（测试或自定义场景）
+    pub fn with_path(path: impl AsRef<Path>) -> Self {
+        let path = path.as_ref();
+        let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open("/var/log/secure-init.log")
-        {
-            f
-        } else {
-            // fallback
-            let local_path = Path::new("./secure-init.log");
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(local_path)
-                .expect("无法创建日志文件")
+            .open(path)
+            .expect("无法创建日志文件");
+        Self {
+            file: Mutex::new(file),
+            path: path.to_string_lossy().to_string(),
+        }
+    }
+
+    pub fn new() -> Self {
+        let primary = "/var/log/secure-init.log";
+        let (file, path) = match OpenOptions::new().create(true).append(true).open(primary) {
+            Ok(f) => (f, primary.to_string()),
+            Err(_) => {
+                // fallback：无权限写入 /var/log 时落到当前目录
+                let local_path = Path::new("./secure-init.log");
+                let f = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(local_path)
+                    .expect("无法创建日志文件");
+                (f, local_path.to_string_lossy().to_string())
+            },
         };
         Self {
-            file: Mutex::new(path),
+            file: Mutex::new(file),
+            path,
         }
+    }
+
+    /// 实际写入的日志路径（可能因权限回退到当前目录）
+    pub fn path(&self) -> &str {
+        &self.path
     }
 
     /// 写入一行日志（自动加时间戳）

@@ -1,8 +1,13 @@
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::domain::audit::{AuditItem, AuditReport, AuditStatus, PackageManager};
 use crate::domain::errors::DomainError;
+use crate::infrastructure::rollback;
+
+/// 轮询子进程状态的间隔
+const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// 执行 shell 命令并返回 stdout
 pub fn run_cmd(program: &str, args: &[&str]) -> Result<String, DomainError> {
@@ -19,6 +24,127 @@ pub fn run_cmd(program: &str, args: &[&str]) -> Result<String, DomainError> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// 长耗时外部命令的执行结局
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamStatus {
+    /// 正常退出（退出码 0）
+    Success,
+    /// 非零退出
+    Failed(Option<i32>),
+    /// 超时被终止
+    TimedOut,
+    /// 用户中断（Ctrl+C）被终止
+    Cancelled,
+}
+
+impl StreamStatus {
+    pub fn is_success(&self) -> bool {
+        matches!(self, Self::Success)
+    }
+
+    pub fn exit_code(&self) -> Option<i32> {
+        match self {
+            Self::Failed(code) => *code,
+            _ => None,
+        }
+    }
+}
+
+/// 运行长耗时命令：`argv[0]` 为可执行文件，stdout/stderr 实时写入 `log_path`，
+/// 支持超时与 Ctrl+C 取消。
+///
+/// 与 `Command::output()` 的区别：
+/// - 输出落盘，用户可随时查看，UI 可尾随显示（不再"假卡住"）
+/// - 超时/中断时终止子进程，不会无限等待
+pub fn run_streaming_argv(
+    argv: &[String],
+    envs: &[(&str, &str)],
+    log_path: &str,
+    timeout: Duration,
+) -> Result<StreamStatus, DomainError> {
+    use std::io::Write;
+
+    let Some((program, args)) = argv.split_first() else {
+        return Err(DomainError::SystemCommandFailed("空命令".into()));
+    };
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|e| {
+            DomainError::SystemCommandFailed(format!("无法写入执行日志 {log_path}: {e}"))
+        })?;
+    let mut header = file.try_clone().map_err(|e| {
+        DomainError::SystemCommandFailed(format!("无法写入执行日志 {log_path}: {e}"))
+    })?;
+    let _ = writeln!(
+        header,
+        "\n===== [{}] $ {} =====",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+        argv.join(" ")
+    );
+
+    let stderr_file = file.try_clone().map_err(|e| {
+        DomainError::SystemCommandFailed(format!("无法写入执行日志 {log_path}: {e}"))
+    })?;
+    let mut child = Command::new(program)
+        .args(args)
+        .envs(envs.iter().copied())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(file))
+        .stderr(Stdio::from(stderr_file))
+        .spawn()
+        .map_err(|e| DomainError::SystemCommandFailed(format!("无法执行 {program}: {e}")))?;
+
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Ok(if status.success() {
+                    StreamStatus::Success
+                } else {
+                    StreamStatus::Failed(status.code())
+                });
+            },
+            Ok(None) => {},
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(DomainError::SystemCommandFailed(format!(
+                    "等待 {program} 结束时出错: {e}"
+                )));
+            },
+        }
+
+        if rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(StreamStatus::Cancelled);
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(StreamStatus::TimedOut);
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// 便捷封装：以 `program + args` 形式运行长耗时命令
+pub fn run_streaming(
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    log_path: &str,
+    timeout: Duration,
+) -> Result<StreamStatus, DomainError> {
+    let mut argv = Vec::with_capacity(args.len() + 1);
+    argv.push(program.to_string());
+    argv.extend(args.iter().map(|a| a.to_string()));
+    run_streaming_argv(&argv, envs, log_path, timeout)
 }
 
 /// 检测是否以 root 运行
@@ -216,7 +342,63 @@ pub fn detect_auto_updates_enabled() -> bool {
     false
 }
 
-/// 检测系统包列表是否最新（缓存小于 7 天即认为最新）
+/// 检测 lynis 是否已安装（步骤 10）
+pub fn detect_lynis_installed() -> bool {
+    which("lynis")
+}
+
+/// 检测 logwatch 是否已安装（步骤 11）
+pub fn detect_logwatch_installed() -> bool {
+    which("logwatch")
+}
+
+/// 检测 aide 是否已安装（步骤 11）
+pub fn detect_aide_installed() -> bool {
+    which("aide") || which("aide.wrapper")
+}
+
+/// 运行中的 sshd 主进程 PID
+fn sshd_main_pid() -> Option<u32> {
+    // Debian/Ubuntu: /run/sshd.pid
+    for path in ["/run/sshd.pid", "/var/run/sshd.pid"] {
+        if let Ok(content) = std::fs::read_to_string(path)
+            && let Ok(pid) = content.trim().parse::<u32>()
+        {
+            return Some(pid);
+        }
+    }
+    // systemd: 取 MainPID
+    for unit in ["sshd", "ssh"] {
+        if let Ok(value) = run_cmd("systemctl", &["show", "-p", "MainPID", "--value", unit])
+            && let Ok(pid) = value.trim().parse::<u32>()
+            && pid > 0
+        {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+/// 判断 sshd_config 是否比运行中的服务更新（即步骤 12 是否真的需要重启）
+///
+/// 依赖 procfs 中 `/proc/<pid>` 的时间戳等于进程启动时间这一特性。
+/// 无法判定时保守返回 false（不做无意义的重启）。
+pub fn detect_ssh_restart_needed() -> bool {
+    let Ok(config_mtime) = std::fs::metadata("/etc/ssh/sshd_config").and_then(|m| m.modified())
+    else {
+        return false;
+    };
+    let Some(pid) = sshd_main_pid() else {
+        return false;
+    };
+    match std::fs::metadata(format!("/proc/{pid}")).and_then(|m| m.modified()) {
+        Ok(started) => config_mtime > started,
+        // 无法读取进程启动时间时，保守认为需要重启（配置已改但无法确认是否生效）
+        Err(_) => true,
+    }
+}
+
+/// 系统包列表是否最新（缓存小于 7 天即认为最新）
 pub fn detect_system_up_to_date() -> bool {
     // 对于 apt，检查缓存文件时间戳
     let cache_paths = ["/var/lib/apt/lists", "/var/cache/apt/pkgcache.bin"];
@@ -248,6 +430,10 @@ pub fn run_full_audit() -> AuditReport {
     let ufw_enabled = detect_ufw_enabled();
     let auto_updates_enabled = detect_auto_updates_enabled();
     let system_up_to_date = detect_system_up_to_date();
+    let lynis_installed = detect_lynis_installed();
+    let logwatch_installed = detect_logwatch_installed();
+    let aide_installed = detect_aide_installed();
+    let ssh_restart_needed = detect_ssh_restart_needed();
 
     let mut items = vec![];
 
@@ -377,10 +563,14 @@ pub fn run_full_audit() -> AuditReport {
         ufw_enabled,
         auto_updates_enabled,
         system_up_to_date,
+        lynis_installed,
+        logwatch_installed,
+        aide_installed,
+        ssh_restart_needed,
     }
 }
 
-/// 创建系统用户，加入 sudo 组，返回创建是否成功
+/// 创建系统用户，加入管理员组，返回创建是否成功
 pub fn create_system_user(username: &str) -> Result<(), DomainError> {
     // 创建用户
     let output = Command::new("useradd")
@@ -395,29 +585,54 @@ pub fn create_system_user(username: &str) -> Result<(), DomainError> {
         )));
     }
 
-    // 加入 sudo 组
-    let _ = Command::new("usermod")
-        .args(["-aG", "sudo", username])
-        .output();
+    // 加入管理员组：Debian/Ubuntu 为 sudo，RHEL 系为 wheel
+    add_to_admin_group(username)?;
 
-    // 创建 .ssh 目录
-    let _ = Command::new("mkdir")
-        .args(["-p", &format!("/home/{username}/.ssh")])
-        .output();
+    // 创建 .ssh 目录并设置权限（失败会导致密钥登录不可用，必须显式报错）
+    let ssh_dir = format!("/home/{username}/.ssh");
+    let _ = Command::new("mkdir").args(["-p", &ssh_dir]).output();
 
-    let _ = Command::new("chown")
-        .args([
-            "-R",
-            &format!("{username}:{username}"),
-            &format!("/home/{username}/.ssh"),
-        ])
-        .output();
+    let chown = Command::new("chown")
+        .args(["-R", &format!("{username}:{username}"), &ssh_dir])
+        .output()
+        .map_err(|e| DomainError::SystemCommandFailed(format!("chown 失败: {e}")))?;
+    if !chown.status.success() {
+        let stderr = String::from_utf8_lossy(&chown.stderr);
+        return Err(DomainError::SystemCommandFailed(format!(
+            "chown {ssh_dir} 失败: {stderr}"
+        )));
+    }
 
-    let _ = Command::new("chmod")
-        .args(["700", &format!("/home/{username}/.ssh")])
-        .output();
+    let chmod = Command::new("chmod")
+        .args(["700", &ssh_dir])
+        .output()
+        .map_err(|e| DomainError::SystemCommandFailed(format!("chmod 失败: {e}")))?;
+    if !chmod.status.success() {
+        let stderr = String::from_utf8_lossy(&chmod.stderr);
+        return Err(DomainError::SystemCommandFailed(format!(
+            "chmod 700 {ssh_dir} 失败: {stderr}"
+        )));
+    }
 
     Ok(())
+}
+
+/// 把用户加入 sudo/wheel 组，两者都失败才报错
+fn add_to_admin_group(username: &str) -> Result<(), DomainError> {
+    let mut last_err = String::new();
+    for group in ["sudo", "wheel"] {
+        match Command::new("usermod")
+            .args(["-aG", group, username])
+            .output()
+        {
+            Ok(o) if o.status.success() => return Ok(()),
+            Ok(o) => last_err = String::from_utf8_lossy(&o.stderr).trim().to_string(),
+            Err(e) => last_err = e.to_string(),
+        }
+    }
+    Err(DomainError::SystemCommandFailed(format!(
+        "将用户 {username} 加入 sudo/wheel 组失败: {last_err}"
+    )))
 }
 
 /// 锁定用户密码（强制密钥登录）
@@ -557,15 +772,16 @@ pub fn get_key_fingerprint(username: &str) -> Option<String> {
     // tmp_file 在此处 drop，自动删除临时文件
 
     if !output.status.success() {
-        // fallback: 返回公钥类型 + 前 40 字符
+        // fallback: 返回公钥类型 + 前 47 个字符（按 char 边界截断，避免多字节 panic）
         let parts: Vec<&str> = first_key.split_whitespace().collect();
         let kind = parts.first().unwrap_or(&"unknown");
-        let truncated = if first_key.len() > 47 {
-            format!("{}...", &first_key[..47])
+        let truncated: String = first_key.chars().take(47).collect();
+        let suffix = if first_key.chars().count() > 47 {
+            "..."
         } else {
-            first_key.to_string()
+            ""
         };
-        return Some(format!("({kind}) {truncated}"));
+        return Some(format!("({kind}) {truncated}{suffix}"));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
