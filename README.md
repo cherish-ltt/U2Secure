@@ -67,15 +67,20 @@
 src/
 ├── main.rs                 # 入口：三级路由 → CLI / TUI / 交互选择
 ├── domain/                 # 领域层（零外部依赖）
-│   ├── audit.rs            # AuditReport、AuditStatus、PackageManager
-│   ├── steps.rs            # StepKind、HardeningStep trait、ExecuteParams、SshKeyAction
+│   ├── audit.rs            # AuditReport（全项目唯一状态真值）、AuditStatus、PackageManager
+│   ├── steps.rs            # StepKind、HardeningStep trait、ExecuteParams、StepResult/StepOutcome
+│   ├── mirror.rs           # PackageMirror（临时软件源值对象）
 │   ├── errors.rs           # DomainError
 │   └── undo.rs             # UndoAction（可撤销操作值对象）
 ├── application/            # 应用层
-│   ├── orchestrator.rs     # HardeningOrchestrator
+│   ├── orchestrator.rs     # HardeningOrchestrator（审计与依赖装配）
+│   ├── job.rs              # StepRunner：统一执行策略 + 后台线程 + 事件流
 │   └── steps.rs            # 12 个步骤的具体实现
 ├── infrastructure/         # 基础设施
-│   ├── system.rs           # 系统命令、配置解析、用户管理、密钥管理
+│   ├── system.rs           # 系统命令、流式执行（超时/取消）、配置解析、用户与密钥管理
+│   ├── artifacts.rs        # 报告目录（扫描产物持久化）
+│   ├── package_mirror.rs   # 临时软件源：主机改写 / 延迟探测 / apt -o 覆盖
+│   ├── lynis.rs            # lynis-report.dat 解析
 │   ├── logger.rs           # 日志记录（含公钥脱敏）
 │   └── rollback.rs         # 回退管理器：undo 栈 + Ctrl+C 信号处理
 └── presentation/           # 表示层
@@ -155,7 +160,7 @@ sudo u2secure -c        # 直接启动 CLI 模式
 ## TUI 界面
 
 ```
-┌─ U2Secure v0.3.0 — Linux 服务器安全加固工具 ──────────┐
+┌─ U2Secure v0.4.0 — Linux 服务器安全加固工具 ──────────┐
 ├─ 审计报告 ────────────────────────────────────────────┤
 │ ✅root ❌SSH:22 ❌sudo用户 ❌UFW ❌fail2ban ...       │
 ├──────────────────────┬────────────────────────────────┤
@@ -163,11 +168,11 @@ sudo u2secure -c        # 直接启动 CLI 模式
 │                      │                                │
 │  ▸ [✓] 系统更新  ✅  │  ↑↓ 移动光标                  │
 │    [✓] 用户创建  ❌  │  Space 切换选择               │
-│    [ ] SSH root  ✅  │  Enter 批量执行                │
-│    [ ] 端口修改  ❌  │  e 单项执行（强制）            │
-│    ...               │  📊 ████████░░ 6/10           │
+│    [ ] SSH root  ✅  │  Enter 批量执行（后台线程）    │
+│    [ ] 安全扫描（可选·耗时）❌ │  e 单项执行           │
+│    ...               │  ⠹ 3/12 已耗时 01:23          │
 ├──────────────────────┴────────────────────────────────┤
-│  ↑↓/jk  Space  Enter  e  r  q                        │
+│  ↑↓/jk Space a Enter e r q   |   执行中 Ctrl+C 中断    │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -177,10 +182,18 @@ sudo u2secure -c        # 直接启动 CLI 模式
 |------|------|
 | `↑` / `↓` | 移动步骤光标 |
 | `Space` | 切换选中/取消 |
-| `Enter` | 批量执行所有勾选步骤 |
+| `a` | 全选 / 取消全选（可选步骤 9/10/11 除外，需手动勾选） |
+| `Enter` | 批量执行所有勾选步骤（**后台线程执行，界面不阻塞**） |
 | `e` | **立即执行当前步骤**（不依赖勾选状态） |
 | `r` | 重新执行环境审计 |
-| `q` | 退出 |
+| `Ctrl+C` | 执行中：中断当前命令 → 回滚已注册修改 → 停止后续步骤 |
+| `q` | 退出（执行中不可用，需先 `Ctrl+C`） |
+| `↑` / `↓`（结果页） | 滚动查看完整结果 |
+
+> **执行期间界面保持响应**：显示当前步骤、进度、已耗时、实时命令输出尾部。
+> 长耗时命令（apt / lynis / aide）均可 `Ctrl+C` 中断，不会"假卡住"。
+
+### TUI 弹窗操作
 
 ### TUI 弹窗操作
 
@@ -225,6 +238,9 @@ sudo u2secure
 | UFW | `ufw status` | 标记启用状态及规则摘要 |
 | 自动更新 | 检查 `unattended-upgrades` 配置或 systemd timer | 标记启用状态 |
 | 系统更新 | 检查缓存文件时间戳（7 天内为最新） | 标记"需要更新"或"已最新" |
+| lynis（步骤 10） | `which lynis` | 已安装标记"✅"，未安装标记"❌" |
+| logwatch / aide（步骤 11） | `which logwatch` / `which aide` | 两者齐备 ✅，仅一项 ⚠️，都没有 ❌ |
+| sshd 配置待生效（步骤 12） | 比较 `/etc/ssh/sshd_config` 与 sshd 进程启动时间 | 配置更新则标"🔄 需要重启"，否则 ✅ 并跳过重启 |
 
 ### Step 1 ~ Step 12：加固步骤
 
@@ -238,10 +254,22 @@ sudo u2secure
 | 6. ED25519 密钥设置 | 生成新密钥对 / 粘贴已有公钥到 `authorized_keys` | 检查 `authorized_keys` 是否存在 | 用户选择 + 密钥内容 | 删除生成的文件 |
 | 7. UFW 防火墙配置 | `ufw allow {port}` + `ufw --force enable` | 检查 UFW 是否已启用 | 无 | 删除规则 + 关闭 UFW（如之前未启用） |
 | 8. Fail2ban 安装配置 | 安装 fail2ban，配置监狱规则（用当前 SSH 端口） | 检查 `fail2ban-server` 路径 | 无 | `systemctl stop` + `apt remove` |
-| 9. 自动安全更新 | 安装 `unattended-upgrades`，写入 APT 定时配置 | 检查服务或配置文件 | 无 | `systemctl stop` + `apt remove` |
-| 10. 安全扫描 | 安装 lynis 并执行 `lynis audit system --quick` | 检查 `which lynis` | 无 | `apt remove lynis` |
-| 11. 日志与审计增强 | 安装 logwatch + aide，配置 cron 日报，初始化 aide 数据库 | 检查 `which logwatch/aide` | 无 | `apt remove logwatch aide` |
-| 12. SSH 服务重启 | `sshd -t` 验证语法 → `systemctl restart sshd` → 确认状态 | 始终执行（语法验证） | 无 | 从 `.bak` 恢复后重启 |
+| 9. 自动安全更新 🕒 | 安装 `unattended-upgrades`，写入 APT 定时配置 | 检查服务或配置文件 | 无 | `systemctl stop` + `apt remove` |
+| 10. 安全扫描 🕒 | 安装 lynis（发行版官方源）并执行 `lynis audit system --quick --cronjob`，完整输出落盘 | 检查 `which lynis` | 无 | `apt remove lynis` |
+| 11. 日志与审计增强 🕒 | 安装 logwatch + aide，生成可查看的日志报告，初始化 aide 数据库并确保每日完整性检查 | 检查 `which logwatch/aide` | 无 | `apt remove logwatch aide` |
+| 12. SSH 服务重启 | `sshd -t` 验证语法 → `systemctl restart sshd` → 确认状态 | **配置未变更时直接跳过**（比较配置文件与 sshd 进程启动时间） | 无 | 从 `.bak` 恢复后重启 |
+
+> 🕒 标记的步骤（9/10/11）为**可选步骤**：需要联网安装软件、耗时较长，**默认不勾选**，只有用户主动勾选才会执行。
+
+### 可选步骤（9 / 10 / 11）
+
+| 特性 | 说明 |
+|------|------|
+| 默认状态 | 一律不勾选；TUI 中显示 `（可选·耗时）` 标记 |
+| 失败处理 | **不触发全局回滚**，只记录失败并继续后续步骤（避免"装不上 lynis 就把 SSH 加固全部退回"） |
+| 执行方式 | 与其他步骤一样在后台线程执行，界面实时显示进度与命令输出 |
+| 超时保护 | 每步命令都有超时上限（apt 15 分钟、lynis 15 分钟、aide 30 分钟），超时自动终止并报告 |
+| 结果查看 | 完整输出持久化到报告目录（见下节） |
 
 #### 步骤 2 详解：非 root 用户创建
 
@@ -281,14 +309,84 @@ chown {user}:{user} /home/{user}/.ssh/authorized_keys
 
 ---
 
+## 扫描结果与日志（持久化）
+
+所有长耗时/扫描类步骤的完整输出都会写入报告目录，界面只展示摘要与路径，
+不会因为终端滚动或退出而丢失：
+
+| 目录 | 说明 |
+|------|------|
+| `/var/log/u2secure/` | 首选报告目录（权限 0700） |
+| `./u2secure-reports/` | 首选目录不可写时回退到当前目录 |
+| `/var/log/secure-init.log` | 全流程操作日志（不可写时回退到 `./secure-init.log`） |
+
+产物命名：
+
+```
+/var/log/u2secure/
+├── steps/12-log-audit.log        # 当前步骤的实时命令输出（UI 尾随显示的就是它）
+├── mirror-<时间戳>.log            # 临时软件源的 apt update 输出
+├── lynis-<时间戳>.log            # lynis 完整扫描输出（人类可读）
+├── lynis-<时间戳>.dat            # lynis 机器可读报告（警告/建议/加固指数）
+├── logwatch-<日期>.txt           # logwatch 日志审计报告
+├── aide-init-<时间戳>.log        # aide 数据库初始化日志
+└── aide-check-<日期>.log         # 每日 aide 完整性检查（由定时任务写入）
+```
+
+查看方式：
+
+```bash
+ls -lh /var/log/u2secure/
+less /var/log/u2secure/lynis-<时间戳>.log
+```
+
+步骤 10（安全扫描）的结果摘要会直接给出**加固指数、警告数、建议数**与报告路径；
+步骤 11 会给出本次 logwatch 报告、aide 初始化日志与每日检查任务的位置。
+
+### 每日定时任务
+
+| 任务 | 写入位置 | 条件 |
+|------|---------|------|
+| logwatch 每日报告 | `/etc/cron.daily/99u2secure-logwatch` → `logwatch-<日期>.txt` | 仅当系统没有发行版自带的 `/etc/cron.daily/00logwatch` 时创建（不覆盖发行版文件） |
+| aide 每日完整性检查 | `/etc/cron.daily/99u2secure-aide` → `aide-check-<日期>.log` | 仅当系统没有 `cron.daily/aide` 或 `dailyaidecheck.timer` 时创建 |
+
+---
+
+## 临时软件源（加速下载）
+
+面向国内服务器：运行前可选择使用镜像源加速软件包下载，**只对本次运行生效，不修改系统任何文件**。
+
+| 选项 | 说明 |
+|------|------|
+| 原始软件源 | 不做任何改动（默认） |
+| 清华大学 TUNA 镜像 | 探测 `mirrors.tuna.tsinghua.edu.cn:443` 延迟并显示 |
+| 中国科学技术大学镜像 | 探测 `mirrors.ustc.edu.cn:443` 延迟并显示 |
+
+实现方式（非侵入）：
+
+- **apt**：把改写后的源写入临时目录，通过
+  `apt -o Dir::Etc::sourcelist=<临时文件> -o Dir::Etc::sourceparts=<临时目录> -o APT::Get::List-Cleanup=0`
+  覆盖本次调用的源列表，`/etc/apt/sources.list*` 完全不动。
+- **dnf/yum**：复制并改写 `baseurl` 主机到临时目录，通过 `--setopt=reposdir=<临时目录>` 生效。
+- 只替换已知上游主机（`archive.ubuntu.com`、`deb.debian.org`、`security.ubuntu.com` 等），
+  自建/内网源不会被改动；仅配置了 `mirrorlist` 的 repo 会跳过并在结果中说明。
+- 临时目录随运行结束（含中断、异常）自动清理。
+- 若镜像预热（`apt update`）失败，自动回退到原始源继续执行，不阻塞流程。
+
+> 只有当本次勾选的步骤会改动软件包（步骤 1/8/9/10/11）时才会弹出选择。
+
+---
+
 ## 安全回退机制
 
 ### 触发条件
 
 | 场景 | 行为 |
 |------|------|
-| 用户在任意时刻按 `Ctrl+C` | 设置中断标记 → 当前步骤完成后，主线程检测到标记 → 逆序执行所有已注册的撤销操作 |
-| 某一步骤执行失败（如 `apt install` 返回非零） | 停止后续步骤 → 自动调用 `undo_all()` → 逆序回退已完成步骤的修改 |
+| 用户按 `Ctrl+C`（CLI） | 信号处理设置中断标记 → 当前命令被终止 → **逆序执行所有已注册的撤销操作** → 停止后续步骤 |
+| 用户按 `Ctrl+C`（TUI） | raw 模式下终端不再产生 SIGINT，因此由界面直接捕获按键 → 置中断标记 → 终止当前子进程 → 回滚 → 停止后续步骤 |
+| **核心步骤**执行失败（如 `apt install` 返回非零） | 停止后续步骤 → 自动调用 `undo_all()` → 逆序回退已完成步骤的修改 |
+| **可选步骤**（9/10/11）执行失败 | 记录失败结果 → **不回滚**、继续执行后续步骤（可在结果页查看失败原因与日志） |
 
 ### 回退过程
 
@@ -388,6 +486,7 @@ ufw status
 
 | 版本 | 日期 | 亮点 |
 |------|------|------|
+| [v0.4.0](docs/versions/v0.4.0.md) | 2026-09 | 可选步骤默认关闭、异步执行与实时进度、扫描结果持久化、临时软件源加速、Ctrl+C 中断真正回滚 |
 | v0.3.1 | 2026-09 | 许可证变更为 MIT OR Apache-2.0 双协议 |
 | v0.3.0 | 2026-09 | 支持 npm / bun / cargo-binstall 安装预编译二进制，新增 Linux & macOS ARM64 构建 |
 | [v0.2.0](docs/versions/v0.2.0.md) | 2026-06 | 新增 ratatui TUI 模式，支持单项执行、弹窗交互 |

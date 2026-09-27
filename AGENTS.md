@@ -242,7 +242,31 @@ msrv = "1.98.1"
 - 支持 `cargo binstall u2secure` 安装预编译二进制（依赖 `[package.metadata.binstall]` 元数据，资产命名须保持 `u2secure-<target>[.exe]`）。
 - 建议发布顺序：推送 tag → 等待 Binary Build 全部成功 → 手动触发 npm 发布（避免用户 postinstall 下载 404）。
 
-### 10.2 追加内容xxx
+### 10.2 加固流程约定（v0.4.0 起）
+
+新增或修改加固步骤时，必须遵守以下约定：
+
+1. **状态真值唯一**：步骤的安全状态只在 `AuditReport::status_for()` 中判定，禁止在步骤实现里重复写状态判断
+   （trait 不再提供 `check_status`）。审计需要的系统检测统一放在 `infrastructure::system::run_full_audit()`。
+2. **步骤登记**：新步骤必须在 `StepKind` 中登记并补齐 `label` / `slug` / `is_opt_in` /
+   `touches_package_manager`，同时加入 `application::steps::step_for`，否则不会被执行器调度。
+3. **可选步骤**：需要联网安装或耗时较长的步骤必须 `is_opt_in() == true`（默认不勾选）；
+   `is_optional()` 为 true 的步骤失败时**不触发全局回滚**，只记录失败并继续。
+4. **长耗时命令**：禁止裸用 `Command::output()` 执行可能长时间阻塞的命令，
+   必须使用 `system::run_streaming_argv()` 并显式给出超时，输出写入 `params.live_log`（UI 会实时尾随）。
+5. **产物持久化**：扫描类产物写入 `infrastructure::artifacts` 报告目录，
+   并在 `StepResult::artifacts` 中返回路径；结果摘要只放关键信息 + 路径（用户用 `less` 查看完整内容）。
+6. **结果语义显式**：使用 `StepOutcome::{Changed, Skipped, Failed}` 表达结局，
+   禁止用 `changes_made = false` 同时表示"跳过"和"失败"；能预期的问题不要包装成 `Err`（那会触发全局回滚）。
+7. **不覆盖发行版文件**：写系统配置文件前先 `backup_file()` 并 `rollback::register_file_backup()`；
+   发行版已有的文件不要覆盖，改用独立命名（如 `/etc/cron.daily/99u2secure-*`）。
+8. **包管理器调用**：统一通过 `package_mirror::build_pm_argv()` / `install_argv()` 构造命令，
+   以便临时软件源生效；禁止直接拼接 `apt install` 之类命令。
+9. **i18n 三语齐全**：所有用户可见文案必须同时写入 zh_cn / en / zh_tw 三张表，
+   缺失的键会原样显示 key（CI 不报错，但属于缺陷）。
+10. **测试约束**：测试中**禁止**执行会修改真实系统的命令（尤其 macOS 开发机）；
+    执行策略类测试使用假步骤（`tests/job_tests.rs`），文件操作用 `tempfile` 临时目录，
+    报告目录通过 `StepRunner::with_report_dir()` 注入，禁止写 `/var/log`、`/etc`。
 
 ### 10.3 追加内容xxx
 
