@@ -6,9 +6,7 @@
 
 use std::sync::OnceLock;
 
-// ---------------------------------------------------------------------------
 // 语言枚举
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
@@ -34,9 +32,7 @@ impl Lang {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 全局语言状态（启动时设置一次，运行中不变）
-// ---------------------------------------------------------------------------
 
 static LANG: OnceLock<Lang> = OnceLock::new();
 
@@ -50,9 +46,7 @@ pub fn current() -> Lang {
     LANG.get().copied().unwrap_or(Lang::ZhCn)
 }
 
-// ---------------------------------------------------------------------------
 // 翻译宏
-// ---------------------------------------------------------------------------
 
 /// 翻译查询入口
 pub fn translate(key: &'static str) -> &'static str {
@@ -68,9 +62,7 @@ pub fn tr(key: &'static str) -> &'static str {
     translate(key)
 }
 
-// ===========================================================================
 // 简体中文翻译表（原始语言）
-// ===========================================================================
 
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
@@ -161,7 +153,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "err_backup" => "备份失败",
         "err_read" => "读取失败",
         "err_write" => "写入失败",
-        "err_setup_signal" => "无法注册 Ctrl+C 信号处理器",
+        "err_setup_signal" => "无法注册 Ctrl+C 信号处理器: {err}",
 
         // ── 应用层（步骤执行结果） ──
         "result_sys_updated" => "系统更新完成",
@@ -303,7 +295,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "mirror_not_applied" => "临时源未生效（没有可改写的源），继续使用原始源",
         "mirror_applied" => "已临时切换到 {mirror}（改写 {files} 个源文件、{entries} 处地址）",
         "mirror_repo_skipped" => "；{n} 个 repo 仅配置 mirrorlist，本次未加速",
-        "mirror_warming" => "正在预热 {mirror} ...",
+        "mirror_warming" => "正在预热 {mirror}（实时日志: {log}）...",
         "mirror_warmup_failed" => "镜像源预热失败，回退原始源: {err}",
         "mirror_apply_failed" => "临时源准备失败，回退原始源: {err}",
         "result_pkg_unknown" => "无法识别包管理器，跳过该步骤",
@@ -361,13 +353,29 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "tui_result_artifact" => "报告:",
         "tui_result_report_dir" => "报告目录:",
         "tui_result_view" => "查看完整结果:",
+        "mirror_custom_entry" => "自定义输入源…",
+        "mirror_custom_label" => "自定义源（{host}）",
+        "tui_mirror_custom_title" => "自定义软件源",
+        "tui_mirror_custom_hint" => "输入主机名或完整地址，只取主机名，路径沿用系统原源",
+        "tui_mirror_custom_placeholder" => "例如 mirrors.aliyun.com",
+        "cli_mirror_custom_prompt" => "请输入软件源地址（留空则使用原始源）",
+        "mirror_custom_empty" => "请输入软件源地址",
+        "mirror_custom_invalid" => "地址格式不正确，请输入主机名或 URL",
+        "mirror_attempt_failed" => "第 {n}/{total} 次连接失败: {reason}，正在重试...",
+        "mirror_failed_reason" => "{mirror} 连接失败（{reason}）；详细日志: {log}",
+        "tui_mirror_failed_title" => "软件源连接失败",
+        "mirror_action_retry" => "重试",
+        "mirror_action_change" => "更换源",
+        "mirror_action_abort" => "取消执行",
+        "mirror_abort_hint" => "已取消执行，未做任何修改",
+        "tui_mirror_use_original" => "已取消选择，使用原始软件源继续",
+        "cli_mirror_failed_prompt" => "软件源不可用，请选择下一步操作",
+        "result_cmd_no_response" => "连接无响应（30 秒内没有任何数据）",
         _ => return None,
     })
 }
 
-// ===========================================================================
 // English Translation Table
-// ===========================================================================
 
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
@@ -594,7 +602,7 @@ fn en(key: &str) -> Option<&'static str> {
         "mirror_repo_skipped" => {
             "; {n} repo file(s) only define mirrorlist and were not accelerated"
         },
-        "mirror_warming" => "Warming up {mirror} ...",
+        "mirror_warming" => "Warming up {mirror} (live log: {log}) ...",
         "mirror_warmup_failed" => {
             "Mirror warm-up failed, falling back to original repositories: {err}"
         },
@@ -664,13 +672,33 @@ fn en(key: &str) -> Option<&'static str> {
         "tui_result_artifact" => "Report:",
         "tui_result_report_dir" => "Report dir:",
         "tui_result_view" => "View full results:",
+        "mirror_custom_entry" => "Custom source…",
+        "mirror_custom_label" => "Custom source ({host})",
+        "tui_mirror_custom_title" => "Custom repository",
+        "tui_mirror_custom_hint" => {
+            "Enter a host or full URL; only the host is used, paths follow the original sources"
+        },
+        "tui_mirror_custom_placeholder" => "e.g. mirrors.aliyun.com",
+        "cli_mirror_custom_prompt" => "Repository address (empty = keep original)",
+        "mirror_custom_empty" => "Please enter a repository address",
+        "mirror_custom_invalid" => "Invalid address, expected a hostname or URL",
+        "mirror_attempt_failed" => "Attempt {n}/{total} failed: {reason}, retrying...",
+        "mirror_failed_reason" => "Cannot reach {mirror} ({reason}); log: {log}",
+        "tui_mirror_failed_title" => "Repository unreachable",
+        "mirror_action_retry" => "Retry",
+        "mirror_action_change" => "Change source",
+        "mirror_action_abort" => "Abort run",
+        "mirror_abort_hint" => "Run aborted, no changes were made",
+        "tui_mirror_use_original" => {
+            "Selection cancelled, continuing with the original repositories"
+        },
+        "cli_mirror_failed_prompt" => "Repository unavailable, choose the next step",
+        "result_cmd_no_response" => "No response (no data received for 30 seconds)",
         _ => return None,
     })
 }
 
-// ===========================================================================
 // 繁體中文翻譯表
-// ===========================================================================
 
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
@@ -732,7 +760,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         // ── 錯誤詳情 ──
         "err_unsupported_pkg" => "不支援的套件管理器",
         "err_unknown_pkg_lynis" => "無法確定套件管理器，請手動安裝 lynis",
-        "err_setup_signal" => "無法註冊 Ctrl+C 訊號處理器",
+        "err_setup_signal" => "無法註冊 Ctrl+C 訊號處理器: {err}",
         "err_sshd_not_found" => "sshd_config 不存在",
         "err_no_username" => "未提供用戶名",
         "err_user_exists" => "用戶 '{user}' 已存在",
@@ -886,7 +914,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "mirror_not_applied" => "臨時源未生效（沒有可改寫的源），繼續使用原始源",
         "mirror_applied" => "已臨時切換到 {mirror}（改寫 {files} 個源檔案、{entries} 處位址）",
         "mirror_repo_skipped" => "；{n} 個 repo 僅配置 mirrorlist，本次未加速",
-        "mirror_warming" => "正在預熱 {mirror} ...",
+        "mirror_warming" => "正在預熱 {mirror}（即時日誌: {log}）...",
         "mirror_warmup_failed" => "鏡像源預熱失敗，回退原始源: {err}",
         "mirror_apply_failed" => "臨時源準備失敗，回退原始源: {err}",
         "result_pkg_unknown" => "無法識別套件管理器，跳過該步驟",
@@ -944,6 +972,24 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "tui_result_artifact" => "報告:",
         "tui_result_report_dir" => "報告目錄:",
         "tui_result_view" => "查看完整結果:",
+        "mirror_custom_entry" => "自訂輸入源…",
+        "mirror_custom_label" => "自訂源（{host}）",
+        "tui_mirror_custom_title" => "自訂軟體源",
+        "tui_mirror_custom_hint" => "輸入主機名或完整位址，只取主機名，路徑沿用系統原源",
+        "tui_mirror_custom_placeholder" => "例如 mirrors.aliyun.com",
+        "cli_mirror_custom_prompt" => "請輸入軟體源位址（留空則使用原始源）",
+        "mirror_custom_empty" => "請輸入軟體源位址",
+        "mirror_custom_invalid" => "位址格式不正確，請輸入主機名或 URL",
+        "mirror_attempt_failed" => "第 {n}/{total} 次連線失敗: {reason}，正在重試...",
+        "mirror_failed_reason" => "{mirror} 連線失敗（{reason}）；詳細日誌: {log}",
+        "tui_mirror_failed_title" => "軟體源連線失敗",
+        "mirror_action_retry" => "重試",
+        "mirror_action_change" => "更換源",
+        "mirror_action_abort" => "取消執行",
+        "mirror_abort_hint" => "已取消執行，未做任何修改",
+        "tui_mirror_use_original" => "已取消選擇，使用原始軟體源繼續",
+        "cli_mirror_failed_prompt" => "軟體源不可用，請選擇下一步操作",
+        "result_cmd_no_response" => "連線無回應（30 秒內沒有任何資料）",
         _ => return None,
     })
 }

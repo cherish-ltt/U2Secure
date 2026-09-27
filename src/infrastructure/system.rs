@@ -37,6 +37,8 @@ pub enum StreamStatus {
     TimedOut,
     /// 用户中断（Ctrl+C）被终止
     Cancelled,
+    /// 超过约定时间没有任何输出（对端无响应）
+    NoResponse,
 }
 
 impl StreamStatus {
@@ -48,6 +50,20 @@ impl StreamStatus {
         match self {
             Self::Failed(code) => *code,
             _ => None,
+        }
+    }
+
+    /// 人类可读的失败原因（成功时为空串）
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Success => String::new(),
+            Self::TimedOut => crate::i18n::tr("result_cmd_timeout").to_string(),
+            Self::NoResponse => crate::i18n::tr("result_cmd_no_response").to_string(),
+            Self::Cancelled => crate::i18n::tr("result_cancelled").to_string(),
+            Self::Failed(code) => crate::i18n::tr("result_exit_code").replace(
+                "{code}",
+                &code.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
+            ),
         }
     }
 }
@@ -63,6 +79,18 @@ pub fn run_streaming_argv(
     envs: &[(&str, &str)],
     log_path: &str,
     timeout: Duration,
+) -> Result<StreamStatus, DomainError> {
+    run_streaming_watchdog(argv, envs, log_path, timeout, None)
+}
+
+/// 同 [`run_streaming_argv`]，但支持"无输出看门狗"：
+/// 连续 `stall_timeout` 没有任何新输出时判定对端无响应并终止子进程。
+pub fn run_streaming_watchdog(
+    argv: &[String],
+    envs: &[(&str, &str)],
+    log_path: &str,
+    timeout: Duration,
+    stall_timeout: Option<Duration>,
 ) -> Result<StreamStatus, DomainError> {
     use std::io::Write;
 
@@ -100,6 +128,9 @@ pub fn run_streaming_argv(
         .map_err(|e| DomainError::SystemCommandFailed(format!("无法执行 {program}: {e}")))?;
 
     let started = Instant::now();
+    // 看门狗：记录输出文件的长度与修改时间，长时间无新输出判定为对端无响应
+    let mut last_progress = Instant::now();
+    let mut last_size = std::fs::metadata(log_path).map(|m| m.len()).unwrap_or(0);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -117,6 +148,20 @@ pub fn run_streaming_argv(
                     "等待 {program} 结束时出错: {e}"
                 )));
             },
+        }
+
+        if let Some(stall) = stall_timeout {
+            let size = std::fs::metadata(log_path)
+                .map(|m| m.len())
+                .unwrap_or(last_size);
+            if size != last_size {
+                last_size = size;
+                last_progress = Instant::now();
+            } else if last_progress.elapsed() >= stall {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Ok(StreamStatus::NoResponse);
+            }
         }
 
         if rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {

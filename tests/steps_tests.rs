@@ -1,10 +1,11 @@
 //! 步骤状态与默认勾选策略测试（纯逻辑，不触碰真实系统）
 
-use u2secure::application::steps::{AllSteps, step_for};
+use u2secure::application::steps::step_for;
 use u2secure::domain::audit::{AuditReport, AuditStatus, PackageManager};
 use u2secure::domain::steps::{ExecuteParams, HardeningStep, StepKind, StepOutcome, StepResult};
 
 /// 构造审计报告（默认全部"未配置"）
+// 测试辅助函数：参数即用例维度，拆成结构体反而降低可读性
 #[allow(clippy::too_many_arguments)]
 fn make_report(
     ssh_port: u16,
@@ -55,14 +56,14 @@ fn hardened_report() -> AuditReport {
     }
 }
 
-// ---------------------------------------------------------------------------
 // AllSteps 集合测试
-// ---------------------------------------------------------------------------
 
 #[test]
-fn test_all_steps_contains_all_kinds() {
-    let all = AllSteps::new();
-    let kinds: Vec<StepKind> = all.steps().iter().map(|s| s.kind()).collect();
+fn test_all_kinds_have_step_implementation() {
+    let kinds: Vec<StepKind> = StepKind::all()
+        .iter()
+        .map(|kind| step_for(*kind).kind())
+        .collect();
     assert_eq!(kinds.len(), 12);
     assert_eq!(kinds, StepKind::all().to_vec());
 }
@@ -74,9 +75,7 @@ fn test_step_for_matches_kind() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤状态检测（领域层单一真值）
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_status_for_hardened_system() {
@@ -177,9 +176,7 @@ fn test_ssh_key_setup_partial_with_sudo_users() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // 默认勾选策略：9/10/11 默认关闭
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_opt_in_steps_are_nine_ten_eleven() {
@@ -284,9 +281,7 @@ fn test_step_kind_check_default_status_delegates() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // StepResult / StepOutcome
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_step_outcome_helpers() {
@@ -315,9 +310,7 @@ fn test_step_outcome_labels_and_icons() {
     assert_eq!(StepOutcome::Failed.label(), "失败");
 }
 
-// ---------------------------------------------------------------------------
 // ExecuteParams
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_execute_params_default_has_no_mirror() {

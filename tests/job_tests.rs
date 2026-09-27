@@ -201,7 +201,6 @@ fn test_spawn_emits_progress_events() {
     let runner = runner(&dir);
     let (tx, rx) = std::sync::mpsc::channel();
     let handle = {
-        // 直接使用 spawn 需要 AllSteps 过滤，改用 run_steps + 线程以覆盖同一路径
         let runner_dir = dir.path().to_string_lossy().to_string();
         std::thread::spawn(move || {
             let logger = FileLogger::with_path(std::path::Path::new(&runner_dir).join("spawn.log"));

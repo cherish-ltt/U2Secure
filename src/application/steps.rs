@@ -7,9 +7,7 @@ use crate::domain::steps::{ExecuteParams, HardeningStep, SshKeyAction, StepKind,
 use crate::infrastructure::system::StreamStatus;
 use crate::infrastructure::{artifacts, lynis, package_mirror, rollback, system};
 
-// ---------------------------------------------------------------------------
 // 超时（长耗时步骤必须有上限，避免"假卡住"）
-// ---------------------------------------------------------------------------
 
 const TIMEOUT_UPDATE: Duration = Duration::from_secs(300);
 const TIMEOUT_UPGRADE: Duration = Duration::from_secs(1800);
@@ -22,13 +20,7 @@ const TIMEOUT_SERVICE: Duration = Duration::from_secs(120);
 /// apt 非交互执行，避免卡在 conffile 提示
 const APT_ENVS: &[(&str, &str)] = &[("DEBIAN_FRONTEND", "noninteractive")];
 
-// ---------------------------------------------------------------------------
-// 所有步骤的集合容器
-// ---------------------------------------------------------------------------
-
-pub struct AllSteps {
-    steps: Vec<Box<dyn HardeningStep + Send>>,
-}
+// 步骤工厂
 
 /// 按类型构造步骤实例（步骤都是无状态单元结构体）
 pub fn step_for(kind: StepKind) -> Box<dyn HardeningStep + Send> {
@@ -48,27 +40,7 @@ pub fn step_for(kind: StepKind) -> Box<dyn HardeningStep + Send> {
     }
 }
 
-impl AllSteps {
-    pub fn new() -> Self {
-        let steps: Vec<Box<dyn HardeningStep + Send>> =
-            StepKind::all().iter().map(|kind| step_for(*kind)).collect();
-        Self { steps }
-    }
-
-    pub fn steps(&self) -> &[Box<dyn HardeningStep + Send>] {
-        &self.steps
-    }
-}
-
-impl Default for AllSteps {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ---------------------------------------------------------------------------
 // 公共辅助
-// ---------------------------------------------------------------------------
 
 /// 当前步骤的实时输出文件（由 StepRunner 注入，缺省时落到报告目录）
 fn live_log(params: &ExecuteParams, prefix: &str) -> String {
@@ -101,19 +73,6 @@ fn argv_display(argv: &[String]) -> String {
     argv.join(" ")
 }
 
-/// 把非成功状态转成人类可读原因
-fn failure_reason(status: StreamStatus) -> String {
-    match status {
-        StreamStatus::TimedOut => crate::i18n::tr("result_cmd_timeout").to_string(),
-        StreamStatus::Cancelled => crate::i18n::tr("result_cancelled").to_string(),
-        StreamStatus::Failed(code) => crate::i18n::tr("result_exit_code").replace(
-            "{code}",
-            &code.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
-        ),
-        StreamStatus::Success => String::new(),
-    }
-}
-
 /// 流式命令失败时统一构造失败结果
 fn stream_failure(
     kind: StepKind,
@@ -123,7 +82,7 @@ fn stream_failure(
 ) -> StepResult {
     let reason = crate::i18n::tr("result_cmd_failed")
         .replace("{action}", action)
-        .replace("{reason}", &failure_reason(status));
+        .replace("{reason}", &status.describe());
     StepResult::failed(
         kind,
         crate::i18n::tr("result_see_log")
@@ -141,9 +100,7 @@ fn apt_envs(pm: PackageManager) -> &'static [(&'static str, &'static str)] {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 1：系统更新
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct SystemUpdateStep;
@@ -196,9 +153,7 @@ impl HardeningStep for SystemUpdateStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 2：非 root 用户创建
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct UserCreationStep;
@@ -243,9 +198,7 @@ impl HardeningStep for UserCreationStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 3：禁止 root SSH 登录
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct SshRootLoginStep;
@@ -269,9 +222,7 @@ impl HardeningStep for SshRootLoginStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 4：SSH 端口修改
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct SshPortChangeStep;
@@ -316,9 +267,7 @@ impl HardeningStep for SshPortChangeStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 5：禁止密码登录
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct SshPasswordAuthStep;
@@ -347,9 +296,7 @@ impl HardeningStep for SshPasswordAuthStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 6：ED25519 密钥设置
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct SshKeySetupStep;
@@ -400,9 +347,7 @@ impl HardeningStep for SshKeySetupStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 7：UFW 防火墙
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct UfwStep;
@@ -473,9 +418,7 @@ impl HardeningStep for UfwStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 8：Fail2ban
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct Fail2banStep;
@@ -568,9 +511,7 @@ impl HardeningStep for Fail2banStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 9：自动安全更新（可选步骤：默认不勾选；失败不触发全局回滚）
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct AutoUpdatesStep;
@@ -667,9 +608,7 @@ impl HardeningStep for AutoUpdatesStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 10：安全扫描（可选步骤）
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct SecurityScanStep;
@@ -766,9 +705,7 @@ impl HardeningStep for SecurityScanStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 11：日志与审计增强（可选步骤）
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct LogAuditStep;
@@ -804,7 +741,7 @@ impl HardeningStep for LogAuditStep {
                 failures.push(
                     crate::i18n::tr("result_install_pkg_failed")
                         .replace("{pkg}", package)
-                        .replace("{reason}", &failure_reason(status)),
+                        .replace("{reason}", &status.describe()),
                 );
                 continue;
             }
@@ -848,7 +785,7 @@ impl HardeningStep for LogAuditStep {
                 },
                 other => failures.push(
                     crate::i18n::tr("result_logwatch_report_failed")
-                        .replace("{reason}", &failure_reason(other)),
+                        .replace("{reason}", &other.describe()),
                 ),
             }
         }
@@ -892,7 +829,7 @@ impl HardeningStep for LogAuditStep {
             if !status.is_success() {
                 failures.push(
                     crate::i18n::tr("result_aide_init_failed")
-                        .replace("{reason}", &failure_reason(status)),
+                        .replace("{reason}", &status.describe()),
                 );
             } else {
                 promote_aide_database();
@@ -1003,9 +940,7 @@ fn backup_file(path: &str) -> Option<String> {
     Some(backup)
 }
 
-// ---------------------------------------------------------------------------
 // 步骤 12：SSH 服务重启与验证
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct RestartSshStep;
@@ -1079,9 +1014,7 @@ impl HardeningStep for RestartSshStep {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 辅助函数：修改 sshd_config
-// ---------------------------------------------------------------------------
 
 /// 修改 sshd_config 中的键值，返回结果描述（备份路径已注册回滚）
 fn modify_sshd_config(key: &str, value: &str) -> Result<String, DomainError> {

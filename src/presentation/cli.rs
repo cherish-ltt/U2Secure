@@ -74,7 +74,7 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
     let params = collect_step_params(&selected_steps, &report);
 
     // ── 临时软件源（涉及安装软件包时才询问）──
-    let mirror = select_mirror(&selected_steps);
+    let mut mirror = select_mirror(&selected_steps);
 
     // ── 执行（实时输出，长耗时步骤不会"假卡住"）──
     println!(
@@ -82,12 +82,50 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
         "⚙️".bright_green(),
         crate::i18n::tr("cli_executing")
     );
-    let runner = StepRunner::new(orchestrator.logger.clone()).with_mirror(mirror);
-    let mut on_event = |event: JobEvent| print_event(&event);
-    let results = runner.run(&selected_steps, &params, &mut on_event);
 
-    // ── 总结报告 ──
-    render_summary(&results, orchestrator.logger.path());
+    let log_path = orchestrator.logger().path().to_string();
+    loop {
+        let runner = StepRunner::new(orchestrator.logger()).with_mirror(mirror.clone());
+        let mut mirror_failure = None;
+        let mut on_event = |event: JobEvent| {
+            if let JobEvent::MirrorFailed { reason } = &event {
+                mirror_failure = Some(reason.clone());
+            }
+            print_event(&event);
+        };
+        let results = runner.run(&selected_steps, &params, &mut on_event);
+
+        let Some(reason) = mirror_failure else {
+            // ── 总结报告 ──
+            render_summary(&results, &log_path);
+            return;
+        };
+
+        // 软件源不可用：由用户决定重试 / 更换源 / 取消执行（不自动回退）
+        println!("\n{} {}", "❌".red(), reason.red());
+        let options = crate::presentation::mirror_failure_options();
+        let choice = Select::new()
+            .with_prompt(crate::i18n::tr("cli_mirror_failed_prompt"))
+            .items(options)
+            .default(0)
+            .interact()
+            .unwrap_or(2);
+        match choice {
+            0 => continue,
+            1 => {
+                mirror = select_mirror(&selected_steps);
+                continue;
+            },
+            _ => {
+                println!(
+                    "\n{} {}",
+                    "ℹ️".yellow(),
+                    crate::i18n::tr("mirror_abort_hint")
+                );
+                return;
+            },
+        }
+    }
 }
 
 /// 实时事件输出
@@ -121,6 +159,7 @@ fn print_event(event: &JobEvent) {
             }
         },
         JobEvent::Log(message) => println!("    {} {}", "ℹ️".dimmed(), message.dimmed()),
+        JobEvent::MirrorFailed { reason } => println!("    {} {}", "❌".red(), reason.red()),
         JobEvent::Interrupted => println!(
             "\n{} {}",
             "⚠️".yellow(),
@@ -143,7 +182,8 @@ fn select_mirror(selected: &[StepKind]) -> PackageMirror {
     );
 
     let mirrors = PackageMirror::all();
-    let items: Vec<String> = mirrors.iter().map(|m| describe_mirror(*m)).collect();
+    let mut items: Vec<String> = mirrors.iter().map(describe_mirror).collect();
+    items.push(crate::i18n::tr("mirror_custom_entry").to_string());
 
     let selection = Select::new()
         .with_prompt(crate::i18n::tr("cli_mirror_prompt"))
@@ -152,10 +192,35 @@ fn select_mirror(selected: &[StepKind]) -> PackageMirror {
         .interact()
         .unwrap_or(0);
 
-    mirrors[selection]
+    if let Some(mirror) = mirrors.get(selection) {
+        return mirror.clone();
+    }
+
+    // 自定义输入源（最多尝试 3 次，留空则回退原始源）
+    for _ in 0..3 {
+        let input: String = Input::new()
+            .with_prompt(crate::i18n::tr("cli_mirror_custom_prompt"))
+            .allow_empty(true)
+            .interact()
+            .unwrap_or_default();
+        if input.trim().is_empty() {
+            break;
+        }
+        match PackageMirror::custom(&input) {
+            Ok(mirror) => return mirror,
+            Err(e) => println!("{} {}", "⚠️".yellow(), e.message()),
+        }
+    }
+
+    println!(
+        "{} {}",
+        "ℹ️".yellow(),
+        crate::i18n::tr("tui_mirror_use_original")
+    );
+    PackageMirror::Original
 }
 
-fn describe_mirror(mirror: PackageMirror) -> String {
+fn describe_mirror(mirror: &PackageMirror) -> String {
     match mirror.probe_host() {
         None => crate::i18n::tr("mirror_original").to_string(),
         Some(_) => match package_mirror::probe_latency(mirror) {

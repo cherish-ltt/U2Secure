@@ -4,9 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use u2secure::domain::undo::UndoAction;
 use u2secure::infrastructure::rollback;
 
-// ---------------------------------------------------------------------------
 // UndoAction 基础功能测试（无全局状态，可并行）
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_undo_action_execute() {
@@ -31,10 +29,8 @@ fn test_undo_action_description() {
     assert_eq!(action.description, "描述文本");
 }
 
-// ---------------------------------------------------------------------------
 // 所有依赖全局 UNDO_STACK 的测试合并为一个大测试，
 // 顺序执行避免并行竞争。
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_rollback_manager_global_workflow() {

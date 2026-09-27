@@ -47,6 +47,8 @@ pub enum JobEvent {
     Log(String),
     /// 用户中断，已回滚
     Interrupted,
+    /// 临时软件源连接失败（重试耗尽，未执行任何步骤，等待用户决定重试/换源）
+    MirrorFailed { reason: String },
     /// 全部结束
     AllFinished,
 }
@@ -180,7 +182,15 @@ impl StepRunner {
 
         // ── 临时软件源：仅在本次运行期间生效，TempDir 随作用域结束自动清理 ──
         let mut params = params.clone();
-        let mirror_session = self.prepare_mirror(on_event);
+        let mirror_session = match self.prepare_mirror(on_event) {
+            Ok(session) => session,
+            Err(reason) => {
+                // 源连不通：不自动回退、不执行任何步骤，交给用户决定重试/换源
+                on_event(JobEvent::MirrorFailed { reason });
+                on_event(JobEvent::AllFinished);
+                return vec![];
+            },
+        };
         if let Some(session) = &mirror_session
             && session.is_active()
         {
@@ -261,37 +271,61 @@ impl StepRunner {
         results
     }
 
-    /// 准备临时软件源（失败自动降级为原始源，不阻塞流程）
-    fn prepare_mirror(&self, on_event: &mut dyn FnMut(JobEvent)) -> Option<MirrorSession> {
+    /// 准备临时软件源。
+    ///
+    /// - `Ok(None)`：未选择镜像或不需要（使用原始源）
+    /// - `Ok(Some(session))`：临时源已就绪
+    /// - `Err(reason)`：连接源失败（已自动重试 [`package_mirror::WARM_UP_ATTEMPTS`] 次）
+    fn prepare_mirror(
+        &self,
+        on_event: &mut dyn FnMut(JobEvent),
+    ) -> Result<Option<MirrorSession>, String> {
         if self.mirror.is_original() {
-            return None;
+            return Ok(None);
         }
         let pm = system::detect_package_manager();
-        let session = match MirrorSession::apply(self.mirror, pm) {
+        let session = match MirrorSession::apply(self.mirror.clone(), pm) {
             Ok(session) => session,
             Err(e) => {
+                // 准备失败（例如没有可改写的源）：按"取消"处理，回退原始源继续
                 on_event(JobEvent::Log(
                     crate::i18n::tr("mirror_apply_failed").replace("{err}", &e.to_string()),
                 ));
-                return None;
+                return Ok(None);
             },
         };
         if !session.is_active() {
             on_event(JobEvent::Log(crate::i18n::tr("mirror_not_applied").into()));
-            return Some(session);
+            return Ok(Some(session));
         }
 
-        on_event(JobEvent::Log(
-            crate::i18n::tr("mirror_warming").replace("{mirror}", self.mirror.label()),
-        ));
+        let mirror_label = self.mirror.label();
         let log_path = artifacts::path_for("mirror", "log");
-        match package_mirror::warm_up(&session, &log_path) {
-            Ok(()) => on_event(JobEvent::Log(session.summary())),
-            Err(e) => on_event(JobEvent::Log(
-                crate::i18n::tr("mirror_warmup_failed").replace("{err}", &e.to_string()),
-            )),
+        on_event(JobEvent::Log(
+            crate::i18n::tr("mirror_warming")
+                .replace("{mirror}", &mirror_label)
+                .replace("{log}", &log_path),
+        ));
+
+        let mut on_attempt = |attempt: usize, reason: String| {
+            on_event(JobEvent::Log(
+                crate::i18n::tr("mirror_attempt_failed")
+                    .replace("{n}", &attempt.to_string())
+                    .replace("{total}", &package_mirror::WARM_UP_ATTEMPTS.to_string())
+                    .replace("{reason}", &reason),
+            ));
+        };
+
+        match package_mirror::warm_up(&session, &log_path, &mut on_attempt) {
+            Ok(()) => {
+                on_event(JobEvent::Log(session.summary()));
+                Ok(Some(session))
+            },
+            Err(reason) => Err(crate::i18n::tr("mirror_failed_reason")
+                .replace("{mirror}", &mirror_label)
+                .replace("{reason}", &reason)
+                .replace("{log}", &log_path)),
         }
-        Some(session)
     }
 
     fn rollback_on_interrupt(&self, on_event: &mut dyn FnMut(JobEvent)) {

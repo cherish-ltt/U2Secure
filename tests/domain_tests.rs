@@ -1,5 +1,5 @@
 use u2secure::domain::audit::{AuditItem, AuditReport, AuditStatus, PackageManager};
-use u2secure::domain::mirror::PackageMirror;
+use u2secure::domain::mirror::{MirrorParseError, PackageMirror};
 use u2secure::domain::steps::{ExecuteParams, MirrorOverride, SshKeyAction, StepKind};
 
 #[test]
@@ -231,9 +231,7 @@ fn test_step_kind_check_default_status() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // ExecuteParams 基础测试
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_execute_params_default() {
@@ -311,9 +309,7 @@ fn test_execute_params_all_fields() {
     assert_eq!(params.ssh_key_username.as_deref(), Some("deploy"));
 }
 
-// ---------------------------------------------------------------------------
 // SshKeyAction Debug 脱敏测试（Bug #5 修复验证）
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_ssh_key_action_debug_generate() {
@@ -374,9 +370,7 @@ fn test_ssh_key_action_debug_emoji_boundary_no_panic() {
     assert!(!debug_str.is_empty());
 }
 
-// ---------------------------------------------------------------------------
 // Bug #1 验证：sshd_config 前缀匹配不误伤
-// ---------------------------------------------------------------------------
 
 /// 模拟 modify_sshd_config 修复后的精确匹配逻辑
 fn sshd_line_match(line: &str, key: &str) -> bool {
@@ -413,9 +407,7 @@ fn test_sshd_config_exact_key_matching() {
     assert!(!sshd_line_match("", "Port"));
 }
 
-// ---------------------------------------------------------------------------
 // Bug #2 验证：add_authorized_key 使用追加模式而非覆盖
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_authorized_keys_append_not_overwrite() {
@@ -456,9 +448,7 @@ fn test_authorized_keys_append_not_overwrite() {
     assert_eq!(lines.len(), 2, "应有 2 行密钥: {:?}", lines);
 }
 
-// ---------------------------------------------------------------------------
 // ExecuteParams Debug 不泄露密钥（Bug #5 扩展验证）
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_execute_params_debug_redacts_key() {
@@ -481,9 +471,7 @@ fn test_execute_params_debug_redacts_key() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // 临时软件源（领域值对象）
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_package_mirror_metadata() {
@@ -491,9 +479,56 @@ fn test_package_mirror_metadata() {
     assert_eq!(all.len(), 3);
     assert!(all[0].is_original());
     assert!(all[0].probe_host().is_none());
-    assert_eq!(all[1].probe_host(), Some("mirrors.tuna.tsinghua.edu.cn"));
-    assert_eq!(all[2].probe_host(), Some("mirrors.ustc.edu.cn"));
+    assert_eq!(
+        all[1].probe_host().as_deref(),
+        Some("mirrors.tuna.tsinghua.edu.cn")
+    );
+    assert_eq!(all[2].probe_host().as_deref(), Some("mirrors.ustc.edu.cn"));
     assert_eq!(PackageMirror::Tsinghua.to_string(), "清华大学 TUNA 镜像");
+}
+
+#[test]
+fn test_custom_mirror_parsing() {
+    // 纯主机名
+    let mirror = PackageMirror::custom("mirrors.aliyun.com").expect("parse");
+    assert_eq!(mirror.probe_host().as_deref(), Some("mirrors.aliyun.com"));
+    assert!(mirror.is_custom());
+    assert!(mirror.label().contains("mirrors.aliyun.com"));
+
+    // 完整 URL 只取主机
+    let mirror = PackageMirror::custom("https://mirrors.huaweicloud.com/ubuntu").expect("parse");
+    assert_eq!(
+        mirror.probe_host().as_deref(),
+        Some("mirrors.huaweicloud.com")
+    );
+
+    // 带端口 / 前后空白
+    let mirror = PackageMirror::custom("  http://mirror.internal:8080/debian  ").expect("parse");
+    assert_eq!(mirror.probe_host().as_deref(), Some("mirror.internal:8080"));
+
+    // 带 userinfo
+    let mirror = PackageMirror::custom("https://user@mirrors.163.com/ubuntu").expect("parse");
+    assert_eq!(mirror.probe_host().as_deref(), Some("mirrors.163.com"));
+}
+
+#[test]
+fn test_custom_mirror_rejects_invalid_input() {
+    assert_eq!(
+        PackageMirror::custom("   ").unwrap_err(),
+        MirrorParseError::Empty
+    );
+    assert_eq!(
+        PackageMirror::custom("http://").unwrap_err(),
+        MirrorParseError::Invalid
+    );
+    assert_eq!(
+        PackageMirror::custom("has space.com").unwrap_err(),
+        MirrorParseError::Invalid
+    );
+    assert_eq!(
+        PackageMirror::custom("中文.中国").unwrap_err(),
+        MirrorParseError::Invalid
+    );
 }
 
 #[test]

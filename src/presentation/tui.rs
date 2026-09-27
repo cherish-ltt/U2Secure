@@ -131,6 +131,13 @@ enum Popup {
 
     /// 临时软件源选择
     MirrorSelect { items: Vec<String>, selected: usize },
+    /// 自定义软件源输入
+    MirrorCustomInput {
+        value: String,
+        error: Option<String>,
+    },
+    /// 软件源连接失败：重试 / 更换源 / 取消执行
+    MirrorFailedDialog { reason: String, selected: usize },
 }
 
 /// TUI 模式
@@ -165,8 +172,10 @@ struct TuiApp {
     live_tail: Vec<String>,
     /// 本次运行选择的临时软件源
     mirror: PackageMirror,
-    /// 待启动的运行
+    /// 待启动/待重试的运行
     pending: Option<PendingRun>,
+    /// 软件源连接失败原因（等待用户决策）
+    mirror_failure: Option<String>,
     /// 状态栏提示
     status: String,
     /// 结果页滚动偏移
@@ -205,6 +214,7 @@ pub fn run_tui(orchestrator: &HardeningOrchestrator) -> anyhow::Result<()> {
         live_tail: vec![],
         mirror: PackageMirror::Original,
         pending: None,
+        mirror_failure: None,
         status: String::new(),
         summary_scroll: 0,
     };
@@ -256,6 +266,11 @@ fn run_app(
             {
                 if app.job.is_some() {
                     request_cancel(app);
+                } else if app.popup.is_some() {
+                    // 弹窗中按 Ctrl+C 视为取消弹窗，避免误退出丢失已选步骤
+                    app.popup = None;
+                    app.pending = None;
+                    app.status = crate::i18n::tr("tui_mirror_cancelled").into();
                 } else {
                     return Ok(());
                 }
@@ -353,6 +368,9 @@ fn pump_job(app: &mut TuiApp) {
                 icon: "⚠️",
                 message: crate::i18n::tr("tui_exec_interrupted").into(),
             }),
+            JobEvent::MirrorFailed { reason } => {
+                app.mirror_failure = Some(reason);
+            },
             JobEvent::AllFinished => finished = true,
         }
     }
@@ -390,7 +408,21 @@ fn pump_job(app: &mut TuiApp) {
         app.progress = (app.progress.1, app.progress.1);
         app.current = None;
         app.status.clear();
-        app.mode = AppMode::Summary;
+
+        match app.mirror_failure.take() {
+            // 软件源不可用：交回用户决策（重试 / 更换源 / 取消执行），不自动回退
+            Some(reason) => {
+                app.mode = AppMode::Select;
+                app.popup = Some(Popup::MirrorFailedDialog {
+                    reason,
+                    selected: 0,
+                });
+            },
+            None => {
+                app.pending = None;
+                app.mode = AppMode::Summary;
+            },
+        }
     }
 }
 
@@ -598,14 +630,86 @@ fn handle_popup(
             },
             KeyCode::Enter => {
                 let index = *selected;
-                app.mirror = PackageMirror::all()[index];
+                match PackageMirror::all().get(index).cloned() {
+                    Some(mirror) => {
+                        app.mirror = mirror;
+                        app.popup = None;
+                        start_pending(app, orchestrator);
+                    },
+                    // 列表最后一项为"自定义输入源"
+                    None => {
+                        app.popup = Some(Popup::MirrorCustomInput {
+                            value: String::new(),
+                            error: None,
+                        });
+                    },
+                }
+            },
+            // 取消选择 → 回退原始软件源并继续执行
+            KeyCode::Esc => {
                 app.popup = None;
+                app.mirror = PackageMirror::Original;
+                app.status = crate::i18n::tr("tui_mirror_use_original").into();
                 start_pending(app, orchestrator);
+            },
+            _ => {},
+        },
+        Popup::MirrorCustomInput {
+            ref mut value,
+            ref mut error,
+        } => match key.code {
+            KeyCode::Char(c) => {
+                if value.chars().count() < 120 {
+                    value.push(c);
+                }
+                *error = None;
+            },
+            KeyCode::Backspace => {
+                value.pop();
+                *error = None;
+            },
+            KeyCode::Enter if !value.is_empty() => match PackageMirror::custom(value) {
+                Ok(mirror) => {
+                    app.mirror = mirror;
+                    app.popup = None;
+                    start_pending(app, orchestrator);
+                },
+                Err(e) => *error = Some(e.message().to_string()),
+            },
+            // Esc 返回上一级（预设源列表）
+            KeyCode::Esc => open_mirror_popup(app),
+            _ => {},
+        },
+        Popup::MirrorFailedDialog {
+            reason: _,
+            ref mut selected,
+        } => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => *selected = selected.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                *selected = selected.saturating_add(1).min(2);
+            },
+            KeyCode::Enter => match *selected {
+                // 重试（沿用当前源）
+                0 => {
+                    app.popup = None;
+                    start_pending(app, orchestrator);
+                },
+                // 更换源
+                1 => {
+                    app.popup = None;
+                    begin_or_ask_mirror(app, terminal, orchestrator);
+                },
+                // 取消执行（未做任何修改）
+                _ => {
+                    app.popup = None;
+                    app.pending = None;
+                    app.status = crate::i18n::tr("mirror_abort_hint").into();
+                },
             },
             KeyCode::Esc => {
                 app.popup = None;
                 app.pending = None;
-                app.status = crate::i18n::tr("tui_mirror_cancelled").into();
+                app.status = crate::i18n::tr("mirror_abort_hint").into();
             },
             _ => {},
         },
@@ -898,11 +1002,11 @@ fn open_mirror_popup(app: &mut TuiApp) {
 
 /// 镜像选项（含延迟）
 fn mirror_items() -> Vec<String> {
-    PackageMirror::all()
+    let mut items: Vec<String> = PackageMirror::all()
         .iter()
         .map(|mirror| match mirror.probe_host() {
-            None => crate::i18n::tr("mirror_original").to_string(),
-            Some(_) => match package_mirror::probe_latency(*mirror) {
+            None => mirror.label(),
+            Some(_) => match package_mirror::probe_latency(mirror) {
                 Some(latency) => format!(
                     "{} ({}{}ms)",
                     mirror.label(),
@@ -916,7 +1020,9 @@ fn mirror_items() -> Vec<String> {
                 ),
             },
         })
-        .collect()
+        .collect();
+    items.push(crate::i18n::tr("mirror_custom_entry").to_string());
+    items
 }
 
 /// 单项执行：直接排队并启动（若涉及包管理器则先询问镜像源）
@@ -940,7 +1046,8 @@ fn queue_single_run(
 
 /// 启动排队中的运行（后台线程）
 fn start_pending(app: &mut TuiApp, orchestrator: &HardeningOrchestrator) {
-    let Some(pending) = app.pending.take() else {
+    // 保留 pending：源连接失败后用户可能重试或更换源
+    let Some(pending) = app.pending.clone() else {
         return;
     };
 
@@ -956,7 +1063,7 @@ fn start_pending(app: &mut TuiApp, orchestrator: &HardeningOrchestrator) {
     app.mode = AppMode::Executing;
     app.status.clear();
 
-    let runner = StepRunner::new(orchestrator.logger.clone()).with_mirror(app.mirror);
+    let runner = StepRunner::new(orchestrator.logger()).with_mirror(app.mirror.clone());
     app.job = Some(runner.spawn(pending.selected, pending.params));
 }
 
@@ -1511,8 +1618,20 @@ fn render_popup(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
     let (title, height, content_lines, hint_line) = match popup {
         Popup::MirrorSelect { items, selected } => (
             format!(" {} ", crate::i18n::tr("tui_mirror_title")),
-            (items.len() + 5).clamp(6, 12) as u16,
+            (items.len() + 5).clamp(6, 14) as u16,
             render_mirror_options(items, *selected),
+            crate::i18n::tr("tui_hint_updown_enter_esc"),
+        ),
+        Popup::MirrorCustomInput { value, error } => (
+            format!(" {} ", crate::i18n::tr("tui_mirror_custom_title")),
+            if error.is_some() { 7 } else { 6 },
+            render_mirror_custom_input(value, error.as_deref()),
+            crate::i18n::tr("tui_hint_enter_esc_back"),
+        ),
+        Popup::MirrorFailedDialog { reason, selected } => (
+            format!(" {} ", crate::i18n::tr("tui_mirror_failed_title")),
+            9,
+            render_mirror_failed(reason, *selected),
             crate::i18n::tr("tui_hint_updown_enter_esc"),
         ),
         Popup::SshKeyUsername { value } => (
@@ -1642,6 +1761,50 @@ fn render_mirror_options(items: &[String], selected: usize) -> Vec<Line<'static>
             Span::styled(item.clone(), style),
         ]));
     }
+    lines
+}
+
+/// 自定义软件源输入框
+fn render_mirror_custom_input(value: &str, error: Option<&str>) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![Span::styled(
+        format!("  {}", crate::i18n::tr("tui_mirror_custom_hint")),
+        Style::default().dim(),
+    )])];
+    if value.is_empty() {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                crate::i18n::tr("tui_mirror_custom_placeholder"),
+                Style::default().dim().fg(Color::Gray),
+            ),
+            Span::styled("█", Style::default().fg(Color::Cyan)),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(value.to_string(), Style::default().fg(Color::White)),
+            Span::styled("█", Style::default().fg(Color::Cyan)),
+        ]));
+    }
+    if let Some(error) = error {
+        lines.push(Line::from(vec![Span::styled(
+            format!("  {error}"),
+            Style::default().fg(Color::Red),
+        )]));
+    }
+    lines
+}
+
+/// 软件源连接失败对话框
+fn render_mirror_failed(reason: &str, selected: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![Span::styled(
+        format!("  {reason}"),
+        Style::default().fg(Color::Red),
+    )])];
+    lines.extend(render_select_options(
+        &crate::presentation::mirror_failure_options(),
+        selected,
+    ));
     lines
 }
 

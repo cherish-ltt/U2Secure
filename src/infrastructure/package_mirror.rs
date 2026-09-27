@@ -17,12 +17,16 @@ use crate::domain::audit::PackageManager;
 use crate::domain::errors::DomainError;
 use crate::domain::mirror::PackageMirror;
 use crate::domain::steps::MirrorOverride;
-use crate::infrastructure::system::{self, StreamStatus};
+use crate::infrastructure::system;
 
 /// 延迟探测超时
 const PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
-/// 切换源后预热（apt update）的超时
+/// 预热尝试次数（含首次）
+pub const WARM_UP_ATTEMPTS: usize = 3;
+/// 单次预热尝试的最长等待
 const WARM_UP_TIMEOUT: Duration = Duration::from_secs(300);
+/// 连续无输出即判定"源无响应"
+pub const WARM_UP_STALL: Duration = Duration::from_secs(30);
 
 /// 已知的上游主机（只替换这些主机，避免误改内网/自建源）
 const UPSTREAM_HOSTS: &[&str] = &[
@@ -46,9 +50,9 @@ const UPSTREAM_HOSTS: &[&str] = &[
 ];
 
 /// 探测镜像延迟（TCP 443 建连耗时）；不可达或 DNS 失败返回 None
-pub fn probe_latency(mirror: PackageMirror) -> Option<Duration> {
+pub fn probe_latency(mirror: &PackageMirror) -> Option<Duration> {
     let host = mirror.probe_host()?;
-    let addr = (host, 443).to_socket_addrs().ok()?.next()?;
+    let addr = (host.as_str(), 443).to_socket_addrs().ok()?.next()?;
     let started = Instant::now();
     match TcpStream::connect_timeout(&addr, PROBE_TIMEOUT) {
         Ok(_) => Some(started.elapsed()),
@@ -59,14 +63,14 @@ pub fn probe_latency(mirror: PackageMirror) -> Option<Duration> {
 /// 把内容中的已知上游主机替换为镜像主机（路径与查询串保持不变）
 ///
 /// 纯函数，便于单元测试。
-pub fn rewrite_hosts(content: &str, mirror: PackageMirror) -> (String, usize) {
+pub fn rewrite_hosts(content: &str, mirror: &PackageMirror) -> (String, usize) {
     let Some(target) = mirror.probe_host() else {
         return (content.to_string(), 0);
     };
     let mut result = content.to_string();
     let mut hits = 0;
     for host in UPSTREAM_HOSTS {
-        let (new_result, n) = replace_host(&result, host, target);
+        let (new_result, n) = replace_host(&result, host, &target);
         result = new_result;
         hits += n;
     }
@@ -99,7 +103,7 @@ fn replace_host(content: &str, host: &str, target: &str) -> (String, usize) {
 }
 
 /// 改写 yum/dnf repo 内容：只处理 `baseurl=` 行，`mirrorlist=` 保持原样
-fn rewrite_repo_file(content: &str, mirror: PackageMirror) -> (String, usize, bool) {
+fn rewrite_repo_file(content: &str, mirror: &PackageMirror) -> (String, usize, bool) {
     let mut hits = 0;
     let mut has_baseurl = false;
     let mut out = String::with_capacity(content.len());
@@ -164,6 +168,7 @@ impl MirrorSession {
     }
 
     fn build_apt(&mut self, dir: &TempDir) -> Result<(), DomainError> {
+        let mirror = self.mirror.clone();
         // 一列式源：/etc/apt/sources.list + sources.list.d/*.list
         let mut merged = String::new();
         let mut files = vec![std::path::PathBuf::from("/etc/apt/sources.list")];
@@ -184,7 +189,7 @@ impl MirrorSession {
             let Ok(content) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let (rewritten, hits) = rewrite_hosts(&content, self.mirror);
+            let (rewritten, hits) = rewrite_hosts(&content, &mirror);
             if hits > 0 {
                 self.rewritten_files += 1;
                 self.rewritten_entries += hits;
@@ -203,7 +208,7 @@ impl MirrorSession {
                 let Ok(content) = std::fs::read_to_string(&path) else {
                     continue;
                 };
-                let (rewritten, hits) = rewrite_hosts(&content, self.mirror);
+                let (rewritten, hits) = rewrite_hosts(&content, &mirror);
                 if hits > 0 {
                     self.rewritten_files += 1;
                     self.rewritten_entries += hits;
@@ -234,6 +239,7 @@ impl MirrorSession {
     }
 
     fn build_yum(&mut self, dir: &TempDir) -> Result<(), DomainError> {
+        let mirror = self.mirror.clone();
         let repos_dir = dir.path().join("yum.repos.d");
         std::fs::create_dir_all(&repos_dir)
             .map_err(|e| DomainError::SystemCommandFailed(format!("创建临时源目录失败: {e}")))?;
@@ -249,7 +255,7 @@ impl MirrorSession {
             let Ok(content) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let (rewritten, hits, has_baseurl) = rewrite_repo_file(&content, self.mirror);
+            let (rewritten, hits, has_baseurl) = rewrite_repo_file(&content, &mirror);
             if !has_baseurl {
                 self.skipped_repos += 1;
             }
@@ -283,8 +289,8 @@ impl MirrorSession {
         self.override_.clone()
     }
 
-    pub fn mirror(&self) -> PackageMirror {
-        self.mirror
+    pub fn mirror(&self) -> &PackageMirror {
+        &self.mirror
     }
 
     /// 人类可读的生效说明（写入执行结果）
@@ -293,7 +299,7 @@ impl MirrorSession {
             return crate::i18n::tr("mirror_not_applied").to_string();
         }
         let mut text = crate::i18n::tr("mirror_applied")
-            .replace("{mirror}", self.mirror.label())
+            .replace("{mirror}", &self.mirror.label())
             .replace("{files}", &self.rewritten_files.to_string())
             .replace("{entries}", &self.rewritten_entries.to_string());
         if self.skipped_repos > 0 {
@@ -345,30 +351,39 @@ pub fn install_argv(pm: PackageManager, over: &MirrorOverride, package: &str) ->
 }
 
 /// 切换源后预热：让 apt 先按镜像拉取索引，后续 install 才能真正走镜像。
-/// 失败不致命（返回 Err 由调用方降级为"未加速"）。
-pub fn warm_up(session: &MirrorSession, log_path: &str) -> Result<(), DomainError> {
-    if !session.is_active() {
+///
+/// 失败或 30 秒无任何响应时自动重试，最多 [`WARM_UP_ATTEMPTS`] 次；
+/// 每次失败通过 `on_attempt(尝试序号, 原因)` 回调，便于界面提示过程。
+/// 全部失败返回最后一次的原因（**不自动回退**，交由用户决定重试或更换源）。
+pub fn warm_up(
+    session: &MirrorSession,
+    log_path: &str,
+    on_attempt: &mut dyn FnMut(usize, String),
+) -> Result<(), String> {
+    // 临时源未生效，或非 apt（yum/dnf 的 install 会自行刷新元数据）：无需预热
+    if !session.is_active() || session.package_manager != PackageManager::Apt {
         return Ok(());
     }
-    match session.package_manager {
-        PackageManager::Apt => {
-            let argv = session.pm_argv(PackageManager::Apt, &["update"]);
-            match system::run_streaming_argv(&argv, &[], log_path, WARM_UP_TIMEOUT)? {
-                StreamStatus::Success => Ok(()),
-                StreamStatus::Failed(code) => Err(DomainError::SystemCommandFailed(format!(
-                    "apt update 失败（退出码 {code:?}）"
-                ))),
-                StreamStatus::TimedOut => {
-                    Err(DomainError::SystemCommandFailed("apt update 超时".into()))
-                },
-                StreamStatus::Cancelled => {
-                    Err(DomainError::SystemCommandFailed("apt update 被中断".into()))
-                },
-            }
-        },
-        // yum/dnf 的 install 会自行刷新元数据
-        _ => Ok(()),
+
+    let argv = session.pm_argv(PackageManager::Apt, &["update"]);
+    let mut last_reason = String::new();
+    for attempt in 1..=WARM_UP_ATTEMPTS {
+        let status = system::run_streaming_watchdog(
+            &argv,
+            &[],
+            log_path,
+            WARM_UP_TIMEOUT,
+            Some(WARM_UP_STALL),
+        )
+        .map_err(|e| e.to_string())?;
+
+        if status.is_success() {
+            return Ok(());
+        }
+        last_reason = status.describe();
+        on_attempt(attempt, last_reason.clone());
     }
+    Err(last_reason)
 }
 
 #[cfg(test)]
@@ -378,7 +393,7 @@ mod tests {
     #[test]
     fn test_rewrite_debian_host() {
         let src = "deb http://deb.debian.org/debian bookworm main\n";
-        let (out, hits) = rewrite_hosts(src, PackageMirror::Tsinghua);
+        let (out, hits) = rewrite_hosts(src, &PackageMirror::Tsinghua);
         assert_eq!(hits, 1);
         assert_eq!(
             out,
@@ -390,7 +405,7 @@ mod tests {
     fn test_rewrite_host_boundary_is_respected() {
         // deb.debian.org.evil.com 不应被替换
         let src = "deb http://deb.debian.org.evil.com/debian bookworm main\n";
-        let (out, hits) = rewrite_hosts(src, PackageMirror::Tsinghua);
+        let (out, hits) = rewrite_hosts(src, &PackageMirror::Tsinghua);
         assert_eq!(hits, 0);
         assert_eq!(out, src);
     }
@@ -398,7 +413,7 @@ mod tests {
     #[test]
     fn test_rewrite_ubuntu_host_keeps_path() {
         let src = "deb https://archive.ubuntu.com/ubuntu noble main\n";
-        let (out, hits) = rewrite_hosts(src, PackageMirror::Ustc);
+        let (out, hits) = rewrite_hosts(src, &PackageMirror::Ustc);
         assert_eq!(hits, 1);
         assert!(out.contains("mirrors.ustc.edu.cn/ubuntu"));
     }
@@ -406,12 +421,12 @@ mod tests {
     #[test]
     fn test_rewrite_skips_unknown_host_and_original() {
         let src = "deb http://mirror.internal.corp/ubuntu noble main\n";
-        let (out, hits) = rewrite_hosts(src, PackageMirror::Tsinghua);
+        let (out, hits) = rewrite_hosts(src, &PackageMirror::Tsinghua);
         assert_eq!(hits, 0);
         assert_eq!(out, src);
 
         let src = "deb http://archive.ubuntu.com/ubuntu noble main\n";
-        let (out, hits) = rewrite_hosts(src, PackageMirror::Original);
+        let (out, hits) = rewrite_hosts(src, &PackageMirror::Original);
         assert_eq!(hits, 0);
         assert_eq!(out, src);
     }
@@ -420,7 +435,7 @@ mod tests {
     fn test_rewrite_deb822_format() {
         let src =
             "Types: deb\nURIs: http://deb.debian.org/debian-security\nSuites: bookworm-security\n";
-        let (out, hits) = rewrite_hosts(src, PackageMirror::Tsinghua);
+        let (out, hits) = rewrite_hosts(src, &PackageMirror::Tsinghua);
         assert_eq!(hits, 1);
         assert!(out.contains("mirrors.tuna.tsinghua.edu.cn/debian-security"));
     }
@@ -428,7 +443,7 @@ mod tests {
     #[test]
     fn test_rewrite_repo_only_touches_baseurl() {
         let src = "[base]\nmirrorlist=https://mirrorlist.centos.org/?release=9\nbaseurl=https://mirror.centos.org/centos/9/os/\n";
-        let (out, hits, has_baseurl) = rewrite_repo_file(src, PackageMirror::Tsinghua);
+        let (out, hits, has_baseurl) = rewrite_repo_file(src, &PackageMirror::Tsinghua);
         assert!(has_baseurl);
         assert_eq!(hits, 1);
         assert!(out.contains("mirrorlist=https://mirrorlist.centos.org/?release=9"));
@@ -457,6 +472,27 @@ mod tests {
         assert!(argv.iter().any(|a| a == "APT::Get::List-Cleanup=0"));
         assert!(argv.iter().any(|a| a.contains("Dir::Etc::sourcelist=")));
         assert_eq!(argv.last().unwrap(), "update");
+    }
+
+    #[test]
+    fn test_warm_up_is_noop_without_active_session() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = dir.path().join("mirror.log");
+        let session =
+            MirrorSession::apply(PackageMirror::Original, PackageManager::Apt).expect("session");
+
+        let mut attempts = 0;
+        let result = warm_up(&session, &log.to_string_lossy(), &mut |_, _| attempts += 1);
+
+        assert!(result.is_ok(), "未生效的临时源不应预热");
+        assert_eq!(attempts, 0, "不应产生重试回调");
+        assert!(!log.exists(), "不应创建日志文件");
+    }
+
+    #[test]
+    fn test_no_response_status_is_described() {
+        let text = crate::infrastructure::system::StreamStatus::NoResponse.describe();
+        assert!(text.contains("30"), "应提示 30 秒无响应: {text}");
     }
 
     #[test]

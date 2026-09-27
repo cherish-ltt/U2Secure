@@ -10,7 +10,7 @@ use crate::infrastructure::system;
 /// 步骤执行（含失败/中断策略、临时软件源、异步）统一由
 /// [`crate::application::job::StepRunner`] 负责，避免两套编排逻辑。
 pub struct HardeningOrchestrator {
-    pub logger: Arc<FileLogger>,
+    logger: Arc<FileLogger>,
 }
 
 impl HardeningOrchestrator {
@@ -18,6 +18,11 @@ impl HardeningOrchestrator {
         Self {
             logger: Arc::new(FileLogger::new()),
         }
+    }
+
+    /// 共享日志器（执行器与表示层复用同一实例）
+    pub fn logger(&self) -> Arc<FileLogger> {
+        self.logger.clone()
     }
 
     /// 执行环境审计（只读）
