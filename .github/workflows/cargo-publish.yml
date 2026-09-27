@@ -1,21 +1,69 @@
 name: Publish to crates.io
 
 on:
-  push:
-    tags:        # 推荐：当推送标签时触发，如 v1.0.0
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g., v0.4.0)'
+        required: true
+        type: string
+  # 自动化路径：Binary Build 跑完后触发（成功与否由 job 级 if 闸门判定）。
+  # 与 npm 保持一致：二进制未就绪就不发布，对齐 AGENTS 10.1 的发布顺序。
+  # 注意：workflow_run 使用的是**默认分支**上的本文件，修好工作流无需重新打标签。
+  workflow_run:
+    workflows: ["Binary Build"]   # 必须与 binary-build.yml 的 name 完全一致
+    types: [completed]
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     # 可选但强烈推荐，需要与你在crates.io上设置的Environment名称完全一致
     environment: release
+    # 手动派发始终放行；自动路径只在 Binary Build 成功时发布
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
 
     permissions:
       id-token: write  # 必须：用于请求OIDC令牌
+      contents: read   # workflow_run 下 checkout 需要
 
     steps:
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          # 手动派发用 inputs.tag_name；自动路径（Binary Build 完成）用触发那次运行的标签。
+          # workflow_run 事件的 payload 不含 ref_type / ref_name，标签只能取自 head_branch。
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            RAW_REF="${{ github.event.inputs.tag_name }}"
+          else
+            RAW_REF="${{ github.event.workflow_run.head_branch }}"
+          fi
+          TAG="v${RAW_REF#v}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::无法解析标签，原始值: '${RAW_REF}'"
+            exit 1
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "Resolved tag : ${TAG}"
+
       - uses: actions/checkout@v4
+        with:
+          # workflow_run 下默认检出默认分支，必须显式指向发布标签
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Verify tag matches Cargo.toml
+        shell: bash
+        run: |
+          CRATE_VERSION="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          TAG_VERSION="${{ steps.tag.outputs.tag }}"
+          if [[ "v${CRATE_VERSION}" != "${TAG_VERSION}" ]]; then
+            echo "::error::Cargo.toml 版本 (${CRATE_VERSION}) 与标签 (${TAG_VERSION}) 不一致"
+            exit 1
+          fi
+          echo "版本校验通过: ${CRATE_VERSION}"
+
       - uses: dtolnay/rust-toolchain@1.98.1
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
