@@ -775,6 +775,7 @@ fn handle_popup(
                         app.popup = None;
                         queue_single_run(
                             app,
+                            terminal,
                             StepKind::SshKeySetup,
                             ExecuteParams {
                                 ssh_key_username: Some(u),
@@ -813,6 +814,7 @@ fn handle_popup(
                 app.popup = None;
                 queue_single_run(
                     app,
+                    terminal,
                     StepKind::SshKeySetup,
                     ExecuteParams {
                         ssh_key_username: Some(u),
@@ -847,6 +849,7 @@ fn handle_popup(
                     app.popup = None;
                     queue_single_run(
                         app,
+                        terminal,
                         StepKind::SshKeySetup,
                         ExecuteParams {
                             ssh_key_username: Some(u),
@@ -905,6 +908,7 @@ fn handle_popup(
                 app.popup = None;
                 queue_single_run(
                     app,
+                    terminal,
                     StepKind::UserCreation,
                     ExecuteParams {
                         new_username: Some(username.clone()),
@@ -939,6 +943,7 @@ fn handle_popup(
                     app.popup = None;
                     queue_single_run(
                         app,
+                        terminal,
                         StepKind::SshPortChange,
                         ExecuteParams {
                             new_ssh_port: Some(port),
@@ -1022,10 +1027,16 @@ fn mirror_items() -> Vec<String> {
 /// 单项执行：直接排队并启动（若涉及包管理器则先询问镜像源）
 fn queue_single_run(
     app: &mut TuiApp,
+    terminal: &mut TuiTerminal,
     kind: StepKind,
-    params: ExecuteParams,
+    mut params: ExecuteParams,
     orchestrator: &HardeningOrchestrator,
 ) {
+    if kind.modifies_ssh_config() || kind == StepKind::RestartSsh {
+        suspend_for_dialog(terminal, || {
+            cli::confirm_ssh_activation(&[kind], &app.report, &mut params)
+        });
+    }
     app.pending = Some(PendingRun {
         selected: vec![kind],
         params,
@@ -1077,13 +1088,17 @@ fn suspend_for_params(
     selected: &[StepKind],
     report: &AuditReport,
 ) -> ExecuteParams {
+    suspend_for_dialog(terminal, || cli::collect_step_params(selected, report))
+}
+
+fn suspend_for_dialog<T>(terminal: &mut TuiTerminal, dialog: impl FnOnce() -> T) -> T {
     // 挂起 TUI
     disable_raw_mode().ok();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
     let _ = terminal.show_cursor();
 
     // 使用 CLI 现有的 dialoguer 参数收集
-    let params = cli::collect_step_params(selected, report);
+    let params = dialog();
 
     // 恢复 TUI
     let _ = enable_raw_mode();

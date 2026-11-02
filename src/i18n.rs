@@ -66,6 +66,28 @@ pub fn tr(key: &'static str) -> &'static str {
 
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_stop_command" => "终止或回收命令失败: {err}",
+        "err_ufw_status" => "无法确定 UFW 启用状态",
+        "result_ufw_ssh_pending" => {
+            "SSH 配置待生效，暂不启用 UFW，避免阻断现有连接；SSH 生效后请重新执行防火墙步骤"
+        },
+        "cli_apply_ssh" => {
+            "是否在结束时校验并重启 SSH？可能影响远程连接；开始尝试重启后，即使失败或中断也保留整批用户、密钥及配置修改，不自动回滚。选择否则仅写配置并标记待生效"
+        },
+        "result_ssh_activation_retained" => {
+            "SSH 生效尝试失败或中断：为避免撤销防火墙后阻断可能已生效的新端口，本批修改已保留、未自动回滚。请保留当前会话并人工检查服务、端口与认证；密钥替换的临时备份已清理"
+        },
+        "result_ssh_pending" => "SSH 配置待生效：未授权重启，未应用到运行中的服务",
+        "result_sshd_firewall_changed" => "SSH 配置未变化；已更新 UFW 端口规则",
+        "undo_ufw_restore" => "恢复 UFW 原规则与启用状态",
+        "audit_ssh_global" => "全局端口: {ports}",
+        "audit_ssh_unverified" => "SSH 未验证（Include/Match、多个端口或读取失败；不可判为安全）",
+        "err_sshd_effective" => "无法验证 SSH 全局目标值（包括多个监听端口冲突）",
+        "result_sshd_global_set" => {
+            "SSH 全局配置已写入，尚待生效（备份: {bak}）；Include/Match 的连接条件未验证"
+        },
+        "result_sshd_unchanged" => "SSH 全局配置未变化；Include/Match 的连接条件未验证",
+
         // ── 主入口 ──
         "select_language" => "选择语言",
         "select_mode" => "请选择启动模式",
@@ -152,6 +174,9 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "err_sshd_check" => "sshd 语法检查失败",
         "err_sshd_syntax" => "sshd_config 语法错误，请检查配置",
         "err_ssh_restart" => "重启 SSH 服务失败",
+        "err_ssh_service_state" => "无法使用 SSH 服务，停止尝试其他服务名",
+        "err_ssh_service_missing" => "找不到 sshd.service 或 ssh.service",
+        "err_ssh_not_active" => "重启后 SSH 服务未处于 active 状态",
         "err_backup" => "备份失败",
         "err_read" => "读取失败",
         "err_write" => "写入失败",
@@ -168,11 +193,12 @@ fn zh_cn(key: &str) -> Option<&'static str> {
             "ED25519 密钥对已生成\n  私钥: {priv}\n  公钥: {pub}\n  ⚠️  私钥无密码短语保护，建议手动加密：ssh-keygen -p -f {key}\n  请立即复制私钥并安全保存！"
         },
         "result_key_pasted" => "公钥已添加到 {user} 的 authorized_keys",
+        "result_key_created_with_user" => "创建用户时已生成密钥，跳过重复生成",
         "result_ufw_enabled" => "UFW 已启用，SSH 端口 {port} 已放行",
         "result_fail2ban_installed" => "Fail2ban 已安装并运行，SSH 端口 {port} 已加入监控",
         "result_auto_updates_enabled" => "自动安全更新已启用（每日检查，自动安装安全补丁）",
         "result_ssh_restarted" => {
-            "SSH 服务已重启（状态: {status}）\n  ⚠️  请在另一终端验证连接后再关闭当前会话！\n  🔄 如需回滚：systemctl restart sshd 或恢复备份 /etc/ssh/sshd_config.bak.*"
+            "SSH 服务已重启（状态: {status}）\n  ⚠️  请在另一终端验证连接后再关闭当前会话！\n  🔄 如需回滚：恢复备份 /etc/ssh/sshd_config.bak.* 后重启同一 SSH 服务"
         },
         "result_sshd_cfg_set" => "{key} 已设置为 {value}（备份: {bak}）",
 
@@ -334,7 +360,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "log_step_failed_detail" => "失败: {err}",
         "undo_file_restore_generic" => "恢复文件 {path}",
         "cli_live_log" => "实时输出: {log}",
-        "cli_interrupted" => "用户中断，已执行本批回滚；恢复失败详情请查看结果",
+        "cli_interrupted" => "用户中断；本批恢复或修改保留情况请查看结果",
         "cli_mirror_probing" => "正在探测镜像源延迟...",
         "cli_mirror_prompt" => "选择本次运行使用的软件源（仅本次生效）",
         "cli_artifact" => "报告:",
@@ -345,12 +371,12 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "tui_job_crashed" => "执行线程异常退出，请查看报告目录中的日志",
         "tui_reauditing" => "正在重新审计...",
         "tui_cancelling" => "正在中断...",
-        "tui_cancel_requested" => "已请求中断，等待当前命令结束并回滚",
-        "tui_running_hint" => "执行中：按 Ctrl+C 中断并回滚",
+        "tui_cancel_requested" => "已请求中断，等待当前命令结束；恢复或修改保留情况见结果",
+        "tui_running_hint" => "执行中：按 Ctrl+C 中断，恢复或修改保留情况见结果",
         "tui_exec_preparing" => "正在准备（软件源/环境检查）...",
         "tui_exec_progress" => "进度",
         "tui_exec_elapsed" => "已耗时",
-        "tui_exec_cancel_hint" => "Ctrl+C 中断并回滚",
+        "tui_exec_cancel_hint" => "Ctrl+C 中断（恢复或保留见结果）",
         "tui_exec_live_output" => "── 命令输出 ──",
         "tui_help_all" => "全选 / 取消全选（可选步骤除外）",
         "tui_opt_in_hint" => "「可选·耗时」步骤默认关闭，按 Space 勾选后才会执行",
@@ -387,6 +413,36 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_stop_command" => "Failed to terminate or reap command: {err}",
+        "err_ufw_status" => "Cannot determine UFW activation status",
+        "result_ufw_ssh_pending" => {
+            "SSH configuration is pending; UFW remains disabled to protect existing access. Run the firewall step again after applying SSH configuration"
+        },
+        "cli_apply_ssh" => {
+            "Validate and restart SSH at the end? Remote access may change. Once restart is attempted, all user, key and configuration changes are retained even on failure or cancellation, without automatic rollback. No leaves configuration pending"
+        },
+        "result_ssh_activation_retained" => {
+            "SSH activation failed or was interrupted: this batch was retained without rollback to avoid blocking a possibly active new port. Keep this session open and manually check the service, ports and authentication; temporary key replacement backups have been removed"
+        },
+        "result_ssh_pending" => {
+            "SSH configuration pending: restart was not authorized; the running service has not applied it"
+        },
+        "result_sshd_firewall_changed" => "SSH configuration unchanged; UFW port rules updated",
+        "undo_ufw_restore" => "Restore original UFW rules and activation state",
+        "audit_ssh_global" => "Global ports: {ports}",
+        "audit_ssh_unverified" => {
+            "SSH unverified (Include/Match, multiple ports or read failure; not marked safe)"
+        },
+        "err_sshd_effective" => {
+            "Cannot verify SSH global target values (including multiple listening ports)"
+        },
+        "result_sshd_global_set" => {
+            "SSH global configuration saved, activation pending (backup: {bak}); Include/Match connection contexts unverified"
+        },
+        "result_sshd_unchanged" => {
+            "SSH global configuration unchanged; Include/Match connection contexts unverified"
+        },
+
         "select_language" => "Select Language",
         "select_mode" => "Select Launch Mode",
         "mode_cli" => "CLI Mode (Traditional Interactive)",
@@ -465,6 +521,11 @@ fn en(key: &str) -> Option<&'static str> {
         "err_sshd_check" => "sshd syntax check failed",
         "err_sshd_syntax" => "sshd_config syntax error, please check configuration",
         "err_ssh_restart" => "SSH service restart failed",
+        "err_ssh_service_state" => {
+            "SSH service is unavailable; no further service name will be tried"
+        },
+        "err_ssh_service_missing" => "Neither sshd.service nor ssh.service was found",
+        "err_ssh_not_active" => "SSH service is not active after restart",
         "err_backup" => "Backup failed",
         "err_read" => "Read failed",
         "err_write" => "Write failed",
@@ -479,13 +540,16 @@ fn en(key: &str) -> Option<&'static str> {
             "ED25519 key pair generated\n  Private: {priv}\n  Public: {pub}\n  ⚠️  No passphrase set, encrypt manually: ssh-keygen -p -f {key}\n  Copy and save the private key now!"
         },
         "result_key_pasted" => "Public key added to {user}'s authorized_keys",
+        "result_key_created_with_user" => {
+            "Key already generated when creating this user; duplicate generation skipped"
+        },
         "result_ufw_enabled" => "UFW enabled, SSH port {port} allowed",
         "result_fail2ban_installed" => "Fail2ban installed and running, SSH port {port} monitored",
         "result_auto_updates_enabled" => {
             "Auto security updates enabled (daily check, auto-install patches)"
         },
         "result_ssh_restarted" => {
-            "SSH service restarted (status: {status})\n  ⚠️  Verify connection in another terminal before closing this session!\n  🔄 Rollback: systemctl restart sshd or restore /etc/ssh/sshd_config.bak.*"
+            "SSH service restarted (status: {status})\n  ⚠️  Verify connection in another terminal before closing this session!\n  🔄 Rollback: restore /etc/ssh/sshd_config.bak.* then restart the same SSH service"
         },
         "result_sshd_cfg_set" => "{key} set to {value} (backup: {bak})",
 
@@ -655,9 +719,7 @@ fn en(key: &str) -> Option<&'static str> {
         "log_step_failed_detail" => "Failed: {err}",
         "undo_file_restore_generic" => "Restore file {path}",
         "cli_live_log" => "Live output: {log}",
-        "cli_interrupted" => {
-            "Interrupted; batch rollback attempted. See results for recovery failures"
-        },
+        "cli_interrupted" => "Interrupted; see results for rollback or retained changes",
         "cli_mirror_probing" => "Probing mirror latency...",
         "cli_mirror_prompt" => "Select the repository mirror for this run (temporary)",
         "cli_artifact" => "Report:",
@@ -673,13 +735,15 @@ fn en(key: &str) -> Option<&'static str> {
         "tui_reauditing" => "Re-running audit...",
         "tui_cancelling" => "Cancelling...",
         "tui_cancel_requested" => {
-            "Cancellation requested; waiting for the current command to stop and roll back"
+            "Cancellation requested; waiting for the command to stop. See results for rollback or retained changes"
         },
-        "tui_running_hint" => "Running: press Ctrl+C to cancel and roll back",
+        "tui_running_hint" => {
+            "Running: Ctrl+C to cancel; see results for rollback or retained changes"
+        },
         "tui_exec_preparing" => "Preparing (repositories / environment)...",
         "tui_exec_progress" => "Progress",
         "tui_exec_elapsed" => "Elapsed",
-        "tui_exec_cancel_hint" => "Ctrl+C to cancel and roll back",
+        "tui_exec_cancel_hint" => "Ctrl+C to cancel (see results for retained changes)",
         "tui_exec_live_output" => "── command output ──",
         "tui_help_all" => "Select / unselect all (optional steps excluded)",
         "tui_opt_in_hint" => "(optional, slow) steps are off by default; press Space to enable",
@@ -721,6 +785,28 @@ fn en(key: &str) -> Option<&'static str> {
 
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_stop_command" => "終止或回收命令失敗: {err}",
+        "err_ufw_status" => "無法確定 UFW 啟用狀態",
+        "result_ufw_ssh_pending" => {
+            "SSH 配置待生效，暫不啟用 UFW，避免阻斷現有連線；SSH 生效後請重新執行防火牆步驟"
+        },
+        "cli_apply_ssh" => {
+            "是否在結束時校驗並重啟 SSH？可能影響遠端連線；開始嘗試重啟後，即使失敗或中斷也保留整批使用者、金鑰及配置修改，不自動回滾。選擇否則僅寫配置並標記待生效"
+        },
+        "result_ssh_activation_retained" => {
+            "SSH 生效嘗試失敗或中斷：為避免還原防火牆後阻斷可能已生效的新連接埠，本批修改已保留、未自動回滾。請保留目前工作階段並人工檢查服務、連接埠與認證；金鑰替換的暫存備份已清理"
+        },
+        "result_ssh_pending" => "SSH 配置待生效：未授權重啟，未套用至執行中的服務",
+        "result_sshd_firewall_changed" => "SSH 配置未變化；已更新 UFW 連接埠規則",
+        "undo_ufw_restore" => "還原 UFW 原規則與啟用狀態",
+        "audit_ssh_global" => "全域連接埠: {ports}",
+        "audit_ssh_unverified" => "SSH 未驗證（Include/Match、多個連接埠或讀取失敗；不可判為安全）",
+        "err_sshd_effective" => "無法驗證 SSH 全域目標值（包括多個監聽連接埠衝突）",
+        "result_sshd_global_set" => {
+            "SSH 全域配置已寫入，尚待生效（備份: {bak}）；Include/Match 的連線條件未驗證"
+        },
+        "result_sshd_unchanged" => "SSH 全域配置未變化；Include/Match 的連線條件未驗證",
+
         "select_language" => "選擇語言",
         "select_mode" => "請選擇啟動模式",
         "mode_cli" => "CLI 模式（傳統互動式）",
@@ -798,6 +884,9 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "err_sshd_check" => "sshd 語法檢查失敗",
         "err_sshd_syntax" => "sshd_config 語法錯誤，請檢查配置",
         "err_ssh_restart" => "重啟 SSH 服務失敗",
+        "err_ssh_service_state" => "無法使用 SSH 服務，停止嘗試其他服務名稱",
+        "err_ssh_service_missing" => "找不到 sshd.service 或 ssh.service",
+        "err_ssh_not_active" => "重啟後 SSH 服務未處於 active 狀態",
         "err_backup" => "備份失敗",
         "err_read" => "讀取失敗",
         "err_write" => "寫入失敗",
@@ -812,11 +901,12 @@ fn zh_tw(key: &str) -> Option<&'static str> {
             "ED25519 金鑰對已生成\n  私鑰: {priv}\n  公鑰: {pub}\n  ⚠️  私鑰無密碼短語保護，建議手動加密：ssh-keygen -p -f {key}\n  請立即複製私鑰並安全儲存！"
         },
         "result_key_pasted" => "公鑰已添加到 {user} 的 authorized_keys",
+        "result_key_created_with_user" => "建立用戶時已產生金鑰，跳過重複產生",
         "result_ufw_enabled" => "UFW 已啟用，SSH 連接埠 {port} 已放行",
         "result_fail2ban_installed" => "Fail2ban 已安裝並執行，SSH 連接埠 {port} 已加入監控",
         "result_auto_updates_enabled" => "自動安全更新已啟用（每日檢查，自動安裝安全修補程式）",
         "result_ssh_restarted" => {
-            "SSH 服務已重新啟動（狀態: {status}）\n  ⚠️  請在另一個終端驗證連線後再關閉當前會話！\n  🔄 如需回退：systemctl restart sshd 或恢復備份 /etc/ssh/sshd_config.bak.*"
+            "SSH 服務已重新啟動（狀態: {status}）\n  ⚠️  請在另一個終端驗證連線後再關閉當前會話！\n  🔄 如需回退：恢復備份 /etc/ssh/sshd_config.bak.* 後重啟同一 SSH 服務"
         },
         "result_sshd_cfg_set" => "{key} 已設定為 {value}（備份: {bak}）",
 
@@ -972,7 +1062,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "log_step_failed_detail" => "失敗: {err}",
         "undo_file_restore_generic" => "還原檔案 {path}",
         "cli_live_log" => "即時輸出: {log}",
-        "cli_interrupted" => "使用者中斷，已執行本批回滾；恢復失敗詳情請查看結果",
+        "cli_interrupted" => "使用者中斷；本批還原或修改保留情況請查看結果",
         "cli_mirror_probing" => "正在偵測鏡像源延遲...",
         "cli_mirror_prompt" => "選擇本次執行使用的軟體源（僅本次生效）",
         "cli_artifact" => "報告:",
@@ -983,12 +1073,12 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "tui_job_crashed" => "執行執行緒異常結束，請查看報告目錄中的日誌",
         "tui_reauditing" => "正在重新稽核...",
         "tui_cancelling" => "正在中斷...",
-        "tui_cancel_requested" => "已要求中斷，等待目前命令結束並回滾",
-        "tui_running_hint" => "執行中：按 Ctrl+C 中斷並回滾",
+        "tui_cancel_requested" => "已要求中斷，等待目前命令結束；還原或修改保留情況見結果",
+        "tui_running_hint" => "執行中：按 Ctrl+C 中斷，還原或修改保留情況見結果",
         "tui_exec_preparing" => "正在準備（軟體源/環境檢查）...",
         "tui_exec_progress" => "進度",
         "tui_exec_elapsed" => "已耗時",
-        "tui_exec_cancel_hint" => "Ctrl+C 中斷並回滾",
+        "tui_exec_cancel_hint" => "Ctrl+C 中斷（還原或保留見結果）",
         "tui_exec_live_output" => "── 命令輸出 ──",
         "tui_help_all" => "全選 / 取消全選（可選步驟除外）",
         "tui_opt_in_hint" => "「可選·耗時」步驟預設關閉，按 Space 勾選後才會執行",

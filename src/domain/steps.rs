@@ -100,6 +100,13 @@ impl StepKind {
         )
     }
 
+    pub fn modifies_ssh_config(&self) -> bool {
+        matches!(
+            self,
+            Self::SshRootLogin | Self::SshPortChange | Self::SshPasswordAuth
+        )
+    }
+
     pub fn check_default_status(&self, report: &AuditReport) -> AuditStatus {
         report.status_for(*self)
     }
@@ -185,6 +192,10 @@ pub struct ExecuteParams {
     pub live_log: Option<String>,
     /// 本次运行使用的临时软件源
     pub mirror: MirrorOverride,
+    /// 执行前明确确认：允许在批次末尾应用待生效的 SSH 配置。
+    pub apply_ssh_changes: bool,
+    /// 审计时已待生效，或执行器观察到本批次实际写入 SSH 配置。
+    pub ssh_restart_required: bool,
 }
 
 impl fmt::Debug for ExecuteParams {
@@ -199,6 +210,8 @@ impl fmt::Debug for ExecuteParams {
             .field("report_dir", &self.report_dir)
             .field("live_log", &self.live_log)
             .field("mirror", &self.mirror)
+            .field("apply_ssh_changes", &self.apply_ssh_changes)
+            .field("ssh_restart_required", &self.ssh_restart_required)
             .finish()
     }
 }
@@ -214,6 +227,8 @@ impl Default for ExecuteParams {
             report_dir: None,
             live_log: None,
             mirror: MirrorOverride::default(),
+            apply_ssh_changes: false,
+            ssh_restart_required: false,
         }
     }
 }
@@ -255,6 +270,10 @@ pub struct StepResult {
     pub message: String,
     /// 本次执行产生的报告文件（供用户查看完整结果）
     pub artifacts: Vec<String>,
+    /// 只表示 SSH 配置实际写入，不包含单独的防火墙规则变更。
+    pub ssh_restart_required: bool,
+    /// 已越过服务生效边界，不能再仅撤销配置与防火墙规则。
+    pub ssh_activation_attempted: bool,
 }
 
 impl StepResult {
@@ -264,6 +283,8 @@ impl StepResult {
             outcome,
             message: message.into(),
             artifacts: vec![],
+            ssh_restart_required: false,
+            ssh_activation_attempted: false,
         }
     }
 
@@ -281,6 +302,11 @@ impl StepResult {
 
     pub fn with_artifacts(mut self, artifacts: Vec<String>) -> Self {
         self.artifacts = artifacts;
+        self
+    }
+
+    pub fn requiring_ssh_restart(mut self) -> Self {
+        self.ssh_restart_required = true;
         self
     }
 

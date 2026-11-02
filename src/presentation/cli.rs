@@ -434,7 +434,26 @@ pub fn collect_step_params(selected: &[StepKind], report: &AuditReport) -> Execu
         }
     }
 
+    confirm_ssh_activation(selected, report, &mut params);
     params
+}
+
+pub fn confirm_ssh_activation(
+    selected: &[StepKind],
+    report: &AuditReport,
+    params: &mut ExecuteParams,
+) {
+    if selected
+        .iter()
+        .any(|kind| kind.modifies_ssh_config() || *kind == StepKind::RestartSsh)
+    {
+        params.ssh_restart_required = report.ssh_restart_needed;
+        params.apply_ssh_changes = Confirm::new()
+            .with_prompt(crate::i18n::tr("cli_apply_ssh"))
+            .default(false)
+            .interact()
+            .unwrap_or(false);
+    }
 }
 
 /// 渲染审计报告

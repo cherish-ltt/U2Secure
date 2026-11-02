@@ -22,6 +22,7 @@ fn make_report(
         is_root: true,
         package_manager: PackageManager::Apt,
         ssh_port,
+        ssh_config_verified: true,
         password_auth_disabled: password_disabled,
         root_login_disabled: root_disabled,
         sudo_users,
@@ -42,6 +43,7 @@ fn hardened_report() -> AuditReport {
         is_root: true,
         package_manager: PackageManager::Apt,
         ssh_port: 2222,
+        ssh_config_verified: true,
         password_auth_disabled: true,
         root_login_disabled: true,
         sudo_users: vec!["admin".into()],
@@ -96,6 +98,19 @@ fn test_status_for_hardened_system() {
         report.status_for(StepKind::SshKeySetup),
         AuditStatus::Partial
     );
+}
+
+#[test]
+fn unverified_ssh_is_never_marked_safe() {
+    let mut report = hardened_report();
+    report.ssh_config_verified = false;
+    for kind in [
+        StepKind::SshRootLogin,
+        StepKind::SshPortChange,
+        StepKind::SshPasswordAuth,
+    ] {
+        assert_eq!(report.status_for(kind), AuditStatus::Partial);
+    }
 }
 
 #[test]
