@@ -66,7 +66,6 @@ pub fn tr(key: &'static str) -> &'static str {
 
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
-        "err_stop_command" => "终止或回收命令失败: {err}",
         "err_ufw_status" => "无法确定 UFW 启用状态",
         "result_ufw_ssh_pending" => {
             "SSH 配置待生效，暂不启用 UFW，避免阻断现有连接；SSH 生效后请重新执行防火墙步骤"
@@ -88,6 +87,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         },
         "result_sshd_unchanged" => "SSH 全局配置未变化；Include/Match 的连接条件未验证",
 
+        "err_stop_command" => "终止或回收命令失败: {err}",
         // ── 主入口 ──
         "select_language" => "选择语言",
         "select_mode" => "请选择启动模式",
@@ -413,7 +413,6 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
-        "err_stop_command" => "Failed to terminate or reap command: {err}",
         "err_ufw_status" => "Cannot determine UFW activation status",
         "result_ufw_ssh_pending" => {
             "SSH configuration is pending; UFW remains disabled to protect existing access. Run the firewall step again after applying SSH configuration"
@@ -443,6 +442,7 @@ fn en(key: &str) -> Option<&'static str> {
             "SSH global configuration unchanged; Include/Match connection contexts unverified"
         },
 
+        "err_stop_command" => "Failed to terminate or reap command: {err}",
         "select_language" => "Select Language",
         "select_mode" => "Select Launch Mode",
         "mode_cli" => "CLI Mode (Traditional Interactive)",
@@ -785,7 +785,6 @@ fn en(key: &str) -> Option<&'static str> {
 
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
-        "err_stop_command" => "終止或回收命令失敗: {err}",
         "err_ufw_status" => "無法確定 UFW 啟用狀態",
         "result_ufw_ssh_pending" => {
             "SSH 配置待生效，暫不啟用 UFW，避免阻斷現有連線；SSH 生效後請重新執行防火牆步驟"
@@ -807,6 +806,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         },
         "result_sshd_unchanged" => "SSH 全域配置未變化；Include/Match 的連線條件未驗證",
 
+        "err_stop_command" => "終止或回收命令失敗: {err}",
         "select_language" => "選擇語言",
         "select_mode" => "請選擇啟動模式",
         "mode_cli" => "CLI 模式（傳統互動式）",
