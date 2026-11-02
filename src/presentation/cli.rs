@@ -97,7 +97,7 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
 
         let Some(reason) = mirror_failure else {
             // ── 总结报告 ──
-            render_summary(&results, &log_path);
+            render_summary(&results, &log_path, &artifacts::dir_display());
             return;
         };
 
@@ -525,7 +525,7 @@ fn step_selection(report: &AuditReport) -> Vec<StepKind> {
 }
 
 /// 渲染执行总结（成功 / 跳过 / 失败 三态）
-fn render_summary(results: &[StepResult], log_path: &str) {
+fn render_summary(results: &[StepResult], log_path: &str, report_dir: &str) {
     println!("\n{}", "=".repeat(50).bright_green());
     println!(
         "{} {}",
@@ -586,12 +586,16 @@ fn render_summary(results: &[StepResult], log_path: &str) {
     println!(
         "{} {}",
         "📂".dimmed(),
-        crate::i18n::tr("cli_report_dir").replace("{dir}", &artifacts::dir_display())
+        crate::i18n::tr("cli_report_dir").replace("{dir}", report_dir)
     );
     println!(
         "{} {}",
         "💡".dimmed(),
-        crate::i18n::tr("cli_report_view").replace("{dir}", &artifacts::dir_display())
+        crate::i18n::tr("cli_report_view").replace("{dir}", report_dir)
     );
     println!();
 }
+
+#[cfg(test)]
+#[path = "cli_tests.rs"]
+mod tests;

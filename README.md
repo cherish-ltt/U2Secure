@@ -571,6 +571,11 @@ UFW 操作前快照 IPv4/IPv6 规则与启用配置，撤销恢复原状态，�
 - **项目结构**：遵循 DDD + 洋葱架构（domain / application / infrastructure / presentation）
 - **测试要求**：新功能须附带单元测试，测试覆盖率 ≥ 80%
 
+覆盖率统一使用 `cargo llvm-cov --locked --all-targets --all-features --summary-only` 的
+全项目行覆盖率，不排除入口、界面或系统模块来满足门槛。CLI 输出和 TUI 内存画布测试
+不启动真实交互入口；系统命令使用子进程私有 PATH 中的假程序，配置、日志与报告使用临时目录。
+macOS 开发机不得运行实际加固；即使只测试渲染，也须隔离可能创建报告目录或探测系统的调用。
+
 ## 版本历史
 
 | 版本 | 日期 | 亮点 |

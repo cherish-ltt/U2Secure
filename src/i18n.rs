@@ -6,6 +6,10 @@
 
 use std::sync::OnceLock;
 
+#[cfg(test)]
+#[path = "i18n_tests.rs"]
+mod tests;
+
 // 语言枚举
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
