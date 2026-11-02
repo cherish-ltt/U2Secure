@@ -139,7 +139,7 @@ pub fn run_streaming_watchdog(
     let mut last_progress = Instant::now();
     let mut last_size = std::fs::metadata(log_path).map(|m| m.len()).unwrap_or(0);
     loop {
-        match child.try_wait() {
+        match command_status(&mut child) {
             Ok(Some(status)) => {
                 return Ok(if status.success() {
                     StreamStatus::Success
@@ -179,6 +179,30 @@ pub fn run_streaming_watchdog(
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+}
+
+#[cfg(target_os = "linux")]
+fn command_status(
+    child: &mut std::process::Child,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+    // Keep the leader waitable until its group is signalled, preventing PID reuse.
+    let status = waitid(
+        WaitId::Pid(Pid::from_child(child)),
+        WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+    )?;
+    if status.is_none() {
+        return Ok(None);
+    }
+    stop_command(child).map_err(std::io::Error::other)?;
+    child.wait().map(Some)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn command_status(
+    child: &mut std::process::Child,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    child.try_wait()
 }
 
 fn stop_command(child: &mut std::process::Child) -> Result<(), DomainError> {

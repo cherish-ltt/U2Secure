@@ -6,8 +6,11 @@ use std::time::Duration;
 use u2secure::infrastructure::rollback::INTERRUPTED;
 use u2secure::infrastructure::system::{StreamStatus, run_streaming_watchdog};
 
+static PROCESS_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn watchdog_stops_descendants_without_touching_other_tasks() {
+    let _guard = PROCESS_TEST.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let unrelated = dir.path().join("unrelated");
     let mut other = std::process::Command::new("/bin/sh")
@@ -63,6 +66,7 @@ fn watchdog_stops_descendants_without_touching_other_tasks() {
 
 #[test]
 fn streaming_preserves_output_and_exit_status() {
+    let _guard = PROCESS_TEST.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     for (script, expected) in [
         ("printf complete", StreamStatus::Success),
@@ -88,4 +92,29 @@ fn streaming_preserves_output_and_exit_status() {
                 })
         );
     }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn leader_exit_does_not_leave_background_writers() {
+    let _guard = PROCESS_TEST.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("background");
+    let status = run_streaming_watchdog(
+        &[
+            "/bin/sh".into(),
+            "-c".into(),
+            "(sleep 0.6; printf bad > \"$1\") & exit 0".into(),
+            "test".into(),
+            marker.display().to_string(),
+        ],
+        &[],
+        dir.path().join("log").to_str().unwrap(),
+        Duration::from_secs(5),
+        None,
+    )
+    .unwrap();
+    assert_eq!(status, StreamStatus::Success);
+    std::thread::sleep(Duration::from_millis(800));
+    assert!(!marker.exists());
 }
