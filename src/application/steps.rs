@@ -6,7 +6,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::steps::{ExecuteParams, HardeningStep, SshKeyAction, StepKind, StepResult};
 use crate::infrastructure::backup::backup_file;
 use crate::infrastructure::system::StreamStatus;
-use crate::infrastructure::{aide, artifacts, lynis, package_mirror, rollback, system};
+use crate::infrastructure::{aide, artifacts, lynis, package_mirror, rollback, ssh, system};
 
 // 超时（长耗时步骤必须有上限，避免"假卡住"）
 
@@ -217,8 +217,7 @@ impl HardeningStep for SshRootLoginStep {
             ));
         }
 
-        let message = modify_sshd_config("PermitRootLogin", "prohibit-password")?;
-        Ok(StepResult::changed(self.kind(), message))
+        ssh_config_result(self.kind(), &[("PermitRootLogin", "prohibit-password")])
     }
 }
 
@@ -243,7 +242,7 @@ impl HardeningStep for SshPortChangeStep {
             ));
         }
 
-        let message = modify_sshd_config("Port", &new_port.to_string())?;
+        let result = ssh_config_result(self.kind(), &[("Port", &new_port.to_string())])?;
 
         // UFW 放行新端口（如果 ufw 已启用）
         if system::detect_ufw_enabled() {
@@ -258,12 +257,7 @@ impl HardeningStep for SshPortChangeStep {
                 .output();
         }
 
-        Ok(StepResult::changed(
-            self.kind(),
-            crate::i18n::tr("result_ssh_port_set")
-                .replace("{port}", &new_port.to_string())
-                .replace("{msg}", &message),
-        ))
+        Ok(result)
     }
 }
 
@@ -286,13 +280,13 @@ impl HardeningStep for SshPasswordAuthStep {
             ));
         }
 
-        modify_sshd_config("PasswordAuthentication", "no")?;
-        modify_sshd_config("ChallengeResponseAuthentication", "no")?;
-
-        Ok(StepResult::changed(
+        ssh_config_result(
             self.kind(),
-            crate::i18n::tr("result_pw_auth_disabled"),
-        ))
+            &[
+                ("PasswordAuthentication", "no"),
+                ("KbdInteractiveAuthentication", "no"),
+            ],
+        )
     }
 }
 
@@ -1071,78 +1065,12 @@ impl HardeningStep for RestartSshStep {
     }
 }
 
-// 辅助函数：修改 sshd_config
-
-/// 修改 sshd_config 中的键值，返回结果描述（备份路径已注册回滚）
-fn modify_sshd_config(key: &str, value: &str) -> Result<String, DomainError> {
-    modify_sshd_config_at(std::path::Path::new("/etc/ssh/sshd_config"), key, value)
-}
-
-fn modify_sshd_config_at(
-    path: &std::path::Path,
-    key: &str,
-    value: &str,
-) -> Result<String, DomainError> {
-    let backup = backup_file(path)?
-        .ok_or_else(|| DomainError::ParseError(crate::i18n::tr("err_sshd_not_found").into()))?;
-
-    // 注册撤销：从备份恢复原文件
-    rollback::register_file_backup(
-        crate::i18n::tr("undo_file_restore").replace("{key}", key),
-        backup.display().to_string(),
-        path.to_string_lossy().to_string(),
-    );
-
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| DomainError::ParseError(format!("{}: {e}", crate::i18n::tr("err_read"))))?;
-
-    let mut found = false;
-    let new_content: Vec<String> = content
-        .lines()
-        .map(|line| {
-            let trimmed = line.trim();
-            if trimmed.starts_with('#') || trimmed.is_empty() {
-                return line.to_string();
-            }
-            // 精确匹配第一个单词（避免 Port 误匹配 PortNumber）
-            let first_word = trimmed.split_whitespace().next().unwrap_or("");
-            if first_word == key {
-                found = true;
-                format!("{key} {value}")
-            } else {
-                line.to_string()
-            }
-        })
-        .collect();
-
-    let mut result = new_content.join("\n");
-    if !found {
-        result.push_str(&format!("\n{key} {value}\n"));
-    }
-
-    std::fs::write(path, result).map_err(|e| {
-        DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_write")))
-    })?;
-
-    Ok(crate::i18n::tr("result_sshd_cfg_set")
-        .replace("{key}", key)
-        .replace("{value}", value)
-        .replace("{bak}", &backup.display().to_string()))
-}
-
-#[cfg(test)]
-mod backup_tests {
-    use super::*;
-
-    #[test]
-    fn repeated_config_changes_restore_original_bytes() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sshd_config");
-        let original = "Port 22\nPasswordAuthentication yes\n";
-        std::fs::write(&path, original).unwrap();
-        modify_sshd_config_at(&path, "Port", "2222").unwrap();
-        modify_sshd_config_at(&path, "PasswordAuthentication", "no").unwrap();
-        rollback::undo_all();
-        assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+fn ssh_config_result(kind: StepKind, settings: &[(&str, &str)]) -> Result<StepResult, DomainError> {
+    match ssh::SshConfig::default().update(settings)? {
+        Some(message) => Ok(StepResult::changed(kind, message)),
+        None => Ok(StepResult::skipped(
+            kind,
+            crate::i18n::tr("result_sshd_unchanged"),
+        )),
     }
 }

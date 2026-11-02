@@ -66,6 +66,14 @@ pub fn tr(key: &'static str) -> &'static str {
 
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
+        "audit_ssh_global" => "全局端口: {ports}",
+        "audit_ssh_unverified" => "SSH 未验证（Include/Match、多个端口或读取失败；不可判为安全）",
+        "err_sshd_effective" => "无法验证 SSH 全局目标值（包括多个监听端口冲突）",
+        "result_sshd_global_set" => {
+            "SSH 全局配置已写入，尚待生效（备份: {bak}）；Include/Match 的连接条件未验证"
+        },
+        "result_sshd_unchanged" => "SSH 全局配置未变化；Include/Match 的连接条件未验证",
+
         // ── 主入口 ──
         "select_language" => "选择语言",
         "select_mode" => "请选择启动模式",
@@ -384,6 +392,20 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
+        "audit_ssh_global" => "Global ports: {ports}",
+        "audit_ssh_unverified" => {
+            "SSH unverified (Include/Match, multiple ports or read failure; not marked safe)"
+        },
+        "err_sshd_effective" => {
+            "Cannot verify SSH global target values (including multiple listening ports)"
+        },
+        "result_sshd_global_set" => {
+            "SSH global configuration saved, activation pending (backup: {bak}); Include/Match connection contexts unverified"
+        },
+        "result_sshd_unchanged" => {
+            "SSH global configuration unchanged; Include/Match connection contexts unverified"
+        },
+
         "select_language" => "Select Language",
         "select_mode" => "Select Launch Mode",
         "mode_cli" => "CLI Mode (Traditional Interactive)",
@@ -715,6 +737,14 @@ fn en(key: &str) -> Option<&'static str> {
 
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
+        "audit_ssh_global" => "全域連接埠: {ports}",
+        "audit_ssh_unverified" => "SSH 未驗證（Include/Match、多個連接埠或讀取失敗；不可判為安全）",
+        "err_sshd_effective" => "無法驗證 SSH 全域目標值（包括多個監聽連接埠衝突）",
+        "result_sshd_global_set" => {
+            "SSH 全域配置已寫入，尚待生效（備份: {bak}）；Include/Match 的連線條件未驗證"
+        },
+        "result_sshd_unchanged" => "SSH 全域配置未變化；Include/Match 的連線條件未驗證",
+
         "select_language" => "選擇語言",
         "select_mode" => "請選擇啟動模式",
         "mode_cli" => "CLI 模式（傳統互動式）",
