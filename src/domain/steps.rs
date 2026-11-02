@@ -131,6 +131,8 @@ impl fmt::Display for StepKind {
 pub enum SshKeyAction {
     /// 生成新密钥对
     GenerateNew,
+    /// 经用户确认替换已有密钥对
+    ReplaceExisting,
     /// 粘贴用户提供的公钥
     PasteKey(String),
 }
@@ -139,6 +141,7 @@ impl fmt::Debug for SshKeyAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::GenerateNew => write!(f, "GenerateNew"),
+            Self::ReplaceExisting => write!(f, "ReplaceExisting"),
             Self::PasteKey(key) => {
                 // 脱敏：取前 20 个字符（按 char 边界，避免字节切片 panic）
                 let prefix: String = key.chars().take(20).collect();

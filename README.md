@@ -53,6 +53,7 @@
 - 支持自动备份与回退；SSH 生效尝试是整批提交边界，其后失败或中断保留修改并要求人工检查
 - 新用户创建成功即纳入回退，后续加组、目录权限或密钥初始化失败不会遗漏该账户的撤销。
 - 公钥追加使用账户数据库中的 home，并拒绝符号链接、硬链接、非普通目标或不安全的目录归属/权限；现有密钥不会被覆盖。
+- 生成密钥先在私有临时目录完成；TUI 确认覆盖后由步骤保存旧文件，失败或取消回退时恢复原字节与权限，恢复失败会保留备份并报告路径。
 
 ### 适用范围
 
@@ -294,9 +295,8 @@ sudo u2secure
 useradd -m -s /bin/bash deploy          # 创建用户
 usermod -aG sudo deploy                 # 加入 sudo 组
 passwd -l deploy                        # 锁定密码（强制密钥登录）
-ssh-keygen -t ed25519 -f /home/deploy/.ssh/id_ed25519 -N "" -q  # 生成密钥
-chmod 600 /home/deploy/.ssh/authorized_keys  # 权限修正
-chown -R deploy:deploy /home/deploy/.ssh/
+# 后续密钥生成使用私有临时目录，再通过已验证的文件描述符安装到目标账户 home。
+# .ssh 缺失时以目标账户身份创建；不以 root 按路径递归 chown 或 chmod。
 ```
 
 #### 步骤 4 详解：SSH 端口修改
@@ -314,13 +314,9 @@ chown -R deploy:deploy /home/deploy/.ssh/
 #### 步骤 6 详解：ED25519 密钥设置
 
 ```bash
-# 选项 A：生成新密钥对
-ssh-keygen -t ed25519 -f /home/{user}/.ssh/id_ed25519 -N "" -q
+# 选项 A：临时生成新密钥对，通过已验证目录安装；已有密钥需要明确授权覆盖。
 
-# 选项 B：粘贴已有公钥
-echo "{公钥内容}" >> /home/{user}/.ssh/authorized_keys
-chmod 600 /home/{user}/.ssh/authorized_keys
-chown {user}:{user} /home/{user}/.ssh/authorized_keys
+# 选项 B：向已验证的 authorized_keys 文件描述符追加公钥并设置权限，不跟随符号链接。
 ```
 
 ---

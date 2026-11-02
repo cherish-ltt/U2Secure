@@ -171,3 +171,7 @@ fn unsafe_path() -> io::Error {
 #[cfg(test)]
 #[path = "ssh_keys_tests.rs"]
 mod tests;
+
+#[path = "ssh_keypair.rs"]
+mod keypair;
+pub(super) use keypair::generate_ssh_keypair;

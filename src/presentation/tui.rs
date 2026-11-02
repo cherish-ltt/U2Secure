@@ -847,19 +847,13 @@ fn handle_popup(
                 0 => {
                     let u = username.clone();
                     app.popup = None;
-                    // 先删旧密钥再重建（删除动作随后由步骤重新注册回滚）
-                    let home = system::home_dir(&u);
-                    for f in ["id_ed25519", "id_ed25519.pub"] {
-                        let p = format!("{}/.ssh/{}", home, f);
-                        let _ = std::fs::remove_file(&p);
-                    }
                     queue_single_run(
                         app,
                         terminal,
                         StepKind::SshKeySetup,
                         ExecuteParams {
                             ssh_key_username: Some(u),
-                            ssh_key_action: Some(SshKeyAction::GenerateNew),
+                            ssh_key_action: Some(SshKeyAction::ReplaceExisting),
                             ..Default::default()
                         },
                         orchestrator,
