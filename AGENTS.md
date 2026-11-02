@@ -272,13 +272,14 @@ msrv = "1.98.1"
   - **第一阶段**：`binary-build.yml` 由 tag push 直接触发，构建 Linux 预编译二进制
     （x86_64 与 aarch64，见 10.4 平台边界）并上传 GitHub Release，
     Release 正文优先读取 `docs/versions/<tag>.md`。
-  - **第二阶段**：等二进制就绪后再发包，两个发布工作流使用**不同**触发器：
+  - **第二阶段**：等二进制就绪后再发包：
     - `npm-publish-manual.yml`（npm 包 `@ghyper9023/u2secure`，Trusted Publishing）监听
       `workflow_run`（`workflows: ["Binary Build"]`、`types: [completed]`），
       仅在 `workflow_run.conclusion == 'success'` 时发布
-    - `cargo-publish.yml`（crates.io）同样监听 `workflow_run`，但额外用
-      `gh api` **轮询等待 Binary Build 到达 success 终态**后再发布
-      （job 级 `if` 读到的 conclusion 在排队期间可能为空，不能只依赖它）
+    - `cargo-publish.yml`（crates.io）的既有 `workflow_run` 路径虽然等待 Binary Build 成功，
+      但 **crates.io Trusted Publishing 明确拒绝该事件的 OIDC**，轮询不能解决鉴权限制。
+      当前可用路径是维护者确认构建成功、两个 Linux Release 资产齐全后手动执行
+      `gh workflow run cargo-publish.yml --repo cherish-ltt/U2Secure --ref main -f tag_name=vX.Y.Z`。
     - **crates.io 不能用 `release: [published]`**：Release 由
       `softprops/action-gh-release` 用 GITHUB_TOKEN 创建，而 GitHub 规定
       GITHUB_TOKEN 触发的事件不会创建新的 workflow run（仅 workflow_dispatch /
@@ -286,16 +287,19 @@ msrv = "1.98.1"
       改回 `release` 触发器会导致 crates.io 永不发布
     - 两者都避免出现"npm 版本号已上线、GitHub Release 二进制还是 404"导致
       postinstall 安装失败
-  - 两个发布工作流都保留 `workflow_dispatch` 作为应急手动补发入口。
+  - 两个发布工作流都保留 `workflow_dispatch`；对 crates.io 这是当前正式发布入口，
+    对 npm 是自动路径失败时的补发入口。手动触发不会替维护者检查上游构建，必须先确认二进制就绪。
     自动路径的标签读取对应 Binary Build run 的 `release-tag` artifact，不能使用
     `workflow_run.head_branch`（手动构建时它可能是 main）。缺失或非法时立即失败；
     两个发布器都检出同一解析标签。旧运行没有 artifact 时使用手动补发入口。
   - `workflow_run` 执行的是**默认分支**上的工作流文件，因此修复 npm 发布流程只需推送主分支，
     不必重新打标签；重跑依赖幂等保护（npm 已存在同版本则跳过发布）。
 - 支持 `cargo binstall u2secure` 安装预编译二进制（依赖 `[package.metadata.binstall]` 元数据，资产命名须保持 `u2secure-<target>[.exe]`）。
-- 发布顺序无需人工干预：推送 tag → 等待 Binary Build 全部成功 → npm 与 crates.io 自动发布。
-  若 Binary Build 失败，两个包都不会发布（crates.io 本身不依赖 GitHub Release 资产，
-  此处对齐顺序是为了流程语义一致）。
+- 发布顺序：推送 tag → 等待 Binary Build 全部成功 → npm 自动发布 + 维护者派发 crates.io。
+  Binary Build 失败时不得手动发包；不能把创建标签或 Release 等同于两个包都已发布，
+  必须核对工作流结论与 npm/crates.io 实际版本元数据。
+- 发布前必须确认 `Cargo.toml`、`Cargo.lock` 的本包版本及标签一致，且版本说明存在；
+  不得给仍是旧版本的提交打新标签。覆盖率门槛满足并合入后才准备版本提交。
 - 修改发布工作流后必须核对 `workflows: ["Binary Build"]` 与 `binary-build.yml` 的 `name:`
   **完全一致**：不一致会导致发布流水线**永不触发且不报错**。
 
