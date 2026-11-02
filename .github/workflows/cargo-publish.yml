@@ -8,7 +8,7 @@ on:
         required: true
         type: string
   # 既有自动路径保留，但 crates.io Trusted Publishing 拒绝 workflow_run OIDC。
-  # 当前须在 Binary Build 成功且两个 Linux 资产齐全后手动 workflow_dispatch；
+  # 当前须在 Binary Build 成功且该版本矩阵中的 Linux 资产齐全后手动 workflow_dispatch；
   # 下面的轮询只核对上游结论，不能绕过该鉴权限制。
   # GITHUB_TOKEN 创建的 release 事件不会触发新运行，也不能改回 release 触发器。
   workflow_run:

@@ -37,6 +37,11 @@ jobs:
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             cross_compile: true
+          # musl 使用同架构 runner 的原生工具链
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
 
     steps:
       - name: Determine release tag
@@ -106,24 +111,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
+      - name: Install musl toolchain
+        if: endsWith(matrix.target, '-musl')
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
       - name: Build release binary
         shell: bash
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Rename binary with platform suffix
         shell: bash
         run: |
-          case "${{ matrix.target }}" in
-            *windows*)
-              EXT=".exe"
-              ;;
-            *)
-              EXT=""
-              ;;
-          esac
-          cp "target/${{ matrix.target }}/release/u2secure${EXT}" "u2secure-${{ matrix.target }}${EXT}"
+          cp "target/${{ matrix.target }}/release/u2secure" "u2secure-${{ matrix.target }}"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2

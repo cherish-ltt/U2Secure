@@ -270,7 +270,7 @@ msrv = "1.98.1"
 - 版本号统一维护在 `Cargo.toml`（源码通过 `env!("CARGO_PKG_VERSION")` 读取）；每个版本的发布说明写入 `docs/versions/v{X.Y.Z}.md`。
 - 推送 `v*` 标签后，发布流水线按**两阶段**执行，保证二进制先于包上线：
   - **第一阶段**：`binary-build.yml` 由 tag push 直接触发，构建 Linux 预编译二进制
-    （x86_64 与 aarch64，见 10.4 平台边界）并上传 GitHub Release，
+    （x86_64 与 aarch64，各提供 GNU / musl，见 10.4 平台边界）并上传 GitHub Release，
     Release 正文优先读取 `docs/versions/<tag>.md`。
   - **第二阶段**：等二进制就绪后再发包：
     - `npm-publish-manual.yml`（npm 包 `@ghyper9023/u2secure`，Trusted Publishing）监听
@@ -278,7 +278,7 @@ msrv = "1.98.1"
       仅在 `workflow_run.conclusion == 'success'` 时发布
     - `cargo-publish.yml`（crates.io）的既有 `workflow_run` 路径虽然等待 Binary Build 成功，
       但 **crates.io Trusted Publishing 明确拒绝该事件的 OIDC**，轮询不能解决鉴权限制。
-      当前可用路径是维护者确认构建成功、两个 Linux Release 资产齐全后手动执行
+      当前可用路径是维护者确认构建成功、该版本矩阵中的 Linux Release 资产齐全后手动执行
       `gh workflow run cargo-publish.yml --repo cherish-ltt/U2Secure --ref main -f tag_name=vX.Y.Z`。
     - **crates.io 不能用 `release: [published]`**：Release 由
       `softprops/action-gh-release` 用 GITHUB_TOKEN 创建，而 GitHub 规定
@@ -374,8 +374,13 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 （apt/dnf、ufw、sshd、systemd、`/var/log`、`/etc`），部分检测逻辑（如比较
 `/etc/ssh/sshd_config` 与 `/proc/<pid>` 时间戳）在其它平台不成立。
 
-- 构建矩阵只允许 `x86_64-unknown-linux-gnu` 与 `aarch64-unknown-linux-gnu`
-  （见 `.github/workflows/binary-build.yml`）；不得重新加入 macOS / Windows 目标
+- 构建矩阵只允许 `x86_64-unknown-linux-gnu`、`aarch64-unknown-linux-gnu`、
+  `x86_64-unknown-linux-musl` 与 `aarch64-unknown-linux-musl`
+  （见 `.github/workflows/binary-build.yml`）；不得重新加入 macOS / Windows 目标。
+  musl 目标使用对应架构的 GitHub runner、`musl-tools` 和 `musl-gcc`，不得将 x86_64
+  的 musl 工具链误用于 ARM64。`python3 tests/release_tag_test.py` 同时校验矩阵与链接器配置。
+- musl 只扩展二进制链接目标，不扩大加固发行版支持范围；npm 仍选择 GNU 资产。
+  v0.5.0 已发布资产保持不变，后续发布需确认四个资产齐全。
 - `src/main.rs` 有 `#[cfg(windows)] compile_error!` 守卫，防止误产出 Windows 二进制
 - **macOS 仍必须可编译**：开发机是 macOS，`cargo test` / `clippy` / `prek` 都在其上运行。
   因此**禁止**无 `#[cfg]` 保护地使用 unix-only API（`std::os::unix`）；
