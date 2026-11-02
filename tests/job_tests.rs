@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
-use u2secure::application::job::{JobEvent, StepRunner};
+use u2secure::application::job::{JobEvent, StepRunner, execution_plan};
 use u2secure::domain::errors::DomainError;
 use u2secure::domain::steps::{ExecuteParams, HardeningStep, StepKind, StepOutcome, StepResult};
 use u2secure::infrastructure::logger::FileLogger;
@@ -36,6 +36,7 @@ struct FakeStep {
 #[derive(Debug, Clone, Copy)]
 enum Behavior {
     Changed,
+    ConfigChanged,
     Skipped,
     Failed,
     Error,
@@ -48,9 +49,15 @@ impl HardeningStep for FakeStep {
         self.kind
     }
 
-    fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
+    fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        if self.kind == StepKind::RestartSsh {
+            assert!(params.apply_ssh_changes && params.ssh_restart_required);
+        }
         match self.behavior {
             Behavior::Changed => Ok(StepResult::changed(self.kind, "ok")),
+            Behavior::ConfigChanged => {
+                Ok(StepResult::changed(self.kind, "config written").requiring_ssh_restart())
+            },
             Behavior::Skipped => Ok(StepResult::skipped(self.kind, "skip")),
             Behavior::Failed => Ok(StepResult::failed(self.kind, "soft failure")),
             Behavior::Error => Err(DomainError::SystemCommandFailed("hard failure".into())),
@@ -67,6 +74,65 @@ impl HardeningStep for FakeStep {
     }
 }
 
+#[test]
+fn ssh_activation_uses_actual_changes_and_explicit_consent() {
+    let _guard = serial();
+    let dir = tempfile::tempdir().unwrap();
+    for kind in [
+        StepKind::SshPortChange,
+        StepKind::SshPasswordAuth,
+        StepKind::SshRootLogin,
+    ] {
+        assert_eq!(execution_plan(&[kind]), [kind, StepKind::RestartSsh]);
+        for (behavior, consent, pending, expected) in [
+            (Behavior::ConfigChanged, true, false, StepOutcome::Changed),
+            (Behavior::Skipped, true, false, StepOutcome::Skipped),
+            (Behavior::Changed, true, false, StepOutcome::Skipped),
+            (Behavior::ConfigChanged, false, false, StepOutcome::Skipped),
+            (Behavior::Skipped, true, true, StepOutcome::Changed),
+            (Behavior::Skipped, false, true, StepOutcome::Skipped),
+            (Behavior::Failed, true, false, StepOutcome::Failed),
+        ] {
+            let plan = execution_plan(&[kind]);
+            let steps = plan
+                .into_iter()
+                .map(|step| {
+                    fake(
+                        step,
+                        if step == kind {
+                            behavior
+                        } else {
+                            Behavior::Changed
+                        },
+                    )
+                })
+                .collect();
+            let params = ExecuteParams {
+                apply_ssh_changes: consent,
+                ssh_restart_required: pending,
+                ..Default::default()
+            };
+            let results = runner(&dir).run_steps(steps, &params, &mut |_| {});
+            if matches!(behavior, Behavior::Failed) {
+                assert_eq!(results.len(), 1);
+                assert!(results[0].is_failed());
+                continue;
+            }
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[1].kind, StepKind::RestartSsh);
+            assert_eq!(results[1].outcome, expected);
+            if !consent && (pending || matches!(behavior, Behavior::ConfigChanged)) {
+                assert_eq!(results[1].message, u2secure::i18n::tr("result_ssh_pending"));
+            }
+        }
+    }
+    assert_eq!(execution_plan(&[StepKind::Ufw]), [StepKind::Ufw]);
+    assert_eq!(
+        execution_plan(&[StepKind::RestartSsh, StepKind::SshPortChange]),
+        [StepKind::SshPortChange, StepKind::RestartSsh]
+    );
+}
+
 fn fake(kind: StepKind, behavior: Behavior) -> Box<dyn HardeningStep + Send> {
     Box::new(FakeStep { kind, behavior })
 }
@@ -79,6 +145,142 @@ fn runner(dir: &tempfile::TempDir) -> StepRunner {
 
 fn kinds(results: &[StepResult]) -> Vec<StepKind> {
     results.iter().map(|r| r.kind).collect()
+}
+
+#[derive(Debug)]
+struct FileStep {
+    path: std::path::PathBuf,
+    interrupt: bool,
+}
+
+#[derive(Debug)]
+struct UnrestorableStep {
+    path: std::path::PathBuf,
+    interrupt: bool,
+}
+
+impl HardeningStep for UnrestorableStep {
+    fn kind(&self) -> StepKind {
+        StepKind::SshPortChange
+    }
+
+    fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        std::fs::write(&self.path, "only backup").unwrap();
+        rollback::register_file_backup(
+            "restore fixture".into(),
+            self.path.display().to_string(),
+            self.path.join("missing/config").display().to_string(),
+        );
+        rollback::INTERRUPTED.store(self.interrupt, Ordering::SeqCst);
+        Ok(StepResult::failed(self.kind(), "fixture failed"))
+    }
+}
+
+#[test]
+fn rollback_failures_are_returned_in_step_results_and_events() {
+    let _guard = serial();
+    for interrupt in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let backup = dir.path().join("backup");
+        let mut events = vec![];
+        let results = runner(&dir).run_steps(
+            vec![Box::new(UnrestorableStep {
+                path: backup.clone(),
+                interrupt,
+            })],
+            &ExecuteParams::default(),
+            &mut |event| events.push(event),
+        );
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_failed());
+        assert!(results[0].message.contains(&backup.display().to_string()));
+        assert!(results[0].message.contains("Not a directory"));
+        assert!(events.iter().any(|event| matches!(event,
+            JobEvent::StepFinished(result) if result.message == results[0].message)));
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "only backup");
+        rollback::INTERRUPTED.store(false, Ordering::SeqCst);
+    }
+}
+
+impl HardeningStep for FileStep {
+    fn kind(&self) -> StepKind {
+        StepKind::SshPortChange
+    }
+
+    fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        let backup = self.path.with_extension("backup");
+        std::fs::copy(&self.path, &backup).unwrap();
+        rollback::register_file_backup(
+            "restore fixture".into(),
+            backup.display().to_string(),
+            self.path.display().to_string(),
+        );
+        std::fs::write(&self.path, "configured").unwrap();
+        if self.interrupt {
+            rollback::INTERRUPTED.store(true, Ordering::SeqCst);
+        }
+        Ok(StepResult::changed(self.kind(), "fixture changed"))
+    }
+}
+
+#[test]
+fn successful_batch_survives_later_failure_or_cancellation() {
+    let _guard = serial();
+    for interrupt in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        std::fs::write(&first, "original").unwrap();
+        std::fs::write(&second, "original").unwrap();
+        let runner = runner(&dir);
+        runner.run_steps(
+            vec![Box::new(FileStep {
+                path: first.clone(),
+                interrupt: false,
+            })],
+            &ExecuteParams::default(),
+            &mut |_| {},
+        );
+        runner.run_steps(
+            vec![
+                Box::new(FileStep {
+                    path: second.clone(),
+                    interrupt,
+                }),
+                fake(StepKind::Fail2ban, Behavior::Failed),
+            ],
+            &ExecuteParams::default(),
+            &mut |_| {},
+        );
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "configured");
+        assert!(first.with_extension("backup").exists());
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "original");
+        assert_eq!(rollback::undo_depth(), 0);
+        rollback::INTERRUPTED.store(false, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn batch_does_not_consume_preexisting_undo_records() {
+    let _guard = serial();
+    let undone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = Arc::clone(&undone);
+    rollback::register_undo(u2secure::domain::undo::UndoAction::new(
+        "outside batch".into(),
+        Box::new(move || flag.store(true, Ordering::SeqCst)),
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    for behavior in [Behavior::Changed, Behavior::Failed] {
+        runner(&dir).run_steps(
+            vec![fake(StepKind::Ufw, behavior)],
+            &ExecuteParams::default(),
+            &mut |_| {},
+        );
+        assert_eq!(rollback::undo_depth(), 1);
+        assert!(!undone.load(Ordering::SeqCst));
+    }
+    rollback::undo_all();
+    assert!(undone.load(Ordering::SeqCst));
 }
 
 #[test]
@@ -139,12 +341,14 @@ fn test_core_step_failure_stops_and_rolls_back() {
     rollback::INTERRUPTED.store(false, Ordering::SeqCst);
     let dir = tempfile::tempdir().expect("tempdir");
 
-    // 注册一个无害的撤销动作，验证失败时会执行回滚
-    rollback::register_command_undo("noop".into(), vec!["true".into()]);
-    assert_eq!(rollback::undo_depth(), 1);
+    let path = dir.path().join("config");
+    std::fs::write(&path, "original").unwrap();
 
     let steps = vec![
-        fake(StepKind::Ufw, Behavior::Changed),
+        Box::new(FileStep {
+            path: path.clone(),
+            interrupt: false,
+        }),
         fake(StepKind::Fail2ban, Behavior::Failed),
         fake(StepKind::RestartSsh, Behavior::Changed),
     ];
@@ -156,12 +360,13 @@ fn test_core_step_failure_stops_and_rolls_back() {
     // 核心步骤失败：停止，后续步骤不执行
     assert_eq!(
         kinds(&results),
-        vec![StepKind::Ufw, StepKind::Fail2ban],
+        vec![StepKind::SshPortChange, StepKind::Fail2ban],
         "核心步骤失败后不应继续执行"
     );
     assert_eq!(results[1].outcome, StepOutcome::Failed);
     // 回滚已执行
     assert_eq!(rollback::undo_depth(), 0, "失败后应回滚");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "original");
     assert!(events.iter().any(|e| e.contains("AllFinished")));
 }
 
@@ -188,10 +393,14 @@ fn test_optional_step_failure_continues_without_rollback() {
     rollback::INTERRUPTED.store(false, Ordering::SeqCst);
     let dir = tempfile::tempdir().expect("tempdir");
 
-    rollback::register_command_undo("noop".into(), vec!["true".into()]);
+    let path = dir.path().join("config");
+    std::fs::write(&path, "original").unwrap();
 
     let steps = vec![
-        fake(StepKind::Ufw, Behavior::Changed),
+        Box::new(FileStep {
+            path: path.clone(),
+            interrupt: false,
+        }),
         fake(StepKind::SecurityScan, Behavior::Failed),
         fake(StepKind::RestartSsh, Behavior::Changed),
     ];
@@ -200,13 +409,15 @@ fn test_optional_step_failure_continues_without_rollback() {
     // 可选步骤失败：不中断、不回滚
     assert_eq!(
         kinds(&results),
-        vec![StepKind::Ufw, StepKind::SecurityScan, StepKind::RestartSsh]
+        vec![
+            StepKind::SshPortChange,
+            StepKind::SecurityScan,
+            StepKind::RestartSsh
+        ]
     );
     assert_eq!(results[1].outcome, StepOutcome::Failed);
-    assert_eq!(rollback::undo_depth(), 1, "可选步骤失败不应触发回滚");
-
-    // 清理全局状态，避免影响其他用例
-    rollback::undo_all();
+    assert_eq!(rollback::undo_depth(), 0, "批次正常完成应提交撤销记录");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "configured");
 }
 
 #[test]
@@ -292,9 +503,14 @@ fn test_interrupt_cancels_running_batch() {
     rollback::INTERRUPTED.store(false, Ordering::SeqCst);
     let dir = tempfile::tempdir().expect("tempdir");
 
-    rollback::register_command_undo("noop".into(), vec!["true".into()]);
+    let path = dir.path().join("config");
+    std::fs::write(&path, "original").unwrap();
 
     let steps = vec![
+        Box::new(FileStep {
+            path: path.clone(),
+            interrupt: false,
+        }),
         fake(StepKind::Ufw, Behavior::Slow),
         fake(StepKind::Fail2ban, Behavior::Changed),
     ];
@@ -324,5 +540,6 @@ fn test_interrupt_cancels_running_batch() {
     assert!(saw_interrupt, "应产生中断事件");
     assert!(all_finished, "应正常收尾");
     assert_eq!(rollback::undo_depth(), 0, "中断后应回滚已注册修改");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "original");
     rollback::INTERRUPTED.store(false, Ordering::SeqCst);
 }

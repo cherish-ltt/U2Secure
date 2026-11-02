@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::domain::audit::{AuditItem, AuditReport, AuditStatus, PackageManager};
 use crate::domain::errors::DomainError;
-use crate::infrastructure::rollback;
+use crate::infrastructure::{rollback, ssh};
 
 /// 轮询子进程状态的间隔
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -118,12 +118,19 @@ pub fn run_streaming_watchdog(
     let stderr_file = file.try_clone().map_err(|e| {
         DomainError::SystemCommandFailed(format!("无法写入执行日志 {log_path}: {e}"))
     })?;
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .envs(envs.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::from(file))
-        .stderr(Stdio::from(stderr_file))
+        .stderr(Stdio::from(stderr_file));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command
         .spawn()
         .map_err(|e| DomainError::SystemCommandFailed(format!("无法执行 {program}: {e}")))?;
 
@@ -132,7 +139,7 @@ pub fn run_streaming_watchdog(
     let mut last_progress = Instant::now();
     let mut last_size = std::fs::metadata(log_path).map(|m| m.len()).unwrap_or(0);
     loop {
-        match child.try_wait() {
+        match command_status(&mut child) {
             Ok(Some(status)) => {
                 return Ok(if status.success() {
                     StreamStatus::Success
@@ -142,8 +149,7 @@ pub fn run_streaming_watchdog(
             },
             Ok(None) => {},
             Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                stop_command(&mut child)?;
                 return Err(DomainError::SystemCommandFailed(format!(
                     "等待 {program} 结束时出错: {e}"
                 )));
@@ -158,24 +164,68 @@ pub fn run_streaming_watchdog(
                 last_size = size;
                 last_progress = Instant::now();
             } else if last_progress.elapsed() >= stall {
-                let _ = child.kill();
-                let _ = child.wait();
+                stop_command(&mut child)?;
                 return Ok(StreamStatus::NoResponse);
             }
         }
 
         if rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_command(&mut child)?;
             return Ok(StreamStatus::Cancelled);
         }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_command(&mut child)?;
             return Ok(StreamStatus::TimedOut);
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+}
+
+#[cfg(target_os = "linux")]
+fn command_status(
+    child: &mut std::process::Child,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+    // Keep the leader waitable until its group is signalled, preventing PID reuse.
+    let status = waitid(
+        WaitId::Pid(Pid::from_child(child)),
+        WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+    )?;
+    if status.is_none() {
+        return Ok(None);
+    }
+    stop_command(child).map_err(std::io::Error::other)?;
+    child.wait().map(Some)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn command_status(
+    child: &mut std::process::Child,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    child.try_wait()
+}
+
+fn stop_command(child: &mut std::process::Child) -> Result<(), DomainError> {
+    #[cfg(unix)]
+    let stopped = {
+        use rustix::process::{Pid, Signal, kill_process_group};
+        match kill_process_group(Pid::from_child(child), Signal::KILL) {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+            Err(error) => Err(std::io::Error::from(error)),
+        }
+    };
+    #[cfg(not(unix))]
+    let stopped = child.kill();
+    // Always reap our child, including when signalling the group fails.
+    if stopped.is_err() {
+        let _ = child.kill();
+    }
+    let waited = child.wait();
+    stopped.and(waited.map(|_| ())).map_err(|error| {
+        DomainError::SystemCommandFailed(
+            crate::i18n::tr("err_stop_command").replace("{err}", &error.to_string()),
+        )
+    })
 }
 
 /// 便捷封装：以 `program + args` 形式运行长耗时命令
@@ -222,49 +272,13 @@ pub fn which(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 解析 sshd_config 中的某个指令值（取最后出现的一个）
-pub fn sshd_config_get(key: &str) -> Option<String> {
-    let path = Path::new("/etc/ssh/sshd_config");
-    let content = std::fs::read_to_string(path).ok()?;
-    let mut value = None;
-    for line in content.lines() {
-        let line = line.trim();
-        // 跳过注释
-        if line.starts_with('#') || line.is_empty() {
-            continue;
-        }
-        if let Some(stripped) = line.strip_prefix(key)
-            && (stripped.starts_with(' ') || stripped.starts_with('\t'))
-        {
-            value = Some(stripped.trim().to_string());
-        }
-    }
-    value
-}
-
-/// 获取 SSH 端口
+/// 获取 SSH 全局端口；审计通过 ssh_config_verified 区分未知与已验证值。
 pub fn detect_ssh_port() -> u16 {
-    sshd_config_get("Port")
-        .and_then(|v| v.parse().ok())
+    ssh::SshConfig::default()
+        .effective()
+        .ok()
+        .and_then(|config| config.ports.first().copied())
         .unwrap_or(22)
-}
-
-/// 检测是否禁止密码登录
-pub fn detect_password_auth_disabled() -> bool {
-    let password = sshd_config_get("PasswordAuthentication")
-        .map(|v| v.eq_ignore_ascii_case("no"))
-        .unwrap_or(false);
-    let challenge = sshd_config_get("ChallengeResponseAuthentication")
-        .map(|v| v.eq_ignore_ascii_case("no"))
-        .unwrap_or(false);
-    password && challenge
-}
-
-/// 检测是否禁止 root 登录
-pub fn detect_root_login_disabled() -> bool {
-    sshd_config_get("PermitRootLogin")
-        .map(|v| v.eq_ignore_ascii_case("no") || v.eq_ignore_ascii_case("prohibit-password"))
-        .unwrap_or(false)
 }
 
 /// 获取非 root 的 sudo 用户列表
@@ -508,9 +522,31 @@ pub fn detect_system_up_to_date() -> bool {
 pub fn run_full_audit() -> AuditReport {
     let is_root = detect_is_root();
     let package_manager = detect_package_manager();
-    let ssh_port = detect_ssh_port();
-    let password_auth_disabled = detect_password_auth_disabled();
-    let root_login_disabled = detect_root_login_disabled();
+    let ssh_config = ssh::SshConfig::default().effective();
+    let ssh_config_verified = ssh_config.as_ref().is_ok_and(|config| config.verified);
+    let ssh_port = ssh_config
+        .as_ref()
+        .ok()
+        .and_then(|config| config.ports.first().copied())
+        .unwrap_or(22);
+    let password_auth_disabled = ssh_config
+        .as_ref()
+        .is_ok_and(|config| config.password_auth_disabled);
+    let root_login_disabled = ssh_config
+        .as_ref()
+        .is_ok_and(|config| config.root_login_disabled);
+    let ssh_detail = match &ssh_config {
+        Ok(config) => crate::i18n::tr("audit_ssh_global").replace(
+            "{ports}",
+            &config
+                .ports
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+        Err(error) => error.to_string(),
+    };
     let sudo_users = detect_sudo_users();
     let fail2ban_installed = detect_fail2ban_installed();
     let ufw_enabled = detect_ufw_enabled();
@@ -520,6 +556,25 @@ pub fn run_full_audit() -> AuditReport {
     let logwatch_installed = detect_logwatch_installed();
     let aide_installed = detect_aide_installed();
     let ssh_restart_needed = detect_ssh_restart_needed();
+
+    let mut report = AuditReport {
+        items: vec![],
+        is_root,
+        package_manager,
+        ssh_port,
+        ssh_config_verified,
+        password_auth_disabled,
+        root_login_disabled,
+        sudo_users: sudo_users.clone(),
+        fail2ban_installed,
+        ufw_enabled,
+        auto_updates_enabled,
+        system_up_to_date,
+        lynis_installed,
+        logwatch_installed,
+        aide_installed,
+        ssh_restart_needed,
+    };
 
     let mut items = vec![];
 
@@ -541,41 +596,44 @@ pub fn run_full_audit() -> AuditReport {
         detail: crate::i18n::tr("audit_detail_pkg").replace("{pkg}", package_manager.name()),
     });
 
-    items.push(if ssh_port != 22 {
-        AuditItem::safe(
-            crate::i18n::tr("audit_ssh_port"),
-            crate::i18n::tr("audit_detail_port_safe").replace("{port}", &ssh_port.to_string()),
-        )
-    } else {
-        AuditItem::missing(
-            crate::i18n::tr("audit_ssh_port"),
-            crate::i18n::tr("audit_detail_port_missing").into(),
-        )
-    });
-
-    items.push(if password_auth_disabled {
-        AuditItem::safe(
-            crate::i18n::tr("audit_password_auth"),
-            crate::i18n::tr("audit_detail_pw_disabled").into(),
-        )
-    } else {
-        AuditItem::missing(
-            crate::i18n::tr("audit_password_auth"),
-            crate::i18n::tr("audit_detail_pw_missing").into(),
-        )
-    });
-
-    items.push(if root_login_disabled {
-        AuditItem::safe(
-            crate::i18n::tr("audit_root_login"),
-            crate::i18n::tr("audit_detail_root_disabled").into(),
-        )
-    } else {
-        AuditItem::missing(
-            crate::i18n::tr("audit_root_login"),
-            crate::i18n::tr("audit_detail_root_missing_cfg").into(),
-        )
-    });
+    for (kind, name, detail) in [
+        (
+            crate::domain::steps::StepKind::SshPortChange,
+            "audit_ssh_port",
+            ssh_detail,
+        ),
+        (
+            crate::domain::steps::StepKind::SshPasswordAuth,
+            "audit_password_auth",
+            crate::i18n::tr(if password_auth_disabled {
+                "audit_detail_pw_disabled"
+            } else {
+                "audit_detail_pw_missing"
+            })
+            .into(),
+        ),
+        (
+            crate::domain::steps::StepKind::SshRootLogin,
+            "audit_root_login",
+            crate::i18n::tr(if root_login_disabled {
+                "audit_detail_root_disabled"
+            } else {
+                "audit_detail_root_missing_cfg"
+            })
+            .into(),
+        ),
+    ] {
+        let detail = if ssh_config_verified {
+            detail
+        } else {
+            format!("{}: {detail}", crate::i18n::tr("audit_ssh_unverified"))
+        };
+        items.push(AuditItem::new(
+            crate::i18n::tr(name),
+            report.status_for(kind),
+            detail,
+        ));
+    }
 
     items.push(if sudo_users.is_empty() {
         AuditItem::missing(
@@ -637,23 +695,8 @@ pub fn run_full_audit() -> AuditReport {
         )
     });
 
-    AuditReport {
-        items,
-        is_root,
-        package_manager,
-        ssh_port,
-        password_auth_disabled,
-        root_login_disabled,
-        sudo_users,
-        fail2ban_installed,
-        ufw_enabled,
-        auto_updates_enabled,
-        system_up_to_date,
-        lynis_installed,
-        logwatch_installed,
-        aide_installed,
-        ssh_restart_needed,
-    }
+    report.items = items;
+    report
 }
 
 /// 创建系统用户，加入管理员组，返回创建是否成功
@@ -670,6 +713,9 @@ pub fn create_system_user(username: &str) -> Result<(), DomainError> {
             "useradd 失败: {stderr}"
         )));
     }
+
+    // useradd 已产生账户；后续初始化失败同样必须撤销。
+    rollback::register_user_remove(username.to_string());
 
     // 加入管理员组：Debian/Ubuntu 为 sudo，RHEL 系为 wheel
     add_to_admin_group(username)?;
