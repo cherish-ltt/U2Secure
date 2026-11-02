@@ -40,13 +40,23 @@ pub fn register_undo(action: UndoAction) {
 
 /// 手动触发全部回退（用于步骤失败时）
 pub fn undo_all() {
+    undo_since(0);
+}
+
+pub(crate) fn discard_since(checkpoint: usize) {
+    if let Ok(mut stack) = UNDO_STACK.lock() {
+        stack.truncate(checkpoint);
+    }
+}
+
+pub(crate) fn undo_since(checkpoint: usize) {
     if UNDO_RUNNING.swap(true, Ordering::SeqCst) {
         return; // 防止重入
     }
 
     let actions = UNDO_STACK
         .lock()
-        .map(|mut stack| std::mem::take(&mut *stack))
+        .map(|mut stack| stack.split_off(checkpoint))
         .ok();
 
     if let Some(mut actions) = actions {
