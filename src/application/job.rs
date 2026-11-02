@@ -45,7 +45,7 @@ pub enum JobEvent {
     StepFinished(StepResult),
     /// 一般日志（镜像准备、回滚提示等）
     Log(String),
-    /// 用户中断，已回滚
+    /// 用户中断，回滚错误由步骤结果报告
     Interrupted,
     /// 临时软件源连接失败（重试耗尽，未执行任何步骤，等待用户决定重试/换源）
     MirrorFailed { reason: String },
@@ -206,7 +206,15 @@ impl StepRunner {
             let kind = step.kind();
 
             if rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
-                self.rollback_on_interrupt(checkpoint, on_event);
+                let failures = self.rollback_on_interrupt(checkpoint, on_event);
+                if !failures.is_empty() {
+                    let message = crate::i18n::tr("log_rollback_failed")
+                        .replace("{errors}", &failures.join("\n"));
+                    self.logger.log(&message);
+                    let result = StepResult::failed(kind, message);
+                    on_event(JobEvent::StepFinished(result.clone()));
+                    results.push(result);
+                }
                 break;
             }
 
@@ -225,7 +233,7 @@ impl StepRunner {
             self.logger
                 .log_operation(crate::i18n::tr("log_step_start"), kind.label());
 
-            let result = match step.execute(&step_params) {
+            let mut result = match step.execute(&step_params) {
                 Ok(result) => result,
                 Err(e) => StepResult::failed(
                     kind,
@@ -233,7 +241,7 @@ impl StepRunner {
                 ),
             };
 
-            // 中断发生在步骤执行中：先记录结果，再统一走中断回滚
+            // 中断发生在步骤执行中：回滚错误和步骤结果一起报告
             let interrupted = rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst);
 
             match result.outcome {
@@ -251,20 +259,29 @@ impl StepRunner {
                 },
             }
 
+            // 失败处理策略：可选步骤只记录，核心步骤回滚并停止
+            let stop = interrupted || (result.is_failed() && !kind.is_optional());
+            let failures = if interrupted {
+                self.rollback_on_interrupt(checkpoint, on_event)
+            } else if stop {
+                self.logger.log(crate::i18n::tr("log_rollback_auto"));
+                let failures = rollback::undo_since(checkpoint);
+                on_event(JobEvent::Log(crate::i18n::tr("log_rollback_auto").into()));
+                failures
+            } else {
+                vec![]
+            };
+            if !failures.is_empty() {
+                let message = crate::i18n::tr("log_rollback_failed")
+                    .replace("{errors}", &failures.join("\n"));
+                self.logger.log(&message);
+                result.outcome = StepOutcome::Failed;
+                result.message.push('\n');
+                result.message.push_str(&message);
+            }
             on_event(JobEvent::StepFinished(result.clone()));
             results.push(result);
-
-            if interrupted {
-                self.rollback_on_interrupt(checkpoint, on_event);
-                break;
-            }
-
-            // 失败处理策略：可选步骤只记录，核心步骤回滚并停止
-            let failed = results.last().is_some_and(|r| r.is_failed());
-            if failed && !kind.is_optional() {
-                self.logger.log(crate::i18n::tr("log_rollback_auto"));
-                rollback::undo_since(checkpoint);
-                on_event(JobEvent::Log(crate::i18n::tr("log_rollback_auto").into()));
+            if stop {
                 break;
             }
         }
@@ -333,12 +350,17 @@ impl StepRunner {
         }
     }
 
-    fn rollback_on_interrupt(&self, checkpoint: usize, on_event: &mut dyn FnMut(JobEvent)) {
+    fn rollback_on_interrupt(
+        &self,
+        checkpoint: usize,
+        on_event: &mut dyn FnMut(JobEvent),
+    ) -> Vec<String> {
         self.logger.log(crate::i18n::tr("log_interrupt_rollback"));
-        rollback::undo_since(checkpoint);
+        let failures = rollback::undo_since(checkpoint);
         on_event(JobEvent::Log(
             crate::i18n::tr("log_interrupt_rollback").into(),
         ));
         on_event(JobEvent::Interrupted);
+        failures
     }
 }

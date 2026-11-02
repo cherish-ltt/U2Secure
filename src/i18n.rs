@@ -182,6 +182,10 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "log_step_complete" => "完成",
         "log_step_failed" => "失败",
         "log_rollback_auto" => "步骤失败，自动回退所有已注册的修改",
+        "log_rollback_failed" => "回滚未全部完成，请根据以下错误手动恢复：\n{errors}",
+        "err_restore_backup" => "恢复 {path} 失败，备份保留于 {backup}：{err}",
+        "err_cleanup_backup" => "{path} 已恢复，但清理备份 {backup} 失败：{err}",
+        "err_user_remove" => "userdel 撤销用户 {user} 失败：{err}",
 
         // ── 回退描述 ──
         "undo_user_remove" => "删除用户 '{user}'",
@@ -328,7 +332,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "log_step_failed_detail" => "失败: {err}",
         "undo_file_restore_generic" => "恢复文件 {path}",
         "cli_live_log" => "实时输出: {log}",
-        "cli_interrupted" => "用户中断，已回滚全部已注册修改",
+        "cli_interrupted" => "用户中断，已执行本批回滚；恢复失败详情请查看结果",
         "cli_mirror_probing" => "正在探测镜像源延迟...",
         "cli_mirror_prompt" => "选择本次运行使用的软件源（仅本次生效）",
         "cli_artifact" => "报告:",
@@ -488,6 +492,12 @@ fn en(key: &str) -> Option<&'static str> {
         "log_step_complete" => "Completed",
         "log_step_failed" => "Failed",
         "log_rollback_auto" => "Step failed, auto-rolling back all registered changes",
+        "log_rollback_failed" => {
+            "Rollback incomplete; use these errors for manual recovery:\n{errors}"
+        },
+        "err_restore_backup" => "Cannot restore {path}; backup retained at {backup}: {err}",
+        "err_cleanup_backup" => "Restored {path}, but cannot remove backup {backup}: {err}",
+        "err_user_remove" => "userdel failed to roll back user {user}: {err}",
 
         "undo_user_remove" => "Remove user '{user}'",
         "undo_pkg_remove" => "Remove {pkg}",
@@ -641,7 +651,9 @@ fn en(key: &str) -> Option<&'static str> {
         "log_step_failed_detail" => "Failed: {err}",
         "undo_file_restore_generic" => "Restore file {path}",
         "cli_live_log" => "Live output: {log}",
-        "cli_interrupted" => "Interrupted by user, all registered changes were rolled back",
+        "cli_interrupted" => {
+            "Interrupted; batch rollback attempted. See results for recovery failures"
+        },
         "cli_mirror_probing" => "Probing mirror latency...",
         "cli_mirror_prompt" => "Select the repository mirror for this run (temporary)",
         "cli_artifact" => "Report:",
@@ -809,6 +821,10 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "log_step_complete" => "完成",
         "log_step_failed" => "失敗",
         "log_rollback_auto" => "步驟失敗，自動回退所有已註冊的修改",
+        "log_rollback_failed" => "回滾未全部完成，請根據以下錯誤手動恢復：\n{errors}",
+        "err_restore_backup" => "恢復 {path} 失敗，備份保留於 {backup}：{err}",
+        "err_cleanup_backup" => "{path} 已恢復，但清理備份 {backup} 失敗：{err}",
+        "err_user_remove" => "userdel 撤銷用戶 {user} 失敗：{err}",
 
         "undo_user_remove" => "刪除用戶 '{user}'",
         "undo_pkg_remove" => "刪除 {pkg}",
@@ -950,7 +966,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "log_step_failed_detail" => "失敗: {err}",
         "undo_file_restore_generic" => "還原檔案 {path}",
         "cli_live_log" => "即時輸出: {log}",
-        "cli_interrupted" => "使用者中斷，已回滾全部已註冊修改",
+        "cli_interrupted" => "使用者中斷，已執行本批回滾；恢復失敗詳情請查看結果",
         "cli_mirror_probing" => "正在偵測鏡像源延遲...",
         "cli_mirror_prompt" => "選擇本次執行使用的軟體源（僅本次生效）",
         "cli_artifact" => "報告:",

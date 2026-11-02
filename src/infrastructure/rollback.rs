@@ -39,8 +39,8 @@ pub fn register_undo(action: UndoAction) {
 }
 
 /// 手动触发全部回退（用于步骤失败时）
-pub fn undo_all() {
-    undo_since(0);
+pub fn undo_all() -> Vec<String> {
+    undo_since(0)
 }
 
 pub(crate) fn discard_since(checkpoint: usize) {
@@ -49,26 +49,35 @@ pub(crate) fn discard_since(checkpoint: usize) {
     }
 }
 
-pub(crate) fn undo_since(checkpoint: usize) {
+pub(crate) fn undo_since(checkpoint: usize) -> Vec<String> {
     if UNDO_RUNNING.swap(true, Ordering::SeqCst) {
-        return; // 防止重入
+        return vec![]; // 防止重入
     }
 
     let actions = UNDO_STACK
         .lock()
         .map(|mut stack| stack.split_off(checkpoint))
-        .ok();
+        .map_err(|e| e.to_string());
 
-    if let Some(mut actions) = actions {
+    let mut failures = vec![];
+    if let Ok(mut actions) = actions {
         actions.reverse();
         for action in actions {
             eprintln!("  ⮐ {}", action.description);
-            action.execute();
+            let description = action.description.clone();
+            if let Err(error) = action.execute() {
+                let message = format!("{description}: {error}");
+                eprintln!("{message}");
+                failures.push(message);
+            }
         }
+    } else if let Err(error) = actions {
+        failures.push(error);
     }
 
     // 重置标记，允许后续正常调用 undo_all
     UNDO_RUNNING.store(false, Ordering::SeqCst);
+    failures
 }
 
 /// 获取当前 undo 栈深度（用于日志和测试）
@@ -79,11 +88,25 @@ pub fn undo_depth() -> usize {
 
 /// 注册文件备份撤销操作（备份 → 后续可恢复）
 pub fn register_file_backup(description: String, backup_path: String, original_path: String) {
-    register_undo(UndoAction::new(
+    register_undo(UndoAction::try_new(
         description,
         Box::new(move || {
-            let _ = std::fs::copy(&backup_path, &original_path);
-            let _ = std::fs::remove_file(&backup_path);
+            std::fs::copy(&backup_path, &original_path).map_err(|e| {
+                DomainError::SystemCommandFailed(
+                    crate::i18n::tr("err_restore_backup")
+                        .replace("{backup}", &backup_path)
+                        .replace("{path}", &original_path)
+                        .replace("{err}", &e.to_string()),
+                )
+            })?;
+            std::fs::remove_file(&backup_path).map_err(|e| {
+                DomainError::SystemCommandFailed(
+                    crate::i18n::tr("err_cleanup_backup")
+                        .replace("{backup}", &backup_path)
+                        .replace("{path}", &original_path)
+                        .replace("{err}", &e.to_string()),
+                )
+            })
         }),
     ));
 }
@@ -105,12 +128,29 @@ pub fn register_package_remove(description: String, package: String) {
 
 /// 注册用户删除撤销操作
 pub fn register_user_remove(username: String) {
-    register_undo(UndoAction::new(
+    register_undo(UndoAction::try_new(
         crate::i18n::tr("undo_user_remove").replace("{user}", &username),
         Box::new(move || {
-            let _ = std::process::Command::new("userdel")
+            let failure = |detail: String| {
+                DomainError::SystemCommandFailed(
+                    crate::i18n::tr("err_user_remove")
+                        .replace("{user}", &username)
+                        .replace("{err}", &detail),
+                )
+            };
+            let output = std::process::Command::new("userdel")
                 .args(["-r", &username])
-                .output();
+                .output()
+                .map_err(|e| failure(e.to_string()))?;
+            if !output.status.success() {
+                return Err(failure(format!(
+                    "{}; {}{}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+            Ok(())
         }),
     ));
 }

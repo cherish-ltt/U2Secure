@@ -19,7 +19,7 @@ fn test_undo_action_execute() {
     );
 
     assert!(!executed.load(Ordering::SeqCst));
-    action.execute();
+    action.execute().unwrap();
     assert!(executed.load(Ordering::SeqCst));
 }
 
@@ -124,4 +124,55 @@ fn test_rollback_manager_global_workflow() {
 
     rollback::undo_all();
     assert!(!std::path::Path::new(&path2).exists(), "rm 命令应删除文件");
+
+    let dir = tempfile::tempdir().unwrap();
+    let backup = dir.path().join("only-backup");
+    let destination = dir.path().join("missing/config");
+    std::fs::write(&backup, "irreplaceable original").unwrap();
+    let continued = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&continued);
+    rollback::register_undo(UndoAction::new(
+        "independent recovery".into(),
+        Box::new(move || flag.store(true, Ordering::SeqCst)),
+    ));
+    rollback::register_file_backup(
+        "injected failed restore".into(),
+        backup.display().to_string(),
+        destination.display().to_string(),
+    );
+    let failures = rollback::undo_all();
+    assert_eq!(failures.len(), 1);
+    assert!(continued.load(Ordering::SeqCst));
+    assert!(failures[0].contains(&backup.display().to_string()));
+    assert!(failures[0].contains(&destination.display().to_string()));
+    assert!(failures[0].contains("No such file or directory"));
+    assert!(!destination.exists());
+    assert_eq!(
+        std::fs::read_to_string(&backup).unwrap(),
+        "irreplaceable original"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let protected = dir.path().join("protected");
+        std::fs::create_dir(&protected).unwrap();
+        let backup = protected.join("backup");
+        let destination = dir.path().join("restored");
+        std::fs::write(&backup, "original").unwrap();
+        std::fs::set_permissions(&protected, std::fs::Permissions::from_mode(0o500)).unwrap();
+        rollback::register_file_backup(
+            "cleanup failure".into(),
+            backup.display().to_string(),
+            destination.display().to_string(),
+        );
+        let failures = rollback::undo_all();
+        std::fs::set_permissions(&protected, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(std::fs::read_to_string(destination).unwrap(), "original");
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("Permission denied"));
+        assert!(failures[0].contains(&backup.display().to_string()));
+        assert_eq!(std::fs::read_to_string(backup).unwrap(), "original");
+    }
 }
