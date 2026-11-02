@@ -87,6 +87,55 @@ struct FileStep {
     interrupt: bool,
 }
 
+#[derive(Debug)]
+struct UnrestorableStep {
+    path: std::path::PathBuf,
+    interrupt: bool,
+}
+
+impl HardeningStep for UnrestorableStep {
+    fn kind(&self) -> StepKind {
+        StepKind::SshPortChange
+    }
+
+    fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        std::fs::write(&self.path, "only backup").unwrap();
+        rollback::register_file_backup(
+            "restore fixture".into(),
+            self.path.display().to_string(),
+            self.path.join("missing/config").display().to_string(),
+        );
+        rollback::INTERRUPTED.store(self.interrupt, Ordering::SeqCst);
+        Ok(StepResult::failed(self.kind(), "fixture failed"))
+    }
+}
+
+#[test]
+fn rollback_failures_are_returned_in_step_results_and_events() {
+    let _guard = serial();
+    for interrupt in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let backup = dir.path().join("backup");
+        let mut events = vec![];
+        let results = runner(&dir).run_steps(
+            vec![Box::new(UnrestorableStep {
+                path: backup.clone(),
+                interrupt,
+            })],
+            &ExecuteParams::default(),
+            &mut |event| events.push(event),
+        );
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_failed());
+        assert!(results[0].message.contains(&backup.display().to_string()));
+        assert!(results[0].message.contains("Not a directory"));
+        assert!(events.iter().any(|event| matches!(event,
+            JobEvent::StepFinished(result) if result.message == results[0].message)));
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "only backup");
+        rollback::INTERRUPTED.store(false, Ordering::SeqCst);
+    }
+}
+
 impl HardeningStep for FileStep {
     fn kind(&self) -> StepKind {
         StepKind::SshPortChange
