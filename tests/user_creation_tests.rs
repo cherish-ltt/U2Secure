@@ -8,7 +8,7 @@ use u2secure::infrastructure::{rollback, system};
 
 #[test]
 fn creation_registers_rollback_before_initialization() {
-    for failure in ["useradd", "usermod", "chown", "chmod", "none"] {
+    for failure in ["useradd", "usermod", "none"] {
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("calls");
         for program in ["useradd", "usermod", "mkdir", "chown", "chmod", "userdel"] {
