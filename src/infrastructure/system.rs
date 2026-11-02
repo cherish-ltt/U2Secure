@@ -674,32 +674,6 @@ pub fn create_system_user(username: &str) -> Result<(), DomainError> {
     // 加入管理员组：Debian/Ubuntu 为 sudo，RHEL 系为 wheel
     add_to_admin_group(username)?;
 
-    // 创建 .ssh 目录并设置权限（失败会导致密钥登录不可用，必须显式报错）
-    let ssh_dir = format!("/home/{username}/.ssh");
-    let _ = Command::new("mkdir").args(["-p", &ssh_dir]).output();
-
-    let chown = Command::new("chown")
-        .args(["-R", &format!("{username}:{username}"), &ssh_dir])
-        .output()
-        .map_err(|e| DomainError::SystemCommandFailed(format!("chown 失败: {e}")))?;
-    if !chown.status.success() {
-        let stderr = String::from_utf8_lossy(&chown.stderr);
-        return Err(DomainError::SystemCommandFailed(format!(
-            "chown {ssh_dir} 失败: {stderr}"
-        )));
-    }
-
-    let chmod = Command::new("chmod")
-        .args(["700", &ssh_dir])
-        .output()
-        .map_err(|e| DomainError::SystemCommandFailed(format!("chmod 失败: {e}")))?;
-    if !chmod.status.success() {
-        let stderr = String::from_utf8_lossy(&chmod.stderr);
-        return Err(DomainError::SystemCommandFailed(format!(
-            "chmod 700 {ssh_dir} 失败: {stderr}"
-        )));
-    }
-
     Ok(())
 }
 
