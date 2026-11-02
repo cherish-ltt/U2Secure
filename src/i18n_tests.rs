@@ -44,7 +44,8 @@ fn translation_tables_have_identical_keys_and_placeholders() {
         let texts = [zh_cn(key), en(key), zh_tw(key)];
         let source = texts[0].unwrap();
         for text in texts {
-            let text = text.unwrap_or_else(|| panic!("missing translation: {key}"));
+            assert!(text.is_some(), "missing translation: {key}");
+            let text = text.unwrap();
             assert!(!text.trim().is_empty(), "empty translation: {key}");
             assert_eq!(placeholders(text), placeholders(source), "{key}");
         }
