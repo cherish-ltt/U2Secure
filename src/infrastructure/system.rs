@@ -118,12 +118,19 @@ pub fn run_streaming_watchdog(
     let stderr_file = file.try_clone().map_err(|e| {
         DomainError::SystemCommandFailed(format!("无法写入执行日志 {log_path}: {e}"))
     })?;
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .envs(envs.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::from(file))
-        .stderr(Stdio::from(stderr_file))
+        .stderr(Stdio::from(stderr_file));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command
         .spawn()
         .map_err(|e| DomainError::SystemCommandFailed(format!("无法执行 {program}: {e}")))?;
 
@@ -142,8 +149,7 @@ pub fn run_streaming_watchdog(
             },
             Ok(None) => {},
             Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                stop_command(&mut child)?;
                 return Err(DomainError::SystemCommandFailed(format!(
                     "等待 {program} 结束时出错: {e}"
                 )));
@@ -158,24 +164,44 @@ pub fn run_streaming_watchdog(
                 last_size = size;
                 last_progress = Instant::now();
             } else if last_progress.elapsed() >= stall {
-                let _ = child.kill();
-                let _ = child.wait();
+                stop_command(&mut child)?;
                 return Ok(StreamStatus::NoResponse);
             }
         }
 
         if rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_command(&mut child)?;
             return Ok(StreamStatus::Cancelled);
         }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_command(&mut child)?;
             return Ok(StreamStatus::TimedOut);
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+}
+
+fn stop_command(child: &mut std::process::Child) -> Result<(), DomainError> {
+    #[cfg(unix)]
+    let stopped = {
+        use rustix::process::{Pid, Signal, kill_process_group};
+        match kill_process_group(Pid::from_child(child), Signal::KILL) {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+            Err(error) => Err(std::io::Error::from(error)),
+        }
+    };
+    #[cfg(not(unix))]
+    let stopped = child.kill();
+    // Always reap our child, including when signalling the group fails.
+    if stopped.is_err() {
+        let _ = child.kill();
+    }
+    let waited = child.wait();
+    stopped.and(waited.map(|_| ())).map_err(|error| {
+        DomainError::SystemCommandFailed(
+            crate::i18n::tr("err_stop_command").replace("{err}", &error.to_string()),
+        )
+    })
 }
 
 /// 便捷封装：以 `program + args` 形式运行长耗时命令

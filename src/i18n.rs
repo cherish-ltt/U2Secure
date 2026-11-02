@@ -66,6 +66,7 @@ pub fn tr(key: &'static str) -> &'static str {
 
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_stop_command" => "终止或回收命令失败: {err}",
         // ── 主入口 ──
         "select_language" => "选择语言",
         "select_mode" => "请选择启动模式",
@@ -381,6 +382,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_stop_command" => "Failed to terminate or reap command: {err}",
         "select_language" => "Select Language",
         "select_mode" => "Select Launch Mode",
         "mode_cli" => "CLI Mode (Traditional Interactive)",
@@ -705,6 +707,7 @@ fn en(key: &str) -> Option<&'static str> {
 
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_stop_command" => "終止或回收命令失敗: {err}",
         "select_language" => "選擇語言",
         "select_mode" => "請選擇啟動模式",
         "mode_cli" => "CLI 模式（傳統互動式）",
