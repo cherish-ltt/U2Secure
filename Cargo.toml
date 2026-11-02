@@ -38,8 +38,8 @@ ctrlc = "=3.5.2"
 tempfile = "=3.27.0"
 
 [target.'cfg(unix)'.dependencies]
-# 受管命令进程组
-rustix = { version = "=1.1.4", features = ["process"] }
+# Descriptor-relative filesystem operations and managed process groups
+rustix = { version = "=1.1.4", features = ["fs", "process"] }
 
 # 开发依赖
 [dev-dependencies]
