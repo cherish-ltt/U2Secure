@@ -364,16 +364,16 @@ pub fn detect_fail2ban_installed() -> bool {
 
 /// 检测 UFW 是否已启用
 pub fn detect_ufw_enabled() -> bool {
-    let output = Command::new("ufw")
+    Command::new("ufw")
         .arg("status")
+        .env("LC_ALL", "C")
         .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string());
-
-    match output {
-        Some(s) => s.contains("active") || s.contains("Status: active"),
-        None => false,
-    }
+        .is_ok_and(|output| {
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .any(|line| line.trim() == "Status: active")
+        })
 }
 
 /// 检测自动安全更新是否已启用
