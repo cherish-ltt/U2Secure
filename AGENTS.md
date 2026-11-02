@@ -343,3 +343,7 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 - 新增任何平台相关代码后，必须确认这三件事：`cargo test`（macOS）通过、
   `cargo check --target x86_64-unknown-linux-gnu` 通过、构建矩阵未被加入其它平台
 
+### 10.5 批次密钥生成
+
+- 同批次成功创建用户后，该用户的重复 `GenerateNew` 由执行器明确跳过；不同用户、粘贴公钥或独立密钥步骤不受影响。
+

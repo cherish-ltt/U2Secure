@@ -82,6 +82,58 @@ fn kinds(results: &[StepResult]) -> Vec<StepKind> {
 }
 
 #[test]
+fn test_created_users_key_is_not_generated_twice() {
+    use u2secure::domain::steps::SshKeyAction;
+    let _guard = serial();
+    let dir = tempfile::tempdir().unwrap();
+    let params = ExecuteParams {
+        new_username: Some("fixture-user".into()),
+        ssh_key_username: Some("fixture-user".into()),
+        ssh_key_action: Some(SshKeyAction::GenerateNew),
+        ..Default::default()
+    };
+    let steps = vec![
+        fake(StepKind::UserCreation, Behavior::Changed),
+        fake(StepKind::SshKeySetup, Behavior::Error),
+        fake(StepKind::Ufw, Behavior::Changed),
+    ];
+    let results = runner(&dir).run_steps(steps, &params, &mut |_| {});
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[1].outcome, StepOutcome::Skipped);
+    assert_eq!(results[2].outcome, StepOutcome::Changed);
+}
+
+#[test]
+fn test_key_setup_remains_enabled_without_successful_matching_creation() {
+    use u2secure::domain::steps::SshKeyAction;
+    let _guard = serial();
+    let dir = tempfile::tempdir().unwrap();
+    for (created, target, action) in [
+        (false, "fixture-user", SshKeyAction::GenerateNew),
+        (true, "another-user", SshKeyAction::GenerateNew),
+        (
+            true,
+            "fixture-user",
+            SshKeyAction::PasteKey("TEST_MARKER".into()),
+        ),
+    ] {
+        let params = ExecuteParams {
+            new_username: Some("fixture-user".into()),
+            ssh_key_username: Some(target.into()),
+            ssh_key_action: Some(action),
+            ..Default::default()
+        };
+        let mut steps = Vec::new();
+        if created {
+            steps.push(fake(StepKind::UserCreation, Behavior::Changed));
+        }
+        steps.push(fake(StepKind::SshKeySetup, Behavior::Changed));
+        let results = runner(&dir).run_steps(steps, &params, &mut |_| {});
+        assert_eq!(results.last().unwrap().outcome, StepOutcome::Changed);
+    }
+}
+
+#[test]
 fn test_core_step_failure_stops_and_rolls_back() {
     let _guard = serial();
     rollback::INTERRUPTED.store(false, Ordering::SeqCst);
