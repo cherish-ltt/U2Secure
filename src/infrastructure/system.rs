@@ -739,35 +739,24 @@ pub fn lock_user_password(username: &str) -> Result<(), DomainError> {
 
 /// 为用户生成 ED25519 密钥对，返回公钥路径
 pub fn generate_ssh_keypair(username: &str) -> Result<String, DomainError> {
-    let home = if username == "root" {
-        "/root".to_string()
-    } else {
-        format!("/home/{username}")
-    };
-    let key_path = format!("{home}/.ssh/id_ed25519");
-    let pub_key_path = format!("{key_path}.pub");
+    generate_ssh_keypair_with_replace(username, false)
+}
 
-    let output = Command::new("ssh-keygen")
-        .args([
-            "-t", "ed25519", "-f", &key_path, "-N", "", // 空密码
-            "-q",
-        ])
-        .output()
-        .map_err(|e| DomainError::SystemCommandFailed(format!("ssh-keygen 失败: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DomainError::SystemCommandFailed(format!(
-            "ssh-keygen 失败: {stderr}"
-        )));
+pub fn generate_ssh_keypair_with_replace(
+    username: &str,
+    replace: bool,
+) -> Result<String, DomainError> {
+    #[cfg(unix)]
+    {
+        super::ssh_keys::generate_ssh_keypair(username, replace)
     }
-
-    // 修正权限
-    let _ = Command::new("chown")
-        .args([&format!("{username}:{username}"), &key_path, &pub_key_path])
-        .output();
-
-    Ok(pub_key_path)
+    #[cfg(not(unix))]
+    {
+        let _ = (username, replace);
+        Err(DomainError::PreconditionFailed(
+            "SSH key operations require Unix".into(),
+        ))
+    }
 }
 
 /// 将公钥追加到用户的 authorized_keys

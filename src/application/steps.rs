@@ -315,19 +315,11 @@ impl HardeningStep for SshKeySetupStep {
         })?;
 
         match action {
-            SshKeyAction::GenerateNew => {
-                let home = system::home_dir(username);
-                // 注册撤销：删除生成的密钥文件
-                rollback::register_command_undo(
-                    crate::i18n::tr("undo_key_delete").replace("{user}", username),
-                    vec![
-                        "rm".into(),
-                        "-f".into(),
-                        format!("{home}/.ssh/id_ed25519"),
-                        format!("{home}/.ssh/id_ed25519.pub"),
-                    ],
-                );
-                let pub_key_path = system::generate_ssh_keypair(username)?;
+            SshKeyAction::GenerateNew | SshKeyAction::ReplaceExisting => {
+                let pub_key_path = system::generate_ssh_keypair_with_replace(
+                    username,
+                    matches!(action, SshKeyAction::ReplaceExisting),
+                )?;
                 let priv_path = pub_key_path.trim_end_matches(".pub");
                 let msg = crate::i18n::tr("result_key_generated")
                     .replace("{priv}", priv_path)
