@@ -10,8 +10,8 @@
 
 use std::cell::Cell;
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
@@ -24,11 +24,19 @@ use crate::infrastructure::{artifacts, rollback, system};
 
 /// 按定义顺序筛选出待执行步骤
 fn select_steps(selected: &[StepKind]) -> Vec<Box<dyn HardeningStep + Send>> {
-    let selected_set: HashSet<StepKind> = selected.iter().copied().collect();
+    execution_plan(selected).into_iter().map(step_for).collect()
+}
+
+/// SSH 配置步骤后的生效检查始终排在末尾，是否重启另由明确授权与真实变化决定。
+pub fn execution_plan(selected: &[StepKind]) -> Vec<StepKind> {
+    let mut selected_set: HashSet<StepKind> = selected.iter().copied().collect();
+    if selected.iter().any(StepKind::modifies_ssh_config) {
+        selected_set.insert(StepKind::RestartSsh);
+    }
     StepKind::all()
         .iter()
         .filter(|kind| selected_set.contains(kind))
-        .map(|kind| step_for(*kind))
+        .copied()
         .collect()
 }
 
@@ -96,7 +104,7 @@ pub enum JobEvent {
     StepFinished(StepResult),
     /// 一般日志（镜像准备、回滚提示等）
     Log(String),
-    /// 用户中断，已回滚
+    /// 用户中断，回滚错误由步骤结果报告
     Interrupted,
     /// 临时软件源连接失败（重试耗尽，未执行任何步骤，等待用户决定重试/换源）
     MirrorFailed { reason: String },
@@ -175,13 +183,7 @@ impl StepRunner {
 
     /// 在后台线程执行选中的步骤
     pub fn spawn(self, selected: Vec<StepKind>, params: ExecuteParams) -> JobHandle {
-        let selected_set: HashSet<StepKind> = selected.iter().copied().collect();
-        let steps: Vec<Box<dyn HardeningStep + Send>> = StepKind::all()
-            .iter()
-            .filter(|kind| selected_set.contains(kind))
-            .map(|kind| step_for(*kind))
-            .collect();
-        self.spawn_steps(steps, params)
+        self.spawn_steps(select_steps(&selected), params)
     }
 
     /// 在后台线程执行给定步骤（测试可注入假步骤）
@@ -218,13 +220,17 @@ impl StepRunner {
         self.run_steps(steps, params, on_event)
     }
 
-    /// 执行给定的步骤列表（策略与 `run` 完全一致，便于注入测试步骤）
+    /// 执行给定计划（测试按 `execution_plan` 注入假步骤，不构造真实系统步骤）。
     pub fn run_steps(
         &self,
         steps: Vec<Box<dyn HardeningStep + Send>>,
         params: &ExecuteParams,
         on_event: &mut dyn FnMut(JobEvent),
     ) -> Vec<StepResult> {
+        static RUN_LOCK: Mutex<()> = Mutex::new(());
+        // The undo stack and cancellation flag belong to one running batch at a time.
+        let _batch = RUN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let checkpoint = rollback::undo_depth();
         let total = steps.len();
         let report_dir = self
             .report_dir
@@ -263,7 +269,15 @@ impl StepRunner {
             let kind = step.kind();
 
             if rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
-                self.rollback_on_interrupt(on_event);
+                let failures = self.rollback_on_interrupt(checkpoint, on_event);
+                if !failures.is_empty() {
+                    let message = crate::i18n::tr("log_rollback_failed")
+                        .replace("{errors}", &failures.join("\n"));
+                    self.logger.log(&message);
+                    let result = StepResult::failed(kind, message);
+                    on_event(JobEvent::StepFinished(result.clone()));
+                    results.push(result);
+                }
                 break;
             }
 
@@ -282,16 +296,43 @@ impl StepRunner {
             self.logger
                 .log_operation(crate::i18n::tr("log_step_start"), kind.label());
 
-            let result = match step.execute(&step_params) {
+            let execution = if kind == StepKind::RestartSsh && !params.ssh_restart_required {
+                Ok(StepResult::skipped(
+                    kind,
+                    crate::i18n::tr("result_ssh_no_restart"),
+                ))
+            } else if kind == StepKind::RestartSsh && !params.apply_ssh_changes {
+                Ok(StepResult::skipped(
+                    kind,
+                    crate::i18n::tr("result_ssh_pending"),
+                ))
+            } else {
+                step.execute(&step_params)
+            };
+            let mut result = match execution {
                 Ok(result) => result,
                 Err(e) => StepResult::failed(
                     kind,
                     crate::i18n::tr("log_step_failed_detail").replace("{err}", &e.to_string()),
                 ),
             };
+            if result.is_changed() && result.ssh_restart_required {
+                params.ssh_restart_required = true;
+            }
 
-            // 中断发生在步骤执行中：先记录结果，再统一走中断回滚
+            // 中断发生在步骤执行中：回滚错误和步骤结果一起报告
             let interrupted = rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst);
+            if result.ssh_activation_attempted {
+                // The service may already use the new port; reverting only files can lock users out.
+                rollback::discard_since(checkpoint);
+                if interrupted || result.is_failed() {
+                    result.outcome = StepOutcome::Failed;
+                    result.message.push('\n');
+                    result
+                        .message
+                        .push_str(crate::i18n::tr("result_ssh_activation_retained"));
+                }
+            }
 
             match result.outcome {
                 StepOutcome::Failed => {
@@ -308,24 +349,39 @@ impl StepRunner {
                 },
             }
 
+            // 失败处理策略：可选步骤只记录，核心步骤回滚并停止
+            let stop = interrupted || (result.is_failed() && !kind.is_optional());
+            let failures = if result.ssh_activation_attempted {
+                if interrupted {
+                    on_event(JobEvent::Interrupted);
+                }
+                vec![]
+            } else if interrupted {
+                self.rollback_on_interrupt(checkpoint, on_event)
+            } else if stop {
+                self.logger.log(crate::i18n::tr("log_rollback_auto"));
+                let failures = rollback::undo_since(checkpoint);
+                on_event(JobEvent::Log(crate::i18n::tr("log_rollback_auto").into()));
+                failures
+            } else {
+                vec![]
+            };
+            if !failures.is_empty() {
+                let message = crate::i18n::tr("log_rollback_failed")
+                    .replace("{errors}", &failures.join("\n"));
+                self.logger.log(&message);
+                result.outcome = StepOutcome::Failed;
+                result.message.push('\n');
+                result.message.push_str(&message);
+            }
             on_event(JobEvent::StepFinished(result.clone()));
             results.push(result);
-
-            if interrupted {
-                self.rollback_on_interrupt(on_event);
-                break;
-            }
-
-            // 失败处理策略：可选步骤只记录，核心步骤回滚并停止
-            let failed = results.last().is_some_and(|r| r.is_failed());
-            if failed && !kind.is_optional() {
-                self.logger.log(crate::i18n::tr("log_rollback_auto"));
-                rollback::undo_all();
-                on_event(JobEvent::Log(crate::i18n::tr("log_rollback_auto").into()));
+            if stop {
                 break;
             }
         }
 
+        rollback::discard_since(checkpoint);
         // 临时源文件随 TempDir 清理
         drop(mirror_session);
         on_event(JobEvent::AllFinished);
@@ -389,12 +445,17 @@ impl StepRunner {
         }
     }
 
-    fn rollback_on_interrupt(&self, on_event: &mut dyn FnMut(JobEvent)) {
+    fn rollback_on_interrupt(
+        &self,
+        checkpoint: usize,
+        on_event: &mut dyn FnMut(JobEvent),
+    ) -> Vec<String> {
         self.logger.log(crate::i18n::tr("log_interrupt_rollback"));
-        rollback::undo_all();
+        let failures = rollback::undo_since(checkpoint);
         on_event(JobEvent::Log(
             crate::i18n::tr("log_interrupt_rollback").into(),
         ));
         on_event(JobEvent::Interrupted);
+        failures
     }
 }

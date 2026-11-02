@@ -118,6 +118,8 @@ pub struct AuditReport {
     pub package_manager: PackageManager,
     /// SSH 端口（默认 22）
     pub ssh_port: u16,
+    /// SSH effective values cover a single port and no unverified Include/Match context.
+    pub ssh_config_verified: bool,
     /// 是否禁止密码登录
     pub password_auth_disabled: bool,
     /// 是否禁止 root 登录
@@ -145,6 +147,14 @@ pub struct AuditReport {
 impl AuditReport {
     /// 根据步骤类型返回当前审计状态（全项目唯一真值来源）
     pub fn status_for(&self, step: StepKind) -> AuditStatus {
+        if !self.ssh_config_verified
+            && matches!(
+                step,
+                StepKind::SshRootLogin | StepKind::SshPortChange | StepKind::SshPasswordAuth
+            )
+        {
+            return AuditStatus::Partial;
+        }
         match step {
             StepKind::SystemUpdate => {
                 if self.system_up_to_date {
