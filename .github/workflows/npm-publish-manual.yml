@@ -26,6 +26,7 @@ env:
 permissions:
   id-token: write
   contents: read
+  actions: read
 
 jobs:
   publish-npm:
@@ -38,19 +39,29 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
 
     steps:
+      - name: Read built release identity
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-tag
+          path: ${{ runner.temp }}/release-metadata
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
       - name: Normalize version
         id: version
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_REF: ${{ inputs.version }}
         run: |
-          # 手动派发用 inputs.version；自动路径（Binary Build 完成）用触发那次运行的标签。
-          # workflow_run 事件的 payload 不含 ref_type / ref_name，标签只能取自 head_branch。
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            RAW_REF="${{ github.event.inputs.version }}"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            RAW_REF="$INPUT_REF"
           else
-            RAW_REF="${{ github.event.workflow_run.head_branch }}"
+            RAW_REF="$(cat "$RUNNER_TEMP/release-metadata/tag")"
           fi
           CLEAN_VERSION="${RAW_REF#v}"
-          if [[ ! "$CLEAN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+          if [[ ! "$CLEAN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::无法解析版本号，原始值: '${RAW_REF}'"
             exit 1
           fi
@@ -63,8 +74,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # workflow_run 下默认检出默认分支，必须显式指向触发那次运行的 ref
-          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+          ref: ${{ steps.version.outputs.tag }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

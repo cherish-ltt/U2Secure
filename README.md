@@ -55,6 +55,9 @@
 
 npm 安装仅在下载完整且落盘成功后替换本地二进制；下载或写入失败会非零退出，并保留已有完整文件。
 维护者可用 `node tests/npm_install_test.cjs` 运行不联网、不执行下载产物的回归测试。
+手动 Binary Build 输入的标签通过绑定该次运行的 artifact 传给 npm/crates.io；
+两个发布器都检出该标签，缺失或非法时不发布。旧构建运行使用手动补发入口。
+`python3 tests/release_tag_test.py` 验证标签传递，不触发真实发布。
 
 | 项目 | 支持情况 |
 |------|---------|
