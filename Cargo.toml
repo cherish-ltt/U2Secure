@@ -38,7 +38,7 @@ ctrlc = "=3.5.2"
 tempfile = "=3.27.0"
 
 [target.'cfg(unix)'.dependencies]
-# Descriptor-relative filesystem operations
+# Descriptor-relative filesystem operations and managed process groups
 rustix = { version = "=1.1.4", features = ["fs", "process"] }
 
 # 开发依赖

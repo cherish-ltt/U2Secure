@@ -322,6 +322,9 @@ pub fn build_pm_argv(pm: PackageManager, over: &MirrorOverride, args: &[&str]) -
     let mut argv = vec![pm.name().to_string()];
     match pm {
         PackageManager::Apt => {
+            if args.first() == Some(&"update") {
+                argv.extend(["-o".into(), "APT::Update::Error-Mode=any".into()]);
+            }
             if let Some(list) = &over.apt_sourcelist {
                 argv.push("-o".into());
                 argv.push(format!("Dir::Etc::sourcelist={list}"));
@@ -360,6 +363,16 @@ pub fn warm_up(
     log_path: &str,
     on_attempt: &mut dyn FnMut(usize, String),
 ) -> Result<(), String> {
+    warm_up_with(session, on_attempt, |argv| {
+        system::run_streaming_watchdog(argv, &[], log_path, WARM_UP_TIMEOUT, Some(WARM_UP_STALL))
+    })
+}
+
+fn warm_up_with(
+    session: &MirrorSession,
+    on_attempt: &mut dyn FnMut(usize, String),
+    mut run: impl FnMut(&[String]) -> Result<system::StreamStatus, DomainError>,
+) -> Result<(), String> {
     // 临时源未生效，或非 apt（yum/dnf 的 install 会自行刷新元数据）：无需预热
     if !session.is_active() || session.package_manager != PackageManager::Apt {
         return Ok(());
@@ -368,14 +381,7 @@ pub fn warm_up(
     let argv = session.pm_argv(PackageManager::Apt, &["update"]);
     let mut last_reason = String::new();
     for attempt in 1..=WARM_UP_ATTEMPTS {
-        let status = system::run_streaming_watchdog(
-            &argv,
-            &[],
-            log_path,
-            WARM_UP_TIMEOUT,
-            Some(WARM_UP_STALL),
-        )
-        .map_err(|e| e.to_string())?;
+        let status = run(&argv).map_err(|e| e.to_string())?;
 
         if status.is_success() {
             return Ok(());
@@ -389,6 +395,62 @@ pub fn warm_up(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apt_update_requires_every_index_to_succeed() {
+        for over in [
+            MirrorOverride::default(),
+            MirrorOverride {
+                apt_sourcelist: Some("/temporary/sources.list".into()),
+                ..Default::default()
+            },
+        ] {
+            let argv = build_pm_argv(PackageManager::Apt, &over, &["update"]);
+            assert!(
+                argv.windows(2)
+                    .any(|pair| pair == ["-o", "APT::Update::Error-Mode=any"])
+            );
+        }
+        for pm in [PackageManager::Dnf, PackageManager::Yum] {
+            assert_eq!(
+                build_pm_argv(pm, &MirrorOverride::default(), &["update"]),
+                [pm.name(), "update"]
+            );
+        }
+        assert_eq!(
+            install_argv(PackageManager::Apt, &MirrorOverride::default(), "test"),
+            ["apt", "install", "-y", "test"]
+        );
+    }
+
+    #[test]
+    fn failed_mirror_exhausts_three_attempts_but_success_stops_immediately() {
+        let mut session =
+            MirrorSession::apply(PackageMirror::Original, PackageManager::Apt).unwrap();
+        session.override_.apt_sourcelist = Some("/temporary/sources.list".into());
+        for (status, expected_calls) in [
+            (system::StreamStatus::Failed(Some(100)), 3),
+            (system::StreamStatus::Success, 1),
+        ] {
+            let mut calls = 0;
+            let mut attempts = Vec::new();
+            let result = warm_up_with(&session, &mut |n, _| attempts.push(n), |argv| {
+                assert!(argv.iter().any(|arg| arg == "APT::Update::Error-Mode=any"));
+                calls += 1;
+                Ok(status)
+            });
+            assert_eq!(calls, expected_calls);
+            assert_eq!(result.is_ok(), status.is_success());
+            assert_eq!(
+                attempts,
+                if status.is_success() {
+                    vec![]
+                } else {
+                    vec![1, 2, 3]
+                }
+            );
+        }
+    }
 
     #[test]
     fn test_rewrite_debian_host() {
@@ -502,7 +564,7 @@ mod tests {
         assert!(!session.is_active());
         assert_eq!(
             session.pm_argv(PackageManager::Apt, &["update"]),
-            vec!["apt", "update"]
+            vec!["apt", "-o", "APT::Update::Error-Mode=any", "update"]
         );
     }
 }
