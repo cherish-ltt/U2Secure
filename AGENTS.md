@@ -232,6 +232,10 @@ msrv = "1.98.1"
 
 ## 10. 其他追加内容
 
+### APT 索引刷新
+
+- 镜像预热和系统更新统一通过 `build_pm_argv` 为 APT `update` 添加 `APT::Update::Error-Mode=any`，禁止按本地化 warning 文本推断成功。
+
 ### 10.1 发布流程（Release）
 
 - 版本号统一维护在 `Cargo.toml`（源码通过 `env!("CARGO_PKG_VERSION")` 读取）；每个版本的发布说明写入 `docs/versions/v{X.Y.Z}.md`。
