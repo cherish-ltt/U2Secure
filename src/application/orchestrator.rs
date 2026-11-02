@@ -50,3 +50,7 @@ impl Default for HardeningOrchestrator {
         Self::new()
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "orchestrator_tests.rs"]
+mod tests;

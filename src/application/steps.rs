@@ -8,6 +8,10 @@ use crate::infrastructure::backup::backup_file;
 use crate::infrastructure::system::StreamStatus;
 use crate::infrastructure::{aide, artifacts, lynis, package_mirror, rollback, ssh, system, ufw};
 
+#[cfg(all(test, unix))]
+#[path = "steps_tests.rs"]
+mod tests;
+
 // 超时（长耗时步骤必须有上限，避免"假卡住"）
 
 const TIMEOUT_UPDATE: Duration = Duration::from_secs(300);
@@ -346,6 +350,16 @@ impl HardeningStep for Fail2banStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        self.execute_at(params, std::path::Path::new("/etc/fail2ban/jail.local"))
+    }
+}
+
+impl Fail2banStep {
+    fn execute_at(
+        &self,
+        params: &ExecuteParams,
+        config_path: &std::path::Path,
+    ) -> Result<StepResult, DomainError> {
         let log = live_log(params, "step08-fail2ban");
         let mut artifacts_list = vec![];
 
@@ -392,15 +406,15 @@ impl HardeningStep for Fail2banStep {
         // 配置监狱规则（使用 SSH 端口），写入前备份并注册回滚
         let port = system::detect_ssh_port();
         let jail_local = format!("[sshd]\nenabled = true\nport = {port}\n");
-        if let Some(backup) = backup_file(std::path::Path::new("/etc/fail2ban/jail.local"))? {
+        if let Some(backup) = backup_file(config_path)? {
             rollback::register_file_backup(
                 crate::i18n::tr("undo_file_restore_generic")
-                    .replace("{path}", "/etc/fail2ban/jail.local"),
+                    .replace("{path}", &config_path.to_string_lossy()),
                 backup.display().to_string(),
-                "/etc/fail2ban/jail.local".into(),
+                config_path.to_string_lossy().into_owned(),
             );
         }
-        std::fs::write("/etc/fail2ban/jail.local", &jail_local)
+        std::fs::write(config_path, &jail_local)
             .map_err(|e| DomainError::SystemCommandFailed(format!("写入 jail.local 失败: {e}")))?;
 
         let argv = vec![
@@ -439,6 +453,16 @@ impl HardeningStep for AutoUpdatesStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        self.execute_at(params, "/etc/apt/apt.conf.d/20auto-upgrades")
+    }
+}
+
+impl AutoUpdatesStep {
+    fn execute_at(
+        &self,
+        params: &ExecuteParams,
+        config_path: &str,
+    ) -> Result<StepResult, DomainError> {
         let pm = system::detect_package_manager();
         if pm != PackageManager::Apt {
             // 非 Debian 系不再返回错误（避免拖垮整个流程的回滚）
@@ -485,7 +509,6 @@ impl HardeningStep for AutoUpdatesStep {
         }
 
         // 写入配置：启用自动安全更新（写入前备份并注册回滚）
-        let config_path = "/etc/apt/apt.conf.d/20auto-upgrades";
         if let Some(backup) = backup_file(std::path::Path::new(config_path))? {
             rollback::register_file_backup(
                 crate::i18n::tr("undo_file_restore_generic").replace("{path}", config_path),
@@ -633,6 +656,23 @@ impl HardeningStep for LogAuditStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        self.execute_with(
+            params,
+            std::path::Path::new("/etc/cron.daily"),
+            resolve_aide_plan,
+            aide_check_scheduled,
+        )
+    }
+}
+
+impl LogAuditStep {
+    fn execute_with(
+        &self,
+        params: &ExecuteParams,
+        cron_dir: &std::path::Path,
+        resolve_plan: impl FnOnce(PackageManager, &ExecuteParams) -> Result<aide::AidePlan, String>,
+        check_scheduled: impl FnOnce(&std::path::Path) -> bool,
+    ) -> Result<StepResult, DomainError> {
         let pm = system::detect_package_manager();
         if pm == PackageManager::Unknown {
             return Ok(StepResult::skipped(
@@ -725,23 +765,23 @@ impl HardeningStep for LogAuditStep {
 
         // ── 每日报告定时任务：不覆盖发行版自带文件，仅在缺失时补装 ──
         let mut cron_path = None;
-        if system::which("logwatch") && !std::path::Path::new("/etc/cron.daily/00logwatch").exists()
-        {
-            let path = "/etc/cron.daily/99u2secure-logwatch";
+        if system::which("logwatch") && !cron_dir.join("00logwatch").exists() {
+            let path_buf = cron_dir.join("99u2secure-logwatch");
+            let path = path_buf.to_string_lossy();
             let script = format!(
                 "#!/bin/bash\n# 由 U2Secure 生成：每日日志审计报告\n/usr/sbin/logwatch --output stdout --format text --range yesterday --detail high > {}/logwatch-$(date +\\%F).txt 2>&1\n",
                 report_dir(params)
             );
-            if let Some(backup) = backup_file(std::path::Path::new(path))? {
+            if let Some(backup) = backup_file(&path_buf)? {
                 rollback::register_file_backup(
-                    crate::i18n::tr("undo_file_restore_generic").replace("{path}", path),
+                    crate::i18n::tr("undo_file_restore_generic").replace("{path}", &path),
                     backup.display().to_string(),
-                    path.into(),
+                    path.to_string(),
                 );
             }
-            std::fs::write(path, script)
+            std::fs::write(&path_buf, script)
                 .map_err(|e| DomainError::SystemCommandFailed(format!("写入 {path} 失败: {e}")))?;
-            set_executable(path);
+            set_executable(&path);
             cron_path = Some(path.to_string());
             artifacts_list.push(path.to_string());
         }
@@ -752,7 +792,7 @@ impl HardeningStep for LogAuditStep {
         let mut aide_db_display: Option<String> = None;
         let mut aide_plan = None;
         if system::which("aide") {
-            match resolve_aide_plan(pm, params) {
+            match resolve_plan(pm, params) {
                 Ok(plan) => {
                     if !plan.database_ready() {
                         let path = artifact_path(params, "aide-init", "log");
@@ -794,19 +834,20 @@ impl HardeningStep for LogAuditStep {
         // ── 每日完整性检查：用本次实际生效的配置，避免脚本重复踩"缺配置"的坑 ──
         let mut aide_cron = false;
         if let Some(plan) = aide_plan.as_ref().filter(|p| p.database_ready())
-            && !aide_check_scheduled()
+            && !check_scheduled(cron_dir)
         {
-            let path = "/etc/cron.daily/99u2secure-aide";
+            let path_buf = cron_dir.join("99u2secure-aide");
+            let path = path_buf.to_string_lossy();
             let script = aide::render_daily_script(plan.config.as_deref(), &report_dir(params));
-            if let Some(backup) = backup_file(std::path::Path::new(path))? {
+            if let Some(backup) = backup_file(&path_buf)? {
                 rollback::register_file_backup(
-                    crate::i18n::tr("undo_file_restore_generic").replace("{path}", path),
+                    crate::i18n::tr("undo_file_restore_generic").replace("{path}", &path),
                     backup.display().to_string(),
-                    path.into(),
+                    path.to_string(),
                 );
             }
-            if std::fs::write(path, script).is_ok() {
-                set_executable(path);
+            if std::fs::write(&path_buf, script).is_ok() {
+                set_executable(&path);
                 aide_cron = true;
                 artifacts_list.push(path.to_string());
             }
@@ -883,14 +924,21 @@ fn display_path(slot: &mut Option<String>, path: &std::path::Path) {
 }
 
 /// 是否已存在每日 aide 检查机制（发行版自带则不重复添加）
-fn aide_check_scheduled() -> bool {
+fn aide_check_scheduled(cron_dir: &std::path::Path) -> bool {
+    aide_check_scheduled_at(
+        cron_dir,
+        std::path::Path::new("/usr/share/aide/config/cron.daily/dailyaidecheck"),
+    )
+}
+
+fn aide_check_scheduled_at(cron_dir: &std::path::Path, vendor_script: &std::path::Path) -> bool {
     // Debian/Ubuntu 为 dailyaidecheck（cron 脚本 + dailyaidecheck.timer）
     for path in [
-        "/etc/cron.daily/aide",
-        "/etc/cron.daily/dailyaidecheck",
-        "/usr/share/aide/config/cron.daily/dailyaidecheck",
+        cron_dir.join("aide"),
+        cron_dir.join("dailyaidecheck"),
+        vendor_script.to_path_buf(),
     ] {
-        if std::path::Path::new(path).exists() {
+        if path.exists() {
             return true;
         }
     }
