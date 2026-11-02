@@ -772,35 +772,17 @@ pub fn generate_ssh_keypair(username: &str) -> Result<String, DomainError> {
 
 /// 将公钥追加到用户的 authorized_keys
 pub fn add_authorized_key(username: &str, pub_key: &str) -> Result<(), DomainError> {
-    let home = if username == "root" {
-        "/root".to_string()
-    } else {
-        format!("/home/{username}")
-    };
-
-    let ssh_dir = format!("{home}/.ssh");
-    let auth_keys = format!("{ssh_dir}/authorized_keys");
-
-    // 确保 .ssh 目录存在
-    let _ = Command::new("mkdir").args(["-p", &ssh_dir]).output();
-
-    // 追加公钥（不覆盖已有密钥）
-    use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&auth_keys)
-        .map_err(|e| DomainError::SystemCommandFailed(format!("打开 authorized_keys 失败: {e}")))?;
-    writeln!(file, "{}", pub_key)
-        .map_err(|e| DomainError::SystemCommandFailed(format!("追加公钥失败: {e}")))?;
-
-    let _ = Command::new("chmod").args(["600", &auth_keys]).output();
-
-    let _ = Command::new("chown")
-        .args([&format!("{username}:{username}"), &auth_keys])
-        .output();
-
-    Ok(())
+    #[cfg(unix)]
+    {
+        super::ssh_keys::add_authorized_key(username, pub_key)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (username, pub_key);
+        Err(DomainError::PreconditionFailed(
+            "SSH key operations require Unix".into(),
+        ))
+    }
 }
 
 /// 获取可用随机端口（1024-65535 范围内的建议值）

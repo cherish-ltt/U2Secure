@@ -349,3 +349,9 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 - 新增任何平台相关代码后，必须确认这三件事：`cargo test`（macOS）通过、
   `cargo check --target x86_64-unknown-linux-gnu` 通过、构建矩阵未被加入其它平台
 
+### 10.5 SSH 公钥文件边界
+
+- 公钥追加从账户数据库解析 home/UID/GID，逐级禁止目录符号链接，并只对已验证的单链接普通文件描述符写入和设置权限。
+- 既有 home、`.ssh`、`authorized_keys` 必须归目标账户所有，home 与 `.ssh` 不得允许组或其他用户写入；拒绝危险目标时不得修改旁路文件。
+- 缺失 `.ssh` 时仅以目标账户身份创建，不允许 root 按可控路径执行递归 chown。
+

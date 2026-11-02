@@ -37,6 +37,10 @@ ctrlc = "=3.5.2"
 # 临时文件
 tempfile = "=3.27.0"
 
+[target.'cfg(unix)'.dependencies]
+# Descriptor-relative filesystem operations
+rustix = { version = "=1.1.4", features = ["fs", "process"] }
+
 # 开发依赖
 [dev-dependencies]
 # 测试临时目录
