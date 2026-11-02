@@ -943,7 +943,7 @@ impl HardeningStep for RestartSshStep {
         StepKind::RestartSsh
     }
 
-    fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
+    fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
         // 幂等：配置未变更（不比服务进程更新）则无需重启
         if !system::detect_ssh_restart_needed() {
             return Ok(StepResult::skipped(
@@ -965,45 +965,14 @@ impl HardeningStep for RestartSshStep {
             )));
         }
 
-        // 重启 SSH 服务
-        let output = Command::new("systemctl")
-            .args(["restart", "sshd"])
-            .output()
-            .or_else(|_| Command::new("systemctl").args(["restart", "ssh"]).output())
-            .map_err(|e| {
-                DomainError::SystemCommandFailed(format!(
-                    "{}: {e}",
-                    crate::i18n::tr("err_ssh_restart")
-                ))
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DomainError::SystemCommandFailed(format!(
-                "{}: {stderr}",
-                crate::i18n::tr("err_ssh_restart")
-            )));
-        }
-
-        // 验证服务状态
-        let status = Command::new("systemctl")
-            .args(["is-active", "sshd"])
-            .output()
-            .or_else(|_| {
-                Command::new("systemctl")
-                    .args(["is-active", "ssh"])
-                    .output()
-            });
-
-        let status_str = match &status {
-            Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-            Err(_) => "unknown".into(),
-        };
+        let log = live_log(params, "step12-ssh-restart");
+        let status_str = crate::infrastructure::ssh_service::restart_ssh(&log)?;
 
         Ok(StepResult::changed(
             self.kind(),
             crate::i18n::tr("result_ssh_restarted").replace("{status}", &status_str),
-        ))
+        )
+        .with_artifacts(vec![log]))
     }
 }
 

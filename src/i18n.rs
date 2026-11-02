@@ -161,6 +161,9 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "err_sshd_check" => "sshd 语法检查失败",
         "err_sshd_syntax" => "sshd_config 语法错误，请检查配置",
         "err_ssh_restart" => "重启 SSH 服务失败",
+        "err_ssh_service_state" => "无法使用 SSH 服务，停止尝试其他服务名",
+        "err_ssh_service_missing" => "找不到 sshd.service 或 ssh.service",
+        "err_ssh_not_active" => "重启后 SSH 服务未处于 active 状态",
         "err_backup" => "备份失败",
         "err_read" => "读取失败",
         "err_write" => "写入失败",
@@ -181,7 +184,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "result_fail2ban_installed" => "Fail2ban 已安装并运行，SSH 端口 {port} 已加入监控",
         "result_auto_updates_enabled" => "自动安全更新已启用（每日检查，自动安装安全补丁）",
         "result_ssh_restarted" => {
-            "SSH 服务已重启（状态: {status}）\n  ⚠️  请在另一终端验证连接后再关闭当前会话！\n  🔄 如需回滚：systemctl restart sshd 或恢复备份 /etc/ssh/sshd_config.bak.*"
+            "SSH 服务已重启（状态: {status}）\n  ⚠️  请在另一终端验证连接后再关闭当前会话！\n  🔄 如需回滚：恢复备份 /etc/ssh/sshd_config.bak.* 后重启同一 SSH 服务"
         },
         "result_sshd_cfg_set" => "{key} 已设置为 {value}（备份: {bak}）",
 
@@ -488,6 +491,11 @@ fn en(key: &str) -> Option<&'static str> {
         "err_sshd_check" => "sshd syntax check failed",
         "err_sshd_syntax" => "sshd_config syntax error, please check configuration",
         "err_ssh_restart" => "SSH service restart failed",
+        "err_ssh_service_state" => {
+            "SSH service is unavailable; no further service name will be tried"
+        },
+        "err_ssh_service_missing" => "Neither sshd.service nor ssh.service was found",
+        "err_ssh_not_active" => "SSH service is not active after restart",
         "err_backup" => "Backup failed",
         "err_read" => "Read failed",
         "err_write" => "Write failed",
@@ -508,7 +516,7 @@ fn en(key: &str) -> Option<&'static str> {
             "Auto security updates enabled (daily check, auto-install patches)"
         },
         "result_ssh_restarted" => {
-            "SSH service restarted (status: {status})\n  ⚠️  Verify connection in another terminal before closing this session!\n  🔄 Rollback: systemctl restart sshd or restore /etc/ssh/sshd_config.bak.*"
+            "SSH service restarted (status: {status})\n  ⚠️  Verify connection in another terminal before closing this session!\n  🔄 Rollback: restore /etc/ssh/sshd_config.bak.* then restart the same SSH service"
         },
         "result_sshd_cfg_set" => "{key} set to {value} (backup: {bak})",
 
@@ -829,6 +837,9 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "err_sshd_check" => "sshd 語法檢查失敗",
         "err_sshd_syntax" => "sshd_config 語法錯誤，請檢查配置",
         "err_ssh_restart" => "重啟 SSH 服務失敗",
+        "err_ssh_service_state" => "無法使用 SSH 服務，停止嘗試其他服務名稱",
+        "err_ssh_service_missing" => "找不到 sshd.service 或 ssh.service",
+        "err_ssh_not_active" => "重啟後 SSH 服務未處於 active 狀態",
         "err_backup" => "備份失敗",
         "err_read" => "讀取失敗",
         "err_write" => "寫入失敗",
@@ -847,7 +858,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "result_fail2ban_installed" => "Fail2ban 已安裝並執行，SSH 連接埠 {port} 已加入監控",
         "result_auto_updates_enabled" => "自動安全更新已啟用（每日檢查，自動安裝安全修補程式）",
         "result_ssh_restarted" => {
-            "SSH 服務已重新啟動（狀態: {status}）\n  ⚠️  請在另一個終端驗證連線後再關閉當前會話！\n  🔄 如需回退：systemctl restart sshd 或恢復備份 /etc/ssh/sshd_config.bak.*"
+            "SSH 服務已重新啟動（狀態: {status}）\n  ⚠️  請在另一個終端驗證連線後再關閉當前會話！\n  🔄 如需回退：恢復備份 /etc/ssh/sshd_config.bak.* 後重啟同一 SSH 服務"
         },
         "result_sshd_cfg_set" => "{key} 已設定為 {value}（備份: {bak}）",
 

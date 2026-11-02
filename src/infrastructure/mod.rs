@@ -6,5 +6,6 @@ pub mod lynis;
 pub mod package_mirror;
 pub mod rollback;
 pub mod ssh;
+pub mod ssh_service;
 pub mod system;
 pub mod ufw;

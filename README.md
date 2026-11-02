@@ -261,7 +261,7 @@ sudo u2secure
 | 9. 自动安全更新 🕒 | 安装 `unattended-upgrades`，写入 APT 定时配置 | 检查服务或配置文件 | 无 | `systemctl stop` + `apt remove` |
 | 10. 安全扫描 🕒 | 安装 lynis（发行版官方源）并执行 `lynis audit system --quick --cronjob`，完整输出落盘 | 检查 `which lynis` | 无 | `apt remove lynis` |
 | 11. 日志与审计增强 🕒 | 安装 logwatch + aide（apt 系并装 `aide-common`），生成日志报告，探测并校验 aide 配置后初始化数据库，确保每日完整性检查 | 检查 `which logwatch/aide`、aide 数据库是否已存在 | 无 | `apt remove logwatch aide aide-common` |
-| 12. SSH 服务重启 | `sshd -t` 验证语法 → `systemctl restart sshd` → 确认状态 | **配置未变更时直接跳过**（比较配置文件与 sshd 进程启动时间） | 无 | 从 `.bak` 恢复后重启 |
+| 12. SSH 服务重启 | `sshd -t` 验证语法 → 选择存在的 `sshd.service` / `ssh.service` 并重启 → 确认 `active` | **配置未变更时直接跳过**（比较配置文件与 sshd 进程启动时间） | 无 | 从 `.bak` 恢复后重启 |
 
 > 🕒 标记的步骤（9/10/11）为**可选步骤**：需要联网安装软件、耗时较长，**默认不勾选**，只有用户主动勾选才会执行。
 
@@ -486,6 +486,10 @@ SSH 相关步骤在覆盖配置前先对临时候选执行 `sshd -t/-T -f` 验�
 ls -t /etc/ssh/sshd_config.bak.* | head -1 | xargs -I{} cp {} /etc/ssh/sshd_config
 systemctl restart sshd
 ```
+
+重启前按 `LoadState` 探测服务：仅 `sshd.service` 为 `not-found` 时尝试 `ssh.service`。
+已存在服务的重启失败、被屏蔽或查询错误不会被其他服务名掩盖；重启限时 120 秒，输出写入执行日志，
+同一服务的 `is-active` 必须成功且返回 `active` 才报告成功。这不替代新建 SSH 连接的连通性验收。
 
 ### Q：密钥生成时提示 `私钥无密码短语保护`？
 

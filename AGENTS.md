@@ -359,3 +359,9 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 - 新增任何平台相关代码后，必须确认这三件事：`cargo test`（macOS）通过、
   `cargo check --target x86_64-unknown-linux-gnu` 通过、构建矩阵未被加入其它平台
 
+### 10.5 SSH 服务选择与验证
+
+- 重启通过 `infrastructure::ssh_service` 处理；只对明确的 `LoadState=not-found` 回退服务名，
+  已存在服务的加载、重启或状态查询失败必须显式报告，不得用另一个服务名掩盖错误。
+- 重启命令必须限时并保留日志，成功后校验同一服务的退出状态及 `active` 文本；测试只能注入假命令。
+
