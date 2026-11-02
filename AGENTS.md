@@ -342,6 +342,8 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 
 ### 10.4 平台支持边界（v0.4.1 起）
 
+- UFW 规则修改必须先备份 `user.rules` / `user6.rules` / `ufw.conf` 并登记可报告失败的恢复动作；禁止用无条件 `delete allow` 撤销。端口配置仅在已启用防火墙放行成功后写入。
+
 **本项目只支持 Linux，只发布 Linux 二进制**。理由：核心能力依赖 Linux 专有组件
 （apt/dnf、ufw、sshd、systemd、`/var/log`、`/etc`），部分检测逻辑（如比较
 `/etc/ssh/sshd_config` 与 `/proc/<pid>` 时间戳）在其它平台不成立。

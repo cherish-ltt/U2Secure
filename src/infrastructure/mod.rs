@@ -7,3 +7,4 @@ pub mod package_mirror;
 pub mod rollback;
 pub mod ssh;
 pub mod system;
+pub mod ufw;
