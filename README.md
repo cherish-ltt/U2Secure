@@ -463,7 +463,7 @@ aide 每日脚本会显式带上步骤 11 探测到的 `--config`，并按 AIDE 
 
 ### 备份文件位置
 
-修改 `sshd_config` 前自动备份到 `/etc/ssh/sshd_config.bak.{YYYYMMDDHHMMSS}`。回退时自动恢复备份并清理备份文件。
+修改 `sshd_config` 前自动备份到 `/etc/ssh/sshd_config.bak.{随机唯一后缀}`，连续修改不会覆盖已有备份。其它配置写入共用同一备份入口，备份失败会停止写入。回退时自动恢复备份并清理备份文件。
 
 ### 日志
 
