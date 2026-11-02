@@ -8,8 +8,9 @@
 //!
 //! TUI 通过 `spawn()` 在后台线程执行，UI 保持响应。
 
+use std::cell::Cell;
 use std::collections::HashSet;
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -37,6 +38,56 @@ pub fn execution_plan(selected: &[StepKind]) -> Vec<StepKind> {
         .filter(|kind| selected_set.contains(kind))
         .copied()
         .collect()
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+
+    #[test]
+    fn disconnect_probe_preserves_pending_business_events() {
+        for event in [
+            JobEvent::AllFinished,
+            JobEvent::StepFinished(StepResult::changed(StepKind::Ufw, "fixture")),
+            JobEvent::MirrorFailed {
+                reason: "fixture".into(),
+            },
+        ] {
+            let (tx, rx) = channel();
+            let job = JobHandle {
+                rx,
+                started_at: Instant::now(),
+                total: 1,
+                handle: None,
+                disconnected: Cell::new(false),
+            };
+            assert!(job.drain().is_empty());
+            assert!(!job.is_disconnected());
+            let expected = format!("{event:?}");
+            tx.send(event).unwrap();
+            drop(tx);
+            assert!(!job.is_disconnected());
+            let events = job.drain();
+            assert_eq!(events.len(), 1, "probe must not consume business events");
+            assert_eq!(format!("{:?}", events[0]), expected);
+            assert!(job.is_disconnected());
+        }
+    }
+
+    #[test]
+    fn sender_closing_without_completion_is_detected() {
+        let (tx, rx) = channel();
+        let job = JobHandle {
+            rx,
+            started_at: Instant::now(),
+            total: 1,
+            handle: None,
+            disconnected: Cell::new(false),
+        };
+        drop(tx);
+        assert!(job.drain().is_empty());
+        assert!(job.is_disconnected());
+    }
 }
 
 /// 执行过程中的事件
@@ -67,20 +118,29 @@ pub struct JobHandle {
     pub started_at: Instant,
     pub total: usize,
     handle: Option<JoinHandle<()>>,
+    disconnected: Cell<bool>,
 }
 
 impl JobHandle {
     /// 非阻塞地取出当前已产生的事件
     pub fn drain(&self) -> Vec<JobEvent> {
-        self.rx.try_iter().collect()
+        let mut events = vec![];
+        loop {
+            match self.rx.try_recv() {
+                Ok(event) => events.push(event),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.disconnected.set(true);
+                    break;
+                },
+            }
+        }
+        events
     }
 
-    /// 后台线程是否已结束（用于检测异常退出，避免 UI 永久卡在执行页）
+    /// 最近一次 drain 是否已排空事件并观察到断连。
     pub fn is_disconnected(&self) -> bool {
-        matches!(
-            self.rx.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Disconnected)
-        )
+        self.disconnected.get()
     }
 
     /// 等待后台线程结束（中断/退出时调用，确保子进程已被回收）
@@ -145,6 +205,7 @@ impl StepRunner {
             started_at: Instant::now(),
             total,
             handle: Some(handle),
+            disconnected: Cell::new(false),
         }
     }
 

@@ -232,6 +232,10 @@ msrv = "1.98.1"
 
 ## 10. 其他追加内容
 
+### 后台事件接收
+
+- `JobHandle::drain()` 是界面事件接收与断连判定的唯一入口；`is_disconnected()` 只读取最近一次 drain 的状态，禁止通过额外接收探测连接而丢弃业务事件。
+
 ### APT 索引刷新
 
 - 镜像预热和系统更新统一通过 `build_pm_argv` 为 APT `update` 添加 `APT::Update::Error-Mode=any`，禁止按本地化 warning 文本推断成功。
