@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::domain::audit::{AuditItem, AuditReport, AuditStatus, PackageManager};
 use crate::domain::errors::DomainError;
-use crate::infrastructure::rollback;
+use crate::infrastructure::{rollback, ssh};
 
 /// 轮询子进程状态的间隔
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -272,49 +272,13 @@ pub fn which(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 解析 sshd_config 中的某个指令值（取最后出现的一个）
-pub fn sshd_config_get(key: &str) -> Option<String> {
-    let path = Path::new("/etc/ssh/sshd_config");
-    let content = std::fs::read_to_string(path).ok()?;
-    let mut value = None;
-    for line in content.lines() {
-        let line = line.trim();
-        // 跳过注释
-        if line.starts_with('#') || line.is_empty() {
-            continue;
-        }
-        if let Some(stripped) = line.strip_prefix(key)
-            && (stripped.starts_with(' ') || stripped.starts_with('\t'))
-        {
-            value = Some(stripped.trim().to_string());
-        }
-    }
-    value
-}
-
-/// 获取 SSH 端口
+/// 获取 SSH 全局端口；审计通过 ssh_config_verified 区分未知与已验证值。
 pub fn detect_ssh_port() -> u16 {
-    sshd_config_get("Port")
-        .and_then(|v| v.parse().ok())
+    ssh::SshConfig::default()
+        .effective()
+        .ok()
+        .and_then(|config| config.ports.first().copied())
         .unwrap_or(22)
-}
-
-/// 检测是否禁止密码登录
-pub fn detect_password_auth_disabled() -> bool {
-    let password = sshd_config_get("PasswordAuthentication")
-        .map(|v| v.eq_ignore_ascii_case("no"))
-        .unwrap_or(false);
-    let challenge = sshd_config_get("ChallengeResponseAuthentication")
-        .map(|v| v.eq_ignore_ascii_case("no"))
-        .unwrap_or(false);
-    password && challenge
-}
-
-/// 检测是否禁止 root 登录
-pub fn detect_root_login_disabled() -> bool {
-    sshd_config_get("PermitRootLogin")
-        .map(|v| v.eq_ignore_ascii_case("no") || v.eq_ignore_ascii_case("prohibit-password"))
-        .unwrap_or(false)
 }
 
 /// 获取非 root 的 sudo 用户列表
@@ -558,9 +522,31 @@ pub fn detect_system_up_to_date() -> bool {
 pub fn run_full_audit() -> AuditReport {
     let is_root = detect_is_root();
     let package_manager = detect_package_manager();
-    let ssh_port = detect_ssh_port();
-    let password_auth_disabled = detect_password_auth_disabled();
-    let root_login_disabled = detect_root_login_disabled();
+    let ssh_config = ssh::SshConfig::default().effective();
+    let ssh_config_verified = ssh_config.as_ref().is_ok_and(|config| config.verified);
+    let ssh_port = ssh_config
+        .as_ref()
+        .ok()
+        .and_then(|config| config.ports.first().copied())
+        .unwrap_or(22);
+    let password_auth_disabled = ssh_config
+        .as_ref()
+        .is_ok_and(|config| config.password_auth_disabled);
+    let root_login_disabled = ssh_config
+        .as_ref()
+        .is_ok_and(|config| config.root_login_disabled);
+    let ssh_detail = match &ssh_config {
+        Ok(config) => crate::i18n::tr("audit_ssh_global").replace(
+            "{ports}",
+            &config
+                .ports
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+        Err(error) => error.to_string(),
+    };
     let sudo_users = detect_sudo_users();
     let fail2ban_installed = detect_fail2ban_installed();
     let ufw_enabled = detect_ufw_enabled();
@@ -570,6 +556,25 @@ pub fn run_full_audit() -> AuditReport {
     let logwatch_installed = detect_logwatch_installed();
     let aide_installed = detect_aide_installed();
     let ssh_restart_needed = detect_ssh_restart_needed();
+
+    let mut report = AuditReport {
+        items: vec![],
+        is_root,
+        package_manager,
+        ssh_port,
+        ssh_config_verified,
+        password_auth_disabled,
+        root_login_disabled,
+        sudo_users: sudo_users.clone(),
+        fail2ban_installed,
+        ufw_enabled,
+        auto_updates_enabled,
+        system_up_to_date,
+        lynis_installed,
+        logwatch_installed,
+        aide_installed,
+        ssh_restart_needed,
+    };
 
     let mut items = vec![];
 
@@ -591,41 +596,44 @@ pub fn run_full_audit() -> AuditReport {
         detail: crate::i18n::tr("audit_detail_pkg").replace("{pkg}", package_manager.name()),
     });
 
-    items.push(if ssh_port != 22 {
-        AuditItem::safe(
-            crate::i18n::tr("audit_ssh_port"),
-            crate::i18n::tr("audit_detail_port_safe").replace("{port}", &ssh_port.to_string()),
-        )
-    } else {
-        AuditItem::missing(
-            crate::i18n::tr("audit_ssh_port"),
-            crate::i18n::tr("audit_detail_port_missing").into(),
-        )
-    });
-
-    items.push(if password_auth_disabled {
-        AuditItem::safe(
-            crate::i18n::tr("audit_password_auth"),
-            crate::i18n::tr("audit_detail_pw_disabled").into(),
-        )
-    } else {
-        AuditItem::missing(
-            crate::i18n::tr("audit_password_auth"),
-            crate::i18n::tr("audit_detail_pw_missing").into(),
-        )
-    });
-
-    items.push(if root_login_disabled {
-        AuditItem::safe(
-            crate::i18n::tr("audit_root_login"),
-            crate::i18n::tr("audit_detail_root_disabled").into(),
-        )
-    } else {
-        AuditItem::missing(
-            crate::i18n::tr("audit_root_login"),
-            crate::i18n::tr("audit_detail_root_missing_cfg").into(),
-        )
-    });
+    for (kind, name, detail) in [
+        (
+            crate::domain::steps::StepKind::SshPortChange,
+            "audit_ssh_port",
+            ssh_detail,
+        ),
+        (
+            crate::domain::steps::StepKind::SshPasswordAuth,
+            "audit_password_auth",
+            crate::i18n::tr(if password_auth_disabled {
+                "audit_detail_pw_disabled"
+            } else {
+                "audit_detail_pw_missing"
+            })
+            .into(),
+        ),
+        (
+            crate::domain::steps::StepKind::SshRootLogin,
+            "audit_root_login",
+            crate::i18n::tr(if root_login_disabled {
+                "audit_detail_root_disabled"
+            } else {
+                "audit_detail_root_missing_cfg"
+            })
+            .into(),
+        ),
+    ] {
+        let detail = if ssh_config_verified {
+            detail
+        } else {
+            format!("{}: {detail}", crate::i18n::tr("audit_ssh_unverified"))
+        };
+        items.push(AuditItem::new(
+            crate::i18n::tr(name),
+            report.status_for(kind),
+            detail,
+        ));
+    }
 
     items.push(if sudo_users.is_empty() {
         AuditItem::missing(
@@ -687,23 +695,8 @@ pub fn run_full_audit() -> AuditReport {
         )
     });
 
-    AuditReport {
-        items,
-        is_root,
-        package_manager,
-        ssh_port,
-        password_auth_disabled,
-        root_login_disabled,
-        sudo_users,
-        fail2ban_installed,
-        ufw_enabled,
-        auto_updates_enabled,
-        system_up_to_date,
-        lynis_installed,
-        logwatch_installed,
-        aide_installed,
-        ssh_restart_needed,
-    }
+    report.items = items;
+    report
 }
 
 /// 创建系统用户，加入管理员组，返回创建是否成功

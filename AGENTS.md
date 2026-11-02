@@ -237,6 +237,21 @@ msrv = "1.98.1"
 - Unix 长耗时命令必须使用独立进程组；超时、取消、无输出和等待失败统一终止该组并回收直接子进程，禁止按名称全局杀进程。
 - `tests/process_tests.rs` 仅启动无害 shell 并写临时标记；主动脱离进程组的守护进程不属于普通派生进程保证。
 
+### 批次撤销边界
+
+- `StepRunner` 串行管理全局撤销栈与中断标记；失败或取消只撤销当前批次，正常完成后丢弃本批撤销记录但保留备份供人工恢复。
+- 执行器回归测试必须在假步骤执行期间登记撤销，覆盖连续批次与可选步骤失败，禁止用真实加固命令验证。
+- 可失败撤销使用 `UndoAction::try_new()` 返回错误；文件恢复失败必须保留备份，执行器将失败明细加入结果，禁止仅打印动作名或无条件宣称全部恢复。
+- 用户撤销必须检查 `userdel` 启动和退出状态，保留用户名、原始错误及非零退出的输出；失败不得阻断其他独立撤销。
+
+- SSH 配置语义委托 `sshd -T -f`，不得自造忽略 Include/Match 的文本审计；未验证连接上下文不能标为 Safe。
+- SSH 修改先验证临时候选的语法及有效目标值，避免多 Port 监听与 KbdInteractive/ChallengeResponse 别名冲突；测试仅用显式临时路径和假命令。
+
+### 配置备份唯一性
+
+- 配置写入统一使用 `infrastructure::backup::backup_file()`，以排他创建的唯一文件保存快照；不得只用时钟命名或忽略备份错误后继续覆盖配置。
+- 连续修改的回归测试须在临时目录调用生产配置写入函数，并验证回退后的完整原始字节。
+
 ### 10.1 发布流程（Release）
 
 - 版本号统一维护在 `Cargo.toml`（源码通过 `env!("CARGO_PKG_VERSION")` 读取）；每个版本的发布说明写入 `docs/versions/v{X.Y.Z}.md`。
@@ -333,6 +348,10 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 
 ### 10.4 平台支持边界（v0.4.1 起）
 
+- SSH 生效决策由共用执行器处理：步骤通过 `StepResult::ssh_restart_required` 报告实际配置写入，CLI/TUI 必须在执行前收集 `apply_ssh_changes` 明确授权；无授权只能标记待生效，禁止暗中重启。计划测试使用 `execution_plan` 配合假步骤。
+
+- UFW 规则修改必须先备份 `user.rules` / `user6.rules` / `ufw.conf` 并登记可报告失败的恢复动作；禁止用无条件 `delete allow` 撤销。端口配置仅在已启用防火墙放行成功后写入。
+
 **本项目只支持 Linux，只发布 Linux 二进制**。理由：核心能力依赖 Linux 专有组件
 （apt/dnf、ufw、sshd、systemd、`/var/log`、`/etc`），部分检测逻辑（如比较
 `/etc/ssh/sshd_config` 与 `/proc/<pid>` 时间戳）在其它平台不成立。
@@ -347,4 +366,11 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 - npm 包 `postinstall` 在非 Linux 平台必须**明确报错**，不得去下载不存在的资产
 - 新增任何平台相关代码后，必须确认这三件事：`cargo test`（macOS）通过、
   `cargo check --target x86_64-unknown-linux-gnu` 通过、构建矩阵未被加入其它平台
+
+### 10.5 SSH 服务选择与验证
+
+- 重启通过 `infrastructure::ssh_service` 处理；只对明确的 `LoadState=not-found` 回退服务名，
+  已存在服务的加载、重启或状态查询失败必须显式报告，不得用另一个服务名掩盖错误。
+- 重启命令必须限时并保留日志，成功后校验同一服务的退出状态及 `active` 文本；测试只能注入假命令。
+- SSH 开始尝试重启是整批提交边界：通过 `StepResult::ssh_activation_attempted` 保留边界后的成功、失败与中断信息；禁止再单独回退配置和防火墙。边界前失败仍回退，边界后失败须明确报告修改保留及人工检查要求。
 

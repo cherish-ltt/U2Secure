@@ -4,8 +4,9 @@ use std::time::Duration;
 use crate::domain::audit::PackageManager;
 use crate::domain::errors::DomainError;
 use crate::domain::steps::{ExecuteParams, HardeningStep, SshKeyAction, StepKind, StepResult};
+use crate::infrastructure::backup::backup_file;
 use crate::infrastructure::system::StreamStatus;
-use crate::infrastructure::{aide, artifacts, lynis, package_mirror, rollback, system};
+use crate::infrastructure::{aide, artifacts, lynis, package_mirror, rollback, ssh, system, ufw};
 
 // 超时（长耗时步骤必须有上限，避免"假卡住"）
 
@@ -216,8 +217,7 @@ impl HardeningStep for SshRootLoginStep {
             ));
         }
 
-        let message = modify_sshd_config("PermitRootLogin", "prohibit-password")?;
-        Ok(StepResult::changed(self.kind(), message))
+        ssh_config_result(self.kind(), &[("PermitRootLogin", "prohibit-password")])
     }
 }
 
@@ -242,27 +242,8 @@ impl HardeningStep for SshPortChangeStep {
             ));
         }
 
-        let message = modify_sshd_config("Port", &new_port.to_string())?;
-
-        // UFW 放行新端口（如果 ufw 已启用）
-        if system::detect_ufw_enabled() {
-            // 注册撤销：放行端口 → 删除规则
-            let port_for_undo = new_port.to_string();
-            rollback::register_command_undo(
-                crate::i18n::tr("undo_ufw_delete").replace("{port}", &port_for_undo),
-                vec!["ufw".into(), "delete".into(), "allow".into(), port_for_undo],
-            );
-            let _ = Command::new("ufw")
-                .args(["allow", &new_port.to_string()])
-                .output();
-        }
-
-        Ok(StepResult::changed(
-            self.kind(),
-            crate::i18n::tr("result_ssh_port_set")
-                .replace("{port}", &new_port.to_string())
-                .replace("{msg}", &message),
-        ))
+        let firewall = system::which("ufw").then(ufw::Ufw::default);
+        change_ssh_port(&ssh::SshConfig::default(), firewall.as_ref(), new_port)
     }
 }
 
@@ -285,13 +266,13 @@ impl HardeningStep for SshPasswordAuthStep {
             ));
         }
 
-        modify_sshd_config("PasswordAuthentication", "no")?;
-        modify_sshd_config("ChallengeResponseAuthentication", "no")?;
-
-        Ok(StepResult::changed(
+        ssh_config_result(
             self.kind(),
-            crate::i18n::tr("result_pw_auth_disabled"),
-        ))
+            &[
+                ("PasswordAuthentication", "no"),
+                ("KbdInteractiveAuthentication", "no"),
+            ],
+        )
     }
 }
 
@@ -356,64 +337,12 @@ impl HardeningStep for UfwStep {
         StepKind::Ufw
     }
 
-    fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        let port = system::detect_ssh_port();
-        let was_ufw_enabled = system::detect_ufw_enabled();
-
-        // 放行 SSH 端口
-        let output = Command::new("ufw")
-            .args(["allow", &port.to_string()])
-            .output()
-            .map_err(|e| {
-                DomainError::SystemCommandFailed(format!(
-                    "{}: {e}",
-                    crate::i18n::tr("err_ufw_allow_failed")
-                ))
-            })?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DomainError::SystemCommandFailed(format!(
-                "{}: {stderr}",
-                crate::i18n::tr("err_ufw_allow_failed")
-            )));
-        }
-
-        // 操作成功后注册撤销（先删除端口规则；如果之前未启用则再关闭 UFW）
-        let port_for_undo = port.to_string();
-        rollback::register_command_undo(
-            crate::i18n::tr("undo_ufw_delete").replace("{port}", &port_for_undo),
-            vec!["ufw".into(), "delete".into(), "allow".into(), port_for_undo],
-        );
-        if !was_ufw_enabled {
-            rollback::register_command_undo(
-                crate::i18n::tr("undo_ufw_disable").into(),
-                vec!["ufw".into(), "--force".into(), "disable".into()],
-            );
-        }
-
-        if !was_ufw_enabled {
-            let output = Command::new("ufw")
-                .args(["--force", "enable"])
-                .output()
-                .map_err(|e| {
-                    DomainError::SystemCommandFailed(format!(
-                        "{}: {e}",
-                        crate::i18n::tr("err_ufw_enable_failed")
-                    ))
-                })?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(DomainError::SystemCommandFailed(format!(
-                    "{}: {stderr}",
-                    crate::i18n::tr("err_ufw_enable_failed")
-                )));
-            }
-        }
-
-        Ok(StepResult::changed(
-            self.kind(),
-            crate::i18n::tr("result_ufw_enabled").replace("{port}", &port.to_string()),
-        ))
+    fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        configure_ufw(
+            &ssh::SshConfig::default(),
+            &ufw::Ufw::default(),
+            params.ssh_restart_required || system::detect_ssh_restart_needed(),
+        )
     }
 }
 
@@ -474,11 +403,11 @@ impl HardeningStep for Fail2banStep {
         // 配置监狱规则（使用 SSH 端口），写入前备份并注册回滚
         let port = system::detect_ssh_port();
         let jail_local = format!("[sshd]\nenabled = true\nport = {port}\n");
-        if let Some(backup) = backup_file("/etc/fail2ban/jail.local") {
+        if let Some(backup) = backup_file(std::path::Path::new("/etc/fail2ban/jail.local"))? {
             rollback::register_file_backup(
                 crate::i18n::tr("undo_file_restore_generic")
                     .replace("{path}", "/etc/fail2ban/jail.local"),
-                backup,
+                backup.display().to_string(),
                 "/etc/fail2ban/jail.local".into(),
             );
         }
@@ -568,10 +497,10 @@ impl HardeningStep for AutoUpdatesStep {
 
         // 写入配置：启用自动安全更新（写入前备份并注册回滚）
         let config_path = "/etc/apt/apt.conf.d/20auto-upgrades";
-        if let Some(backup) = backup_file(config_path) {
+        if let Some(backup) = backup_file(std::path::Path::new(config_path))? {
             rollback::register_file_backup(
                 crate::i18n::tr("undo_file_restore_generic").replace("{path}", config_path),
-                backup,
+                backup.display().to_string(),
                 config_path.into(),
             );
         }
@@ -814,10 +743,10 @@ impl HardeningStep for LogAuditStep {
                 "#!/bin/bash\n# 由 U2Secure 生成：每日日志审计报告\n/usr/sbin/logwatch --output stdout --format text --range yesterday --detail high > {}/logwatch-$(date +\\%F).txt 2>&1\n",
                 report_dir(params)
             );
-            if let Some(backup) = backup_file(path) {
+            if let Some(backup) = backup_file(std::path::Path::new(path))? {
                 rollback::register_file_backup(
                     crate::i18n::tr("undo_file_restore_generic").replace("{path}", path),
-                    backup,
+                    backup.display().to_string(),
                     path.into(),
                 );
             }
@@ -880,10 +809,10 @@ impl HardeningStep for LogAuditStep {
         {
             let path = "/etc/cron.daily/99u2secure-aide";
             let script = aide::render_daily_script(plan.config.as_deref(), &report_dir(params));
-            if let Some(backup) = backup_file(path) {
+            if let Some(backup) = backup_file(std::path::Path::new(path))? {
                 rollback::register_file_backup(
                     crate::i18n::tr("undo_file_restore_generic").replace("{path}", path),
-                    backup,
+                    backup.display().to_string(),
                     path.into(),
                 );
             }
@@ -996,16 +925,6 @@ fn set_executable(path: &str) {
     let _ = path;
 }
 
-/// 备份已存在的文件（返回备份路径）；文件不存在时返回 None
-fn backup_file(path: &str) -> Option<String> {
-    if !std::path::Path::new(path).exists() {
-        return None;
-    }
-    let backup = format!("{path}.bak.{}", artifacts::stamp());
-    std::fs::copy(path, &backup).ok()?;
-    Some(backup)
-}
-
 // 步骤 12：SSH 服务重启与验证
 
 #[derive(Debug)]
@@ -1016,9 +935,15 @@ impl HardeningStep for RestartSshStep {
         StepKind::RestartSsh
     }
 
-    fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        // 幂等：配置未变更（不比服务进程更新）则无需重启
-        if !system::detect_ssh_restart_needed() {
+    fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        if !params.apply_ssh_changes {
+            return Ok(StepResult::skipped(
+                self.kind(),
+                crate::i18n::tr("result_ssh_pending"),
+            ));
+        }
+        // 本批次的实际写入优先于进程/文件时间戳推断。
+        if !params.ssh_restart_required && !system::detect_ssh_restart_needed() {
             return Ok(StepResult::skipped(
                 self.kind(),
                 crate::i18n::tr("result_ssh_no_restart"),
@@ -1038,108 +963,78 @@ impl HardeningStep for RestartSshStep {
             )));
         }
 
-        // 重启 SSH 服务
-        let output = Command::new("systemctl")
-            .args(["restart", "sshd"])
-            .output()
-            .or_else(|_| Command::new("systemctl").args(["restart", "ssh"]).output())
-            .map_err(|e| {
-                DomainError::SystemCommandFailed(format!(
-                    "{}: {e}",
-                    crate::i18n::tr("err_ssh_restart")
-                ))
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DomainError::SystemCommandFailed(format!(
-                "{}: {stderr}",
-                crate::i18n::tr("err_ssh_restart")
-            )));
+        let log = live_log(params, "step12-ssh-restart");
+        let mut attempted = false;
+        let status = crate::infrastructure::ssh_service::restart_ssh(&log, || attempted = true);
+        let mut result = match status {
+            Ok(status) => StepResult::changed(
+                self.kind(),
+                crate::i18n::tr("result_ssh_restarted").replace("{status}", &status),
+            ),
+            Err(error) => StepResult::failed(self.kind(), error.to_string()),
         }
-
-        // 验证服务状态
-        let status = Command::new("systemctl")
-            .args(["is-active", "sshd"])
-            .output()
-            .or_else(|_| {
-                Command::new("systemctl")
-                    .args(["is-active", "ssh"])
-                    .output()
-            });
-
-        let status_str = match &status {
-            Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-            Err(_) => "unknown".into(),
-        };
-
-        Ok(StepResult::changed(
-            self.kind(),
-            crate::i18n::tr("result_ssh_restarted").replace("{status}", &status_str),
-        ))
+        .with_artifacts(vec![log]);
+        result.ssh_activation_attempted = attempted;
+        Ok(result)
     }
 }
 
-// 辅助函数：修改 sshd_config
+fn ssh_config_result(kind: StepKind, settings: &[(&str, &str)]) -> Result<StepResult, DomainError> {
+    match ssh::SshConfig::default().update(settings)? {
+        Some(message) => Ok(StepResult::changed(kind, message).requiring_ssh_restart()),
+        None => Ok(StepResult::skipped(
+            kind,
+            crate::i18n::tr("result_sshd_unchanged"),
+        )),
+    }
+}
 
-/// 修改 sshd_config 中的键值，返回结果描述（备份路径已注册回滚）
-fn modify_sshd_config(key: &str, value: &str) -> Result<String, DomainError> {
-    let path = std::path::Path::new("/etc/ssh/sshd_config");
-    if !path.exists() {
-        return Err(DomainError::ParseError(
-            crate::i18n::tr("err_sshd_not_found").into(),
+pub fn change_ssh_port(
+    config: &ssh::SshConfig,
+    firewall: Option<&ufw::Ufw>,
+    port: u16,
+) -> Result<StepResult, DomainError> {
+    let firewall_changed = firewall
+        .map(|firewall| firewall.allow_port(port, false))
+        .transpose()?
+        .unwrap_or(false);
+    match config.update(&[("Port", &port.to_string())])? {
+        Some(message) => {
+            Ok(StepResult::changed(StepKind::SshPortChange, message).requiring_ssh_restart())
+        },
+        None if firewall_changed => Ok(StepResult::changed(
+            StepKind::SshPortChange,
+            crate::i18n::tr("result_sshd_firewall_changed"),
+        )),
+        None => Ok(StepResult::skipped(
+            StepKind::SshPortChange,
+            crate::i18n::tr("result_sshd_unchanged"),
+        )),
+    }
+}
+
+pub fn configure_ufw(
+    config: &ssh::SshConfig,
+    firewall: &ufw::Ufw,
+    ssh_pending: bool,
+) -> Result<StepResult, DomainError> {
+    if ssh_pending && !firewall.enabled()? {
+        return Ok(StepResult::skipped(
+            StepKind::Ufw,
+            crate::i18n::tr("result_ufw_ssh_pending"),
         ));
     }
-
-    // 备份
-    let backup = format!(
-        "/etc/ssh/sshd_config.bak.{}",
-        chrono::Local::now().format("%Y%m%d%H%M%S")
-    );
-    std::fs::copy(path, &backup).map_err(|e| {
-        DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_backup")))
-    })?;
-
-    // 注册撤销：从备份恢复原文件
-    rollback::register_file_backup(
-        crate::i18n::tr("undo_file_restore").replace("{key}", key),
-        backup.clone(),
-        path.to_string_lossy().to_string(),
-    );
-
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| DomainError::ParseError(format!("{}: {e}", crate::i18n::tr("err_read"))))?;
-
-    let mut found = false;
-    let new_content: Vec<String> = content
-        .lines()
-        .map(|line| {
-            let trimmed = line.trim();
-            if trimmed.starts_with('#') || trimmed.is_empty() {
-                return line.to_string();
-            }
-            // 精确匹配第一个单词（避免 Port 误匹配 PortNumber）
-            let first_word = trimmed.split_whitespace().next().unwrap_or("");
-            if first_word == key {
-                found = true;
-                format!("{key} {value}")
-            } else {
-                line.to_string()
-            }
-        })
-        .collect();
-
-    let mut result = new_content.join("\n");
-    if !found {
-        result.push_str(&format!("\n{key} {value}\n"));
+    let config = config.effective()?;
+    if config.ports.len() != 1 {
+        return Err(DomainError::PreconditionFailed(
+            crate::i18n::tr("err_sshd_effective").into(),
+        ));
     }
-
-    std::fs::write(path, result).map_err(|e| {
-        DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_write")))
-    })?;
-
-    Ok(crate::i18n::tr("result_sshd_cfg_set")
-        .replace("{key}", key)
-        .replace("{value}", value)
-        .replace("{bak}", &backup))
+    let port = config.ports[0];
+    let message = crate::i18n::tr("result_ufw_enabled").replace("{port}", &port.to_string());
+    if firewall.allow_port(port, true)? {
+        Ok(StepResult::changed(StepKind::Ufw, message))
+    } else {
+        Ok(StepResult::skipped(StepKind::Ufw, message))
+    }
 }
