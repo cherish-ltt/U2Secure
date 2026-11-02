@@ -9,8 +9,8 @@
 //! TUI 通过 `spawn()` 在后台线程执行，UI 保持响应。
 
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
@@ -164,6 +164,10 @@ impl StepRunner {
         params: &ExecuteParams,
         on_event: &mut dyn FnMut(JobEvent),
     ) -> Vec<StepResult> {
+        static RUN_LOCK: Mutex<()> = Mutex::new(());
+        // The undo stack and cancellation flag belong to one running batch at a time.
+        let _batch = RUN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let checkpoint = rollback::undo_depth();
         let total = steps.len();
         let report_dir = self
             .report_dir
@@ -202,7 +206,7 @@ impl StepRunner {
             let kind = step.kind();
 
             if rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
-                self.rollback_on_interrupt(on_event);
+                self.rollback_on_interrupt(checkpoint, on_event);
                 break;
             }
 
@@ -251,7 +255,7 @@ impl StepRunner {
             results.push(result);
 
             if interrupted {
-                self.rollback_on_interrupt(on_event);
+                self.rollback_on_interrupt(checkpoint, on_event);
                 break;
             }
 
@@ -259,12 +263,13 @@ impl StepRunner {
             let failed = results.last().is_some_and(|r| r.is_failed());
             if failed && !kind.is_optional() {
                 self.logger.log(crate::i18n::tr("log_rollback_auto"));
-                rollback::undo_all();
+                rollback::undo_since(checkpoint);
                 on_event(JobEvent::Log(crate::i18n::tr("log_rollback_auto").into()));
                 break;
             }
         }
 
+        rollback::discard_since(checkpoint);
         // 临时源文件随 TempDir 清理
         drop(mirror_session);
         on_event(JobEvent::AllFinished);
@@ -328,9 +333,9 @@ impl StepRunner {
         }
     }
 
-    fn rollback_on_interrupt(&self, on_event: &mut dyn FnMut(JobEvent)) {
+    fn rollback_on_interrupt(&self, checkpoint: usize, on_event: &mut dyn FnMut(JobEvent)) {
         self.logger.log(crate::i18n::tr("log_interrupt_rollback"));
-        rollback::undo_all();
+        rollback::undo_since(checkpoint);
         on_event(JobEvent::Log(
             crate::i18n::tr("log_interrupt_rollback").into(),
         ));
