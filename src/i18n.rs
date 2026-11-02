@@ -191,6 +191,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
             "ED25519 密钥对已生成\n  私钥: {priv}\n  公钥: {pub}\n  ⚠️  私钥无密码短语保护，建议手动加密：ssh-keygen -p -f {key}\n  请立即复制私钥并安全保存！"
         },
         "result_key_pasted" => "公钥已添加到 {user} 的 authorized_keys",
+        "result_key_created_with_user" => "创建用户时已生成密钥，跳过重复生成",
         "result_ufw_enabled" => "UFW 已启用，SSH 端口 {port} 已放行",
         "result_fail2ban_installed" => "Fail2ban 已安装并运行，SSH 端口 {port} 已加入监控",
         "result_auto_updates_enabled" => "自动安全更新已启用（每日检查，自动安装安全补丁）",
@@ -535,6 +536,9 @@ fn en(key: &str) -> Option<&'static str> {
             "ED25519 key pair generated\n  Private: {priv}\n  Public: {pub}\n  ⚠️  No passphrase set, encrypt manually: ssh-keygen -p -f {key}\n  Copy and save the private key now!"
         },
         "result_key_pasted" => "Public key added to {user}'s authorized_keys",
+        "result_key_created_with_user" => {
+            "Key already generated when creating this user; duplicate generation skipped"
+        },
         "result_ufw_enabled" => "UFW enabled, SSH port {port} allowed",
         "result_fail2ban_installed" => "Fail2ban installed and running, SSH port {port} monitored",
         "result_auto_updates_enabled" => {
@@ -891,6 +895,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
             "ED25519 金鑰對已生成\n  私鑰: {priv}\n  公鑰: {pub}\n  ⚠️  私鑰無密碼短語保護，建議手動加密：ssh-keygen -p -f {key}\n  請立即複製私鑰並安全儲存！"
         },
         "result_key_pasted" => "公鑰已添加到 {user} 的 authorized_keys",
+        "result_key_created_with_user" => "建立用戶時已產生金鑰，跳過重複產生",
         "result_ufw_enabled" => "UFW 已啟用，SSH 連接埠 {port} 已放行",
         "result_fail2ban_installed" => "Fail2ban 已安裝並執行，SSH 連接埠 {port} 已加入監控",
         "result_auto_updates_enabled" => "自動安全更新已啟用（每日檢查，自動安裝安全修補程式）",

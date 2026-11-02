@@ -17,7 +17,9 @@ use std::time::Instant;
 
 use crate::application::steps::step_for;
 use crate::domain::mirror::PackageMirror;
-use crate::domain::steps::{ExecuteParams, HardeningStep, StepKind, StepOutcome, StepResult};
+use crate::domain::steps::{
+    ExecuteParams, HardeningStep, SshKeyAction, StepKind, StepOutcome, StepResult,
+};
 use crate::infrastructure::logger::FileLogger;
 use crate::infrastructure::package_mirror::{self, MirrorSession};
 use crate::infrastructure::{artifacts, rollback, system};
@@ -264,7 +266,7 @@ impl StepRunner {
             params.mirror = session.override_value();
         }
 
-        let mut results = vec![];
+        let mut results: Vec<StepResult> = vec![];
         for (index, step) in steps.iter().enumerate() {
             let kind = step.kind();
 
@@ -296,7 +298,19 @@ impl StepRunner {
             self.logger
                 .log_operation(crate::i18n::tr("log_step_start"), kind.label());
 
-            let execution = if kind == StepKind::RestartSsh && !params.ssh_restart_required {
+            let key_created = kind == StepKind::SshKeySetup
+                && params.new_username.is_some()
+                && params.new_username == params.ssh_key_username
+                && matches!(params.ssh_key_action, Some(SshKeyAction::GenerateNew))
+                && results.iter().any(|result| {
+                    result.kind == StepKind::UserCreation && result.outcome == StepOutcome::Changed
+                });
+            let execution = if key_created {
+                Ok(StepResult::skipped(
+                    kind,
+                    crate::i18n::tr("result_key_created_with_user"),
+                ))
+            } else if kind == StepKind::RestartSsh && !params.ssh_restart_required {
                 Ok(StepResult::skipped(
                     kind,
                     crate::i18n::tr("result_ssh_no_restart"),
