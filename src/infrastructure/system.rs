@@ -520,9 +520,13 @@ pub fn detect_system_up_to_date() -> bool {
 
 /// 执行完整的系统审计，返回 AuditReport
 pub fn run_full_audit() -> AuditReport {
+    run_full_audit_with(ssh::SshConfig::default())
+}
+
+fn run_full_audit_with(config: ssh::SshConfig) -> AuditReport {
     let is_root = detect_is_root();
     let package_manager = detect_package_manager();
-    let ssh_config = ssh::SshConfig::default().effective();
+    let ssh_config = config.effective();
     let ssh_config_verified = ssh_config.as_ref().is_ok_and(|config| config.verified);
     let ssh_port = ssh_config
         .as_ref()
@@ -821,11 +825,15 @@ pub fn get_key_fingerprint(username: &str) -> Option<String> {
     };
     let auth_keys = format!("{home}/.ssh/authorized_keys");
 
-    if !std::path::Path::new(&auth_keys).exists() {
+    key_fingerprint_at(Path::new(&auth_keys))
+}
+
+fn key_fingerprint_at(auth_keys: &Path) -> Option<String> {
+    if !auth_keys.exists() {
         return None;
     }
 
-    let content = std::fs::read_to_string(&auth_keys).ok()?;
+    let content = std::fs::read_to_string(auth_keys).ok()?;
     // 找第一条非注释、非空行
     let first_key = content.lines().find(|line| {
         let t = line.trim();
@@ -868,6 +876,10 @@ pub fn get_key_fingerprint(username: &str) -> Option<String> {
         Some(stdout)
     }
 }
+
+#[cfg(test)]
+#[path = "system_tests.rs"]
+mod coverage_tests;
 
 /// 检查用户是否已存在
 pub fn user_exists(username: &str) -> bool {

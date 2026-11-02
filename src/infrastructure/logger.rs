@@ -28,12 +28,14 @@ impl FileLogger {
     }
 
     pub fn new() -> Self {
-        let primary = "/var/log/secure-init.log";
+        Self::with_fallback("/var/log/secure-init.log", Path::new("./secure-init.log"))
+    }
+
+    fn with_fallback(primary: &str, local_path: &Path) -> Self {
         let (file, path) = match OpenOptions::new().create(true).append(true).open(primary) {
             Ok(f) => (f, primary.to_string()),
             Err(_) => {
                 // fallback：无权限写入 /var/log 时落到当前目录
-                let local_path = Path::new("./secure-init.log");
                 let f = OpenOptions::new()
                     .create(true)
                     .append(true)
@@ -138,3 +140,7 @@ mod tests {
         assert_eq!(sanitized, detail);
     }
 }
+
+#[cfg(test)]
+#[path = "logger_tests.rs"]
+mod coverage_tests;

@@ -127,11 +127,15 @@ pub fn detect_plan(pm: PackageManager) -> AidePlan {
 /// 数据库使用**独立文件名**（`aide-u2secure.db`），避免与系统既有基线
 /// `/var/lib/aide/aide.db` 同名而覆盖它；配置本身写入报告目录，不触碰 `/etc`。
 pub fn fallback_plan(report_dir: &Path) -> AidePlan {
-    let db_dir = DB_CANDIDATES
+    fallback_plan_with(report_dir, DB_CANDIDATES)
+}
+
+fn fallback_plan_with(report_dir: &Path, candidates: &[&str]) -> AidePlan {
+    let db_dir = candidates
         .iter()
         .map(PathBuf::from)
         .find(|p| p.is_dir() && is_writable_dir(p))
-        .or_else(|| DB_CANDIDATES.iter().map(PathBuf::from).find(|p| p.is_dir()))
+        .or_else(|| candidates.iter().map(PathBuf::from).find(|p| p.is_dir()))
         .unwrap_or_else(|| report_dir.to_path_buf());
     AidePlan {
         source: "generated",
@@ -183,10 +187,14 @@ impl AidePlan {
 
     /// 构造 `--init` 命令：优先发行版包装器（含权限与日志处理），否则直接调用 aide
     pub fn init_command(&self) -> AideCommand {
-        let wrapper = ["/usr/sbin/aideinit", "/usr/bin/aideinit"]
-            .iter()
-            .map(PathBuf::from)
-            .find(|p| p.is_file());
+        self.init_command_with_wrappers(&[
+            Path::new("/usr/sbin/aideinit"),
+            Path::new("/usr/bin/aideinit"),
+        ])
+    }
+
+    fn init_command_with_wrappers(&self, wrappers: &[&Path]) -> AideCommand {
+        let wrapper = wrappers.iter().map(PathBuf::from).find(|p| p.is_file());
         match (wrapper, self.config.as_ref()) {
             // aideinit 会读取配置里的 database_* 并把 aide 输出重定向到 /var/log/aide
             (Some(wrapper), Some(conf)) => AideCommand {
@@ -413,8 +421,17 @@ pub fn initialize_database(
     log: &Path,
     check_log: &Path,
 ) -> Result<(), DomainError> {
+    initialize_database_with(plan, log, check_log, run_command)
+}
+
+fn initialize_database_with(
+    plan: &AidePlan,
+    log: &Path,
+    check_log: &Path,
+    mut run: impl FnMut(&AideCommand, &Path) -> Result<StreamStatus, DomainError>,
+) -> Result<(), DomainError> {
     let command = plan.init_command();
-    let status = run_command(&command, log)?;
+    let status = run(&command, log)?;
     if !status.is_success() {
         return Err(DomainError::SystemCommandFailed(format!(
             "{}: {}",
@@ -427,7 +444,7 @@ pub fn initialize_database(
 
     // 初始化成功不等于可用：立即以 --check 验证基线可读
     let check = plan.check_command();
-    let status = run_command(&check, check_log)?;
+    let status = run(&check, check_log)?;
     if !status.is_success() && !is_difference_exit(&status) {
         return Err(DomainError::SystemCommandFailed(format!(
             "aide --check 验证失败：{}",
@@ -436,6 +453,10 @@ pub fn initialize_database(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "aide_tests.rs"]
+mod coverage_tests;
 
 /// 只读校验配置语法；返回错误说明（配置有问题时不应继续初始化）
 pub fn config_problem(plan: &AidePlan, log: &Path) -> Result<Option<String>, DomainError> {
@@ -633,19 +654,6 @@ gzip_dbout=yes
     }
 
     #[test]
-    fn config_problem_reports_configuration_error() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let log = dir.path().join("aide.log");
-        let broken = AidePlan::use_system_config(dir.path().join("missing.conf"));
-        let problem = config_problem(&broken, &log);
-        // 测试机（macOS）没有 aide：命令无法启动属于环境问题，不是本测试的断言目标
-        let Ok(Some(reason)) = problem else {
-            return;
-        };
-        assert!(reason.contains("17"), "原因应包含原始退出码: {reason}");
-    }
-
-    #[test]
     fn fallback_config_reuses_own_file_but_never_overwrites_foreign_one() {
         let dir = tempfile::tempdir().expect("tempdir");
         let target = dir.path().join(FALLBACK_CONF_NAME);
@@ -694,7 +702,7 @@ gzip_dbout=yes
     #[test]
     fn fallback_plan_never_reuses_distro_database_names() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let plan = fallback_plan(dir.path());
+        let plan = fallback_plan_with(dir.path(), &[]);
         // 兜底路径必须与发行版默认基线区分，否则可能覆盖系统已有数据库
         assert_ne!(plan.database_in.file_name().unwrap(), "aide.db");
         assert_ne!(plan.database_out.file_name().unwrap(), "aide.db.new");

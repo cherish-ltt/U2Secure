@@ -166,3 +166,7 @@ pub fn register_command_undo(description: String, cmd: Vec<String>) {
         }),
     ));
 }
+
+#[cfg(all(test, unix))]
+#[path = "rollback_tests.rs"]
+mod tests;
