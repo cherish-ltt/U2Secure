@@ -287,8 +287,9 @@ msrv = "1.98.1"
     - 两者都避免出现"npm 版本号已上线、GitHub Release 二进制还是 404"导致
       postinstall 安装失败
   - 两个发布工作流都保留 `workflow_dispatch` 作为应急手动补发入口。
-    自动路径的标签都取自 `workflow_run.head_branch`（该事件 payload 不含
-    `ref_type` / `ref_name`），解析失败会立即报错退出，不会误发。
+    自动路径的标签读取对应 Binary Build run 的 `release-tag` artifact，不能使用
+    `workflow_run.head_branch`（手动构建时它可能是 main）。缺失或非法时立即失败；
+    两个发布器都检出同一解析标签。旧运行没有 artifact 时使用手动补发入口。
   - `workflow_run` 执行的是**默认分支**上的工作流文件，因此修复 npm 发布流程只需推送主分支，
     不必重新打标签；重跑依赖幂等保护（npm 已存在同版本则跳过发布）。
 - 支持 `cargo binstall u2secure` 安装预编译二进制（依赖 `[package.metadata.binstall]` 元数据，资产命名须保持 `u2secure-<target>[.exe]`）。

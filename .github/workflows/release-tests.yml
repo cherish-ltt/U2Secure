@@ -4,14 +4,20 @@ on:
   pull_request:
     paths:
       - '.github/workflows/npm-publish-manual.yml'
+      - '.github/workflows/binary-build.yml'
+      - '.github/workflows/cargo-publish.yml'
       - '.github/workflows/release-tests.yml'
       - 'tests/npm_install_test.cjs'
+      - 'tests/release_tag_test.py'
   push:
     branches: [main, master]
     paths:
       - '.github/workflows/npm-publish-manual.yml'
+      - '.github/workflows/binary-build.yml'
+      - '.github/workflows/cargo-publish.yml'
       - '.github/workflows/release-tests.yml'
       - 'tests/npm_install_test.cjs'
+      - 'tests/release_tag_test.py'
 
 permissions:
   contents: read
@@ -25,3 +31,4 @@ jobs:
         with:
           node-version: '26'
       - run: node tests/npm_install_test.cjs
+      - run: python3 tests/release_tag_test.py
