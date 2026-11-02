@@ -176,9 +176,6 @@ impl HardeningStep for UserCreationStep {
 
         system::create_system_user(username)?;
 
-        // 注册撤销：创建用户 → 删除用户（在创建成功后注册，避免幽灵撤销）
-        rollback::register_user_remove(username.to_string());
-
         if params.lock_password {
             system::lock_user_password(username)?;
         }
