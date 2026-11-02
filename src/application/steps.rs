@@ -6,7 +6,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::steps::{ExecuteParams, HardeningStep, SshKeyAction, StepKind, StepResult};
 use crate::infrastructure::backup::backup_file;
 use crate::infrastructure::system::StreamStatus;
-use crate::infrastructure::{aide, artifacts, lynis, package_mirror, rollback, ssh, system};
+use crate::infrastructure::{aide, artifacts, lynis, package_mirror, rollback, ssh, system, ufw};
 
 // 超时（长耗时步骤必须有上限，避免"假卡住"）
 
@@ -242,22 +242,8 @@ impl HardeningStep for SshPortChangeStep {
             ));
         }
 
-        let result = ssh_config_result(self.kind(), &[("Port", &new_port.to_string())])?;
-
-        // UFW 放行新端口（如果 ufw 已启用）
-        if system::detect_ufw_enabled() {
-            // 注册撤销：放行端口 → 删除规则
-            let port_for_undo = new_port.to_string();
-            rollback::register_command_undo(
-                crate::i18n::tr("undo_ufw_delete").replace("{port}", &port_for_undo),
-                vec!["ufw".into(), "delete".into(), "allow".into(), port_for_undo],
-            );
-            let _ = Command::new("ufw")
-                .args(["allow", &new_port.to_string()])
-                .output();
-        }
-
-        Ok(result)
+        let firewall = system::which("ufw").then(ufw::Ufw::default);
+        change_ssh_port(&ssh::SshConfig::default(), firewall.as_ref(), new_port)
     }
 }
 
@@ -352,63 +338,19 @@ impl HardeningStep for UfwStep {
     }
 
     fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        let port = system::detect_ssh_port();
-        let was_ufw_enabled = system::detect_ufw_enabled();
-
-        // 放行 SSH 端口
-        let output = Command::new("ufw")
-            .args(["allow", &port.to_string()])
-            .output()
-            .map_err(|e| {
-                DomainError::SystemCommandFailed(format!(
-                    "{}: {e}",
-                    crate::i18n::tr("err_ufw_allow_failed")
-                ))
-            })?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DomainError::SystemCommandFailed(format!(
-                "{}: {stderr}",
-                crate::i18n::tr("err_ufw_allow_failed")
-            )));
+        let config = ssh::SshConfig::default().effective()?;
+        if config.ports.len() != 1 {
+            return Err(DomainError::PreconditionFailed(
+                crate::i18n::tr("err_sshd_effective").into(),
+            ));
         }
-
-        // 操作成功后注册撤销（先删除端口规则；如果之前未启用则再关闭 UFW）
-        let port_for_undo = port.to_string();
-        rollback::register_command_undo(
-            crate::i18n::tr("undo_ufw_delete").replace("{port}", &port_for_undo),
-            vec!["ufw".into(), "delete".into(), "allow".into(), port_for_undo],
-        );
-        if !was_ufw_enabled {
-            rollback::register_command_undo(
-                crate::i18n::tr("undo_ufw_disable").into(),
-                vec!["ufw".into(), "--force".into(), "disable".into()],
-            );
+        let port = config.ports[0];
+        let message = crate::i18n::tr("result_ufw_enabled").replace("{port}", &port.to_string());
+        if ufw::Ufw::default().allow_port(port, true)? {
+            Ok(StepResult::changed(self.kind(), message))
+        } else {
+            Ok(StepResult::skipped(self.kind(), message))
         }
-
-        if !was_ufw_enabled {
-            let output = Command::new("ufw")
-                .args(["--force", "enable"])
-                .output()
-                .map_err(|e| {
-                    DomainError::SystemCommandFailed(format!(
-                        "{}: {e}",
-                        crate::i18n::tr("err_ufw_enable_failed")
-                    ))
-                })?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(DomainError::SystemCommandFailed(format!(
-                    "{}: {stderr}",
-                    crate::i18n::tr("err_ufw_enable_failed")
-                )));
-            }
-        }
-
-        Ok(StepResult::changed(
-            self.kind(),
-            crate::i18n::tr("result_ufw_enabled").replace("{port}", &port.to_string()),
-        ))
     }
 }
 
@@ -1070,6 +1012,28 @@ fn ssh_config_result(kind: StepKind, settings: &[(&str, &str)]) -> Result<StepRe
         Some(message) => Ok(StepResult::changed(kind, message)),
         None => Ok(StepResult::skipped(
             kind,
+            crate::i18n::tr("result_sshd_unchanged"),
+        )),
+    }
+}
+
+pub fn change_ssh_port(
+    config: &ssh::SshConfig,
+    firewall: Option<&ufw::Ufw>,
+    port: u16,
+) -> Result<StepResult, DomainError> {
+    let firewall_changed = firewall
+        .map(|firewall| firewall.allow_port(port, false))
+        .transpose()?
+        .unwrap_or(false);
+    match config.update(&[("Port", &port.to_string())])? {
+        Some(message) => Ok(StepResult::changed(StepKind::SshPortChange, message)),
+        None if firewall_changed => Ok(StepResult::changed(
+            StepKind::SshPortChange,
+            crate::i18n::tr("result_sshd_firewall_changed"),
+        )),
+        None => Ok(StepResult::skipped(
+            StepKind::SshPortChange,
             crate::i18n::tr("result_sshd_unchanged"),
         )),
     }

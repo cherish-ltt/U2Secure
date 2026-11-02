@@ -66,6 +66,9 @@ pub fn tr(key: &'static str) -> &'static str {
 
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_ufw_status" => "无法确定 UFW 启用状态",
+        "result_sshd_firewall_changed" => "SSH 配置未变化；已更新 UFW 端口规则",
+        "undo_ufw_restore" => "恢复 UFW 原规则与启用状态",
         "audit_ssh_global" => "全局端口: {ports}",
         "audit_ssh_unverified" => "SSH 未验证（Include/Match、多个端口或读取失败；不可判为安全）",
         "err_sshd_effective" => "无法验证 SSH 全局目标值（包括多个监听端口冲突）",
@@ -393,6 +396,9 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_ufw_status" => "Cannot determine UFW activation status",
+        "result_sshd_firewall_changed" => "SSH configuration unchanged; UFW port rules updated",
+        "undo_ufw_restore" => "Restore original UFW rules and activation state",
         "audit_ssh_global" => "Global ports: {ports}",
         "audit_ssh_unverified" => {
             "SSH unverified (Include/Match, multiple ports or read failure; not marked safe)"
@@ -739,6 +745,9 @@ fn en(key: &str) -> Option<&'static str> {
 
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_ufw_status" => "無法確定 UFW 啟用狀態",
+        "result_sshd_firewall_changed" => "SSH 配置未變化；已更新 UFW 連接埠規則",
+        "undo_ufw_restore" => "還原 UFW 原規則與啟用狀態",
         "audit_ssh_global" => "全域連接埠: {ports}",
         "audit_ssh_unverified" => "SSH 未驗證（Include/Match、多個連接埠或讀取失敗；不可判為安全）",
         "err_sshd_effective" => "無法驗證 SSH 全域目標值（包括多個監聽連接埠衝突）",
