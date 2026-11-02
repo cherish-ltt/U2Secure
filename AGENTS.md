@@ -343,3 +343,7 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 - 新增任何平台相关代码后，必须确认这三件事：`cargo test`（macOS）通过、
   `cargo check --target x86_64-unknown-linux-gnu` 通过、构建矩阵未被加入其它平台
 
+### 10.5 用户创建的撤销边界
+
+- `useradd` 成功后立即登记删除本次新用户的撤销，再执行加组、目录权限及密钥初始化；创建失败不得登记用户删除。
+

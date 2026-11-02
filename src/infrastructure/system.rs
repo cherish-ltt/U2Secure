@@ -671,6 +671,9 @@ pub fn create_system_user(username: &str) -> Result<(), DomainError> {
         )));
     }
 
+    // useradd 已产生账户；后续初始化失败同样必须撤销。
+    rollback::register_user_remove(username.to_string());
+
     // 加入管理员组：Debian/Ubuntu 为 sudo，RHEL 系为 wheel
     add_to_admin_group(username)?;
 
