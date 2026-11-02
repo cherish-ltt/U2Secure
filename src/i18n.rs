@@ -67,6 +67,13 @@ pub fn tr(key: &'static str) -> &'static str {
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
         "err_ufw_status" => "无法确定 UFW 启用状态",
+        "result_ufw_ssh_pending" => {
+            "SSH 配置待生效，暂不启用 UFW，避免阻断现有连接；SSH 生效后请重新执行防火墙步骤"
+        },
+        "cli_apply_ssh" => {
+            "本批次若有待生效的 SSH 配置，是否在结束时校验并重启 SSH 使其生效？可能影响远程连接；选择否则仅写配置并标记待生效"
+        },
+        "result_ssh_pending" => "SSH 配置待生效：未授权重启，未应用到运行中的服务",
         "result_sshd_firewall_changed" => "SSH 配置未变化；已更新 UFW 端口规则",
         "undo_ufw_restore" => "恢复 UFW 原规则与启用状态",
         "audit_ssh_global" => "全局端口: {ports}",
@@ -399,6 +406,15 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
         "err_ufw_status" => "Cannot determine UFW activation status",
+        "result_ufw_ssh_pending" => {
+            "SSH configuration is pending; UFW remains disabled to protect existing access. Run the firewall step again after applying SSH configuration"
+        },
+        "cli_apply_ssh" => {
+            "Validate and restart SSH at the end if configuration is pending? This may affect remote access; No writes configuration only and leaves it pending"
+        },
+        "result_ssh_pending" => {
+            "SSH configuration pending: restart was not authorized; the running service has not applied it"
+        },
         "result_sshd_firewall_changed" => "SSH configuration unchanged; UFW port rules updated",
         "undo_ufw_restore" => "Restore original UFW rules and activation state",
         "audit_ssh_global" => "Global ports: {ports}",
@@ -752,6 +768,13 @@ fn en(key: &str) -> Option<&'static str> {
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
         "err_ufw_status" => "無法確定 UFW 啟用狀態",
+        "result_ufw_ssh_pending" => {
+            "SSH 配置待生效，暫不啟用 UFW，避免阻斷現有連線；SSH 生效後請重新執行防火牆步驟"
+        },
+        "cli_apply_ssh" => {
+            "本批次若有待生效的 SSH 配置，是否在結束時校驗並重啟 SSH 使其生效？可能影響遠端連線；選擇否則僅寫配置並標記待生效"
+        },
+        "result_ssh_pending" => "SSH 配置待生效：未授權重啟，未套用至執行中的服務",
         "result_sshd_firewall_changed" => "SSH 配置未變化；已更新 UFW 連接埠規則",
         "undo_ufw_restore" => "還原 UFW 原規則與啟用狀態",
         "audit_ssh_global" => "全域連接埠: {ports}",

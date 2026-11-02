@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
-use u2secure::application::job::{JobEvent, StepRunner};
+use u2secure::application::job::{JobEvent, StepRunner, execution_plan};
 use u2secure::domain::errors::DomainError;
 use u2secure::domain::steps::{ExecuteParams, HardeningStep, StepKind, StepOutcome, StepResult};
 use u2secure::infrastructure::logger::FileLogger;
@@ -36,6 +36,7 @@ struct FakeStep {
 #[derive(Debug, Clone, Copy)]
 enum Behavior {
     Changed,
+    ConfigChanged,
     Skipped,
     Failed,
     Error,
@@ -48,9 +49,15 @@ impl HardeningStep for FakeStep {
         self.kind
     }
 
-    fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
+    fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        if self.kind == StepKind::RestartSsh {
+            assert!(params.apply_ssh_changes && params.ssh_restart_required);
+        }
         match self.behavior {
             Behavior::Changed => Ok(StepResult::changed(self.kind, "ok")),
+            Behavior::ConfigChanged => {
+                Ok(StepResult::changed(self.kind, "config written").requiring_ssh_restart())
+            },
             Behavior::Skipped => Ok(StepResult::skipped(self.kind, "skip")),
             Behavior::Failed => Ok(StepResult::failed(self.kind, "soft failure")),
             Behavior::Error => Err(DomainError::SystemCommandFailed("hard failure".into())),
@@ -65,6 +72,65 @@ impl HardeningStep for FakeStep {
             },
         }
     }
+}
+
+#[test]
+fn ssh_activation_uses_actual_changes_and_explicit_consent() {
+    let _guard = serial();
+    let dir = tempfile::tempdir().unwrap();
+    for kind in [
+        StepKind::SshPortChange,
+        StepKind::SshPasswordAuth,
+        StepKind::SshRootLogin,
+    ] {
+        assert_eq!(execution_plan(&[kind]), [kind, StepKind::RestartSsh]);
+        for (behavior, consent, pending, expected) in [
+            (Behavior::ConfigChanged, true, false, StepOutcome::Changed),
+            (Behavior::Skipped, true, false, StepOutcome::Skipped),
+            (Behavior::Changed, true, false, StepOutcome::Skipped),
+            (Behavior::ConfigChanged, false, false, StepOutcome::Skipped),
+            (Behavior::Skipped, true, true, StepOutcome::Changed),
+            (Behavior::Skipped, false, true, StepOutcome::Skipped),
+            (Behavior::Failed, true, false, StepOutcome::Failed),
+        ] {
+            let plan = execution_plan(&[kind]);
+            let steps = plan
+                .into_iter()
+                .map(|step| {
+                    fake(
+                        step,
+                        if step == kind {
+                            behavior
+                        } else {
+                            Behavior::Changed
+                        },
+                    )
+                })
+                .collect();
+            let params = ExecuteParams {
+                apply_ssh_changes: consent,
+                ssh_restart_required: pending,
+                ..Default::default()
+            };
+            let results = runner(&dir).run_steps(steps, &params, &mut |_| {});
+            if matches!(behavior, Behavior::Failed) {
+                assert_eq!(results.len(), 1);
+                assert!(results[0].is_failed());
+                continue;
+            }
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[1].kind, StepKind::RestartSsh);
+            assert_eq!(results[1].outcome, expected);
+            if !consent && (pending || matches!(behavior, Behavior::ConfigChanged)) {
+                assert_eq!(results[1].message, u2secure::i18n::tr("result_ssh_pending"));
+            }
+        }
+    }
+    assert_eq!(execution_plan(&[StepKind::Ufw]), [StepKind::Ufw]);
+    assert_eq!(
+        execution_plan(&[StepKind::RestartSsh, StepKind::SshPortChange]),
+        [StepKind::SshPortChange, StepKind::RestartSsh]
+    );
 }
 
 fn fake(kind: StepKind, behavior: Behavior) -> Box<dyn HardeningStep + Send> {

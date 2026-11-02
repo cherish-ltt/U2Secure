@@ -3,7 +3,8 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use u2secure::application::steps::change_ssh_port;
+use u2secure::application::steps::{change_ssh_port, configure_ufw};
+use u2secure::domain::steps::StepOutcome;
 use u2secure::infrastructure::{rollback, ssh::SshConfig, ufw::Ufw};
 
 fn script(path: &Path, content: &str) {
@@ -83,6 +84,16 @@ fn firewall_snapshots_preserve_existing_rules_and_stop_ssh_on_failure() {
     let config = SshConfig::new(&config_path, root.join("must-not-run-sshd"));
     let program = root.join("ufw-fake");
     script(&program, FAKE);
+    std::fs::write(root.join("active"), "inactive\n").unwrap();
+    let firewall = Ufw::new(root, &program);
+    let result = configure_ufw(&config, &firewall, true).unwrap();
+    assert_eq!(result.outcome, StepOutcome::Skipped);
+    assert_eq!(result.message, u2secure::i18n::tr("result_ufw_ssh_pending"));
+    assert_eq!(
+        std::fs::read_to_string(root.join("calls")).unwrap(),
+        "status\n"
+    );
+    assert!(!firewall.enabled().unwrap());
     std::fs::write(root.join("active"), "active\n").unwrap();
     std::fs::write(root.join("fail-allow"), "").unwrap();
     let firewall = Ufw::new(root, &program);
@@ -114,4 +125,30 @@ fn firewall_snapshots_preserve_existing_rules_and_stop_ssh_on_failure() {
     let failures = rollback::undo_all();
     assert_eq!(failures.len(), 1);
     assert!(failures[0].contains("reload failure") && failures[0].contains("23"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    script(&root.join("ufw-fake"), FAKE);
+    script(
+        &root.join("sshd-fake"),
+        r#"#!/bin/sh
+[ "$1" = -t ] && exit 0
+awk 'tolower($1)=="port" { print "port " $2; exit }' "$3"
+printf 'passwordauthentication no\nkbdinteractiveauthentication no\npermitrootlogin no\n'
+"#,
+    );
+    std::fs::write(root.join("active"), "active\n").unwrap();
+    std::fs::write(root.join("sshd_config"), "Port 22\n").unwrap();
+    let config = SshConfig::new(root.join("sshd_config"), root.join("sshd-fake"));
+    let firewall = Ufw::new(root, root.join("ufw-fake"));
+    let rules_only = change_ssh_port(&config, Some(&firewall), 22).unwrap();
+    assert!(rules_only.is_changed() && !rules_only.ssh_restart_required);
+    let port_changed = change_ssh_port(&config, Some(&firewall), 2222).unwrap();
+    assert!(port_changed.is_changed() && port_changed.ssh_restart_required);
+    assert!(rollback::undo_all().is_empty());
+    assert_eq!(
+        std::fs::read_to_string(root.join("sshd_config")).unwrap(),
+        "Port 22\n"
+    );
+    assert!(!root.join("user.rules").exists());
 }

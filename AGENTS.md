@@ -342,6 +342,8 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 
 ### 10.4 平台支持边界（v0.4.1 起）
 
+- SSH 生效决策由共用执行器处理：步骤通过 `StepResult::ssh_restart_required` 报告实际配置写入，CLI/TUI 必须在执行前收集 `apply_ssh_changes` 明确授权；无授权只能标记待生效，禁止暗中重启。计划测试使用 `execution_plan` 配合假步骤。
+
 - UFW 规则修改必须先备份 `user.rules` / `user6.rules` / `ufw.conf` 并登记可报告失败的恢复动作；禁止用无条件 `delete allow` 撤销。端口配置仅在已启用防火墙放行成功后写入。
 
 **本项目只支持 Linux，只发布 Linux 二进制**。理由：核心能力依赖 Linux 专有组件

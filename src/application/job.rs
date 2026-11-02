@@ -23,11 +23,19 @@ use crate::infrastructure::{artifacts, rollback, system};
 
 /// 按定义顺序筛选出待执行步骤
 fn select_steps(selected: &[StepKind]) -> Vec<Box<dyn HardeningStep + Send>> {
-    let selected_set: HashSet<StepKind> = selected.iter().copied().collect();
+    execution_plan(selected).into_iter().map(step_for).collect()
+}
+
+/// SSH 配置步骤后的生效检查始终排在末尾，是否重启另由明确授权与真实变化决定。
+pub fn execution_plan(selected: &[StepKind]) -> Vec<StepKind> {
+    let mut selected_set: HashSet<StepKind> = selected.iter().copied().collect();
+    if selected.iter().any(StepKind::modifies_ssh_config) {
+        selected_set.insert(StepKind::RestartSsh);
+    }
     StepKind::all()
         .iter()
         .filter(|kind| selected_set.contains(kind))
-        .map(|kind| step_for(*kind))
+        .copied()
         .collect()
 }
 
@@ -115,13 +123,7 @@ impl StepRunner {
 
     /// 在后台线程执行选中的步骤
     pub fn spawn(self, selected: Vec<StepKind>, params: ExecuteParams) -> JobHandle {
-        let selected_set: HashSet<StepKind> = selected.iter().copied().collect();
-        let steps: Vec<Box<dyn HardeningStep + Send>> = StepKind::all()
-            .iter()
-            .filter(|kind| selected_set.contains(kind))
-            .map(|kind| step_for(*kind))
-            .collect();
-        self.spawn_steps(steps, params)
+        self.spawn_steps(select_steps(&selected), params)
     }
 
     /// 在后台线程执行给定步骤（测试可注入假步骤）
@@ -157,7 +159,7 @@ impl StepRunner {
         self.run_steps(steps, params, on_event)
     }
 
-    /// 执行给定的步骤列表（策略与 `run` 完全一致，便于注入测试步骤）
+    /// 执行给定计划（测试按 `execution_plan` 注入假步骤，不构造真实系统步骤）。
     pub fn run_steps(
         &self,
         steps: Vec<Box<dyn HardeningStep + Send>>,
@@ -233,13 +235,29 @@ impl StepRunner {
             self.logger
                 .log_operation(crate::i18n::tr("log_step_start"), kind.label());
 
-            let mut result = match step.execute(&step_params) {
+            let execution = if kind == StepKind::RestartSsh && !params.ssh_restart_required {
+                Ok(StepResult::skipped(
+                    kind,
+                    crate::i18n::tr("result_ssh_no_restart"),
+                ))
+            } else if kind == StepKind::RestartSsh && !params.apply_ssh_changes {
+                Ok(StepResult::skipped(
+                    kind,
+                    crate::i18n::tr("result_ssh_pending"),
+                ))
+            } else {
+                step.execute(&step_params)
+            };
+            let mut result = match execution {
                 Ok(result) => result,
                 Err(e) => StepResult::failed(
                     kind,
                     crate::i18n::tr("log_step_failed_detail").replace("{err}", &e.to_string()),
                 ),
             };
+            if result.is_changed() && result.ssh_restart_required {
+                params.ssh_restart_required = true;
+            }
 
             // 中断发生在步骤执行中：回滚错误和步骤结果一起报告
             let interrupted = rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst);
