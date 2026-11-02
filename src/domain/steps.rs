@@ -269,6 +269,8 @@ pub struct StepResult {
     pub artifacts: Vec<String>,
     /// 只表示 SSH 配置实际写入，不包含单独的防火墙规则变更。
     pub ssh_restart_required: bool,
+    /// 已越过服务生效边界，不能再仅撤销配置与防火墙规则。
+    pub ssh_activation_attempted: bool,
 }
 
 impl StepResult {
@@ -279,6 +281,7 @@ impl StepResult {
             message: message.into(),
             artifacts: vec![],
             ssh_restart_required: false,
+            ssh_activation_attempted: false,
         }
     }
 

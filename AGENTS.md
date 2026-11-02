@@ -366,4 +366,5 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 - 重启通过 `infrastructure::ssh_service` 处理；只对明确的 `LoadState=not-found` 回退服务名，
   已存在服务的加载、重启或状态查询失败必须显式报告，不得用另一个服务名掩盖错误。
 - 重启命令必须限时并保留日志，成功后校验同一服务的退出状态及 `active` 文本；测试只能注入假命令。
+- SSH 开始尝试重启是整批提交边界：通过 `StepResult::ssh_activation_attempted` 保留边界后的成功、失败与中断信息；禁止再单独回退配置和防火墙。边界前失败仍回退，边界后失败须明确报告修改保留及人工检查要求。
 

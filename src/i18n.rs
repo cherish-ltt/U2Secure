@@ -71,7 +71,10 @@ fn zh_cn(key: &str) -> Option<&'static str> {
             "SSH 配置待生效，暂不启用 UFW，避免阻断现有连接；SSH 生效后请重新执行防火墙步骤"
         },
         "cli_apply_ssh" => {
-            "本批次若有待生效的 SSH 配置，是否在结束时校验并重启 SSH 使其生效？可能影响远程连接；选择否则仅写配置并标记待生效"
+            "是否在结束时校验并重启 SSH？可能影响远程连接；开始尝试重启后，即使失败或中断也保留整批用户、密钥及配置修改，不自动回滚。选择否则仅写配置并标记待生效"
+        },
+        "result_ssh_activation_retained" => {
+            "SSH 生效尝试失败或中断：为避免撤销防火墙后阻断可能已生效的新端口，本批修改已保留、未自动回滚。请保留当前会话并人工检查服务、端口与认证；密钥替换的临时备份已清理"
         },
         "result_ssh_pending" => "SSH 配置待生效：未授权重启，未应用到运行中的服务",
         "result_sshd_firewall_changed" => "SSH 配置未变化；已更新 UFW 端口规则",
@@ -352,7 +355,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "log_step_failed_detail" => "失败: {err}",
         "undo_file_restore_generic" => "恢复文件 {path}",
         "cli_live_log" => "实时输出: {log}",
-        "cli_interrupted" => "用户中断，已执行本批回滚；恢复失败详情请查看结果",
+        "cli_interrupted" => "用户中断；本批恢复或修改保留情况请查看结果",
         "cli_mirror_probing" => "正在探测镜像源延迟...",
         "cli_mirror_prompt" => "选择本次运行使用的软件源（仅本次生效）",
         "cli_artifact" => "报告:",
@@ -363,12 +366,12 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "tui_job_crashed" => "执行线程异常退出，请查看报告目录中的日志",
         "tui_reauditing" => "正在重新审计...",
         "tui_cancelling" => "正在中断...",
-        "tui_cancel_requested" => "已请求中断，等待当前命令结束并回滚",
-        "tui_running_hint" => "执行中：按 Ctrl+C 中断并回滚",
+        "tui_cancel_requested" => "已请求中断，等待当前命令结束；恢复或修改保留情况见结果",
+        "tui_running_hint" => "执行中：按 Ctrl+C 中断，恢复或修改保留情况见结果",
         "tui_exec_preparing" => "正在准备（软件源/环境检查）...",
         "tui_exec_progress" => "进度",
         "tui_exec_elapsed" => "已耗时",
-        "tui_exec_cancel_hint" => "Ctrl+C 中断并回滚",
+        "tui_exec_cancel_hint" => "Ctrl+C 中断（恢复或保留见结果）",
         "tui_exec_live_output" => "── 命令输出 ──",
         "tui_help_all" => "全选 / 取消全选（可选步骤除外）",
         "tui_opt_in_hint" => "「可选·耗时」步骤默认关闭，按 Space 勾选后才会执行",
@@ -410,7 +413,10 @@ fn en(key: &str) -> Option<&'static str> {
             "SSH configuration is pending; UFW remains disabled to protect existing access. Run the firewall step again after applying SSH configuration"
         },
         "cli_apply_ssh" => {
-            "Validate and restart SSH at the end if configuration is pending? This may affect remote access; No writes configuration only and leaves it pending"
+            "Validate and restart SSH at the end? Remote access may change. Once restart is attempted, all user, key and configuration changes are retained even on failure or cancellation, without automatic rollback. No leaves configuration pending"
+        },
+        "result_ssh_activation_retained" => {
+            "SSH activation failed or was interrupted: this batch was retained without rollback to avoid blocking a possibly active new port. Keep this session open and manually check the service, ports and authentication; temporary key replacement backups have been removed"
         },
         "result_ssh_pending" => {
             "SSH configuration pending: restart was not authorized; the running service has not applied it"
@@ -701,9 +707,7 @@ fn en(key: &str) -> Option<&'static str> {
         "log_step_failed_detail" => "Failed: {err}",
         "undo_file_restore_generic" => "Restore file {path}",
         "cli_live_log" => "Live output: {log}",
-        "cli_interrupted" => {
-            "Interrupted; batch rollback attempted. See results for recovery failures"
-        },
+        "cli_interrupted" => "Interrupted; see results for rollback or retained changes",
         "cli_mirror_probing" => "Probing mirror latency...",
         "cli_mirror_prompt" => "Select the repository mirror for this run (temporary)",
         "cli_artifact" => "Report:",
@@ -719,13 +723,15 @@ fn en(key: &str) -> Option<&'static str> {
         "tui_reauditing" => "Re-running audit...",
         "tui_cancelling" => "Cancelling...",
         "tui_cancel_requested" => {
-            "Cancellation requested; waiting for the current command to stop and roll back"
+            "Cancellation requested; waiting for the command to stop. See results for rollback or retained changes"
         },
-        "tui_running_hint" => "Running: press Ctrl+C to cancel and roll back",
+        "tui_running_hint" => {
+            "Running: Ctrl+C to cancel; see results for rollback or retained changes"
+        },
         "tui_exec_preparing" => "Preparing (repositories / environment)...",
         "tui_exec_progress" => "Progress",
         "tui_exec_elapsed" => "Elapsed",
-        "tui_exec_cancel_hint" => "Ctrl+C to cancel and roll back",
+        "tui_exec_cancel_hint" => "Ctrl+C to cancel (see results for retained changes)",
         "tui_exec_live_output" => "── command output ──",
         "tui_help_all" => "Select / unselect all (optional steps excluded)",
         "tui_opt_in_hint" => "(optional, slow) steps are off by default; press Space to enable",
@@ -772,7 +778,10 @@ fn zh_tw(key: &str) -> Option<&'static str> {
             "SSH 配置待生效，暫不啟用 UFW，避免阻斷現有連線；SSH 生效後請重新執行防火牆步驟"
         },
         "cli_apply_ssh" => {
-            "本批次若有待生效的 SSH 配置，是否在結束時校驗並重啟 SSH 使其生效？可能影響遠端連線；選擇否則僅寫配置並標記待生效"
+            "是否在結束時校驗並重啟 SSH？可能影響遠端連線；開始嘗試重啟後，即使失敗或中斷也保留整批使用者、金鑰及配置修改，不自動回滾。選擇否則僅寫配置並標記待生效"
+        },
+        "result_ssh_activation_retained" => {
+            "SSH 生效嘗試失敗或中斷：為避免還原防火牆後阻斷可能已生效的新連接埠，本批修改已保留、未自動回滾。請保留目前工作階段並人工檢查服務、連接埠與認證；金鑰替換的暫存備份已清理"
         },
         "result_ssh_pending" => "SSH 配置待生效：未授權重啟，未套用至執行中的服務",
         "result_sshd_firewall_changed" => "SSH 配置未變化；已更新 UFW 連接埠規則",
@@ -1036,7 +1045,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "log_step_failed_detail" => "失敗: {err}",
         "undo_file_restore_generic" => "還原檔案 {path}",
         "cli_live_log" => "即時輸出: {log}",
-        "cli_interrupted" => "使用者中斷，已執行本批回滾；恢復失敗詳情請查看結果",
+        "cli_interrupted" => "使用者中斷；本批還原或修改保留情況請查看結果",
         "cli_mirror_probing" => "正在偵測鏡像源延遲...",
         "cli_mirror_prompt" => "選擇本次執行使用的軟體源（僅本次生效）",
         "cli_artifact" => "報告:",
@@ -1047,12 +1056,12 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "tui_job_crashed" => "執行執行緒異常結束，請查看報告目錄中的日誌",
         "tui_reauditing" => "正在重新稽核...",
         "tui_cancelling" => "正在中斷...",
-        "tui_cancel_requested" => "已要求中斷，等待目前命令結束並回滾",
-        "tui_running_hint" => "執行中：按 Ctrl+C 中斷並回滾",
+        "tui_cancel_requested" => "已要求中斷，等待目前命令結束；還原或修改保留情況見結果",
+        "tui_running_hint" => "執行中：按 Ctrl+C 中斷，還原或修改保留情況見結果",
         "tui_exec_preparing" => "正在準備（軟體源/環境檢查）...",
         "tui_exec_progress" => "進度",
         "tui_exec_elapsed" => "已耗時",
-        "tui_exec_cancel_hint" => "Ctrl+C 中斷並回滾",
+        "tui_exec_cancel_hint" => "Ctrl+C 中斷（還原或保留見結果）",
         "tui_exec_live_output" => "── 命令輸出 ──",
         "tui_help_all" => "全選 / 取消全選（可選步驟除外）",
         "tui_opt_in_hint" => "「可選·耗時」步驟預設關閉，按 Space 勾選後才會執行",

@@ -964,13 +964,18 @@ impl HardeningStep for RestartSshStep {
         }
 
         let log = live_log(params, "step12-ssh-restart");
-        let status_str = crate::infrastructure::ssh_service::restart_ssh(&log)?;
-
-        Ok(StepResult::changed(
-            self.kind(),
-            crate::i18n::tr("result_ssh_restarted").replace("{status}", &status_str),
-        )
-        .with_artifacts(vec![log]))
+        let mut attempted = false;
+        let status = crate::infrastructure::ssh_service::restart_ssh(&log, || attempted = true);
+        let mut result = match status {
+            Ok(status) => StepResult::changed(
+                self.kind(),
+                crate::i18n::tr("result_ssh_restarted").replace("{status}", &status),
+            ),
+            Err(error) => StepResult::failed(self.kind(), error.to_string()),
+        }
+        .with_artifacts(vec![log]);
+        result.ssh_activation_attempted = attempted;
+        Ok(result)
     }
 }
 

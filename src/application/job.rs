@@ -261,6 +261,17 @@ impl StepRunner {
 
             // 中断发生在步骤执行中：回滚错误和步骤结果一起报告
             let interrupted = rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst);
+            if result.ssh_activation_attempted {
+                // The service may already use the new port; reverting only files can lock users out.
+                rollback::discard_since(checkpoint);
+                if interrupted || result.is_failed() {
+                    result.outcome = StepOutcome::Failed;
+                    result.message.push('\n');
+                    result
+                        .message
+                        .push_str(crate::i18n::tr("result_ssh_activation_retained"));
+                }
+            }
 
             match result.outcome {
                 StepOutcome::Failed => {
@@ -279,7 +290,12 @@ impl StepRunner {
 
             // 失败处理策略：可选步骤只记录，核心步骤回滚并停止
             let stop = interrupted || (result.is_failed() && !kind.is_optional());
-            let failures = if interrupted {
+            let failures = if result.ssh_activation_attempted {
+                if interrupted {
+                    on_event(JobEvent::Interrupted);
+                }
+                vec![]
+            } else if interrupted {
                 self.rollback_on_interrupt(checkpoint, on_event)
             } else if stop {
                 self.logger.log(crate::i18n::tr("log_rollback_auto"));
