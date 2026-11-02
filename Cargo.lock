@@ -1694,6 +1694,7 @@ dependencies = [
  "ctrlc",
  "dialoguer",
  "ratatui",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
