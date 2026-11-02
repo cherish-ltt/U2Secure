@@ -118,6 +118,7 @@ jobs:
           const fs = require('fs');
           const path = require('path');
           const os = require('os');
+          const { pipeline } = require('stream');
           const { https } = require('follow-redirects');
 
           const pkgJson = require('../package.json');
@@ -171,22 +172,37 @@ jobs:
 
           if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
 
-          const file = fs.createWriteStream(destFile);
+          const staging = fs.mkdtempSync(path.join(destDir, '.download-'));
+          const temporary = path.join(staging, 'binary');
+          function fail(error) {
+            console.error(`Download failed: ${error.message}`);
+            process.exitCode = 1;
+            fs.rmSync(staging, { recursive: true, force: true });
+          }
           https.get(url, (response) => {
             if (response.statusCode !== 200) {
-              console.error(`Failed to download ${url}: HTTP ${response.statusCode}`);
-              process.exit(1);
+              response.resume();
+              fail(new Error(`HTTP ${response.statusCode}`));
+              return;
             }
-            response.pipe(file);
-            file.on('finish', () => {
-              file.close();
-              fs.chmodSync(destFile, 0o755);
-              console.log(`Binary saved to ${destFile}`);
+            pipeline(response, fs.createWriteStream(temporary, { flags: 'wx' }), (error) => {
+              if (error) return fail(error);
+              try {
+                const expected = response.headers['content-length'];
+                const bytes = fs.statSync(temporary).size;
+                if (!response.complete || bytes === 0 ||
+                    (expected !== undefined && Number(expected) !== bytes)) {
+                  throw new Error('Incomplete binary response');
+                }
+                fs.chmodSync(temporary, 0o755);
+                fs.renameSync(temporary, destFile);
+                fs.rmdirSync(staging);
+                console.log(`Binary saved to ${destFile}`);
+              } catch (error) {
+                fail(error);
+              }
             });
-          }).on('error', (err) => {
-            console.error(err);
-            process.exit(1);
-          });
+          }).on('error', fail);
           INSTALL_JS
 
           cat > bin/u2secure-wrapper.js <<'WRAPPER_JS'
