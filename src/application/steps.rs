@@ -4,6 +4,7 @@ use std::time::Duration;
 use crate::domain::audit::PackageManager;
 use crate::domain::errors::DomainError;
 use crate::domain::steps::{ExecuteParams, HardeningStep, SshKeyAction, StepKind, StepResult};
+use crate::infrastructure::backup::backup_file;
 use crate::infrastructure::system::StreamStatus;
 use crate::infrastructure::{aide, artifacts, lynis, package_mirror, rollback, system};
 
@@ -474,11 +475,11 @@ impl HardeningStep for Fail2banStep {
         // 配置监狱规则（使用 SSH 端口），写入前备份并注册回滚
         let port = system::detect_ssh_port();
         let jail_local = format!("[sshd]\nenabled = true\nport = {port}\n");
-        if let Some(backup) = backup_file("/etc/fail2ban/jail.local") {
+        if let Some(backup) = backup_file(std::path::Path::new("/etc/fail2ban/jail.local"))? {
             rollback::register_file_backup(
                 crate::i18n::tr("undo_file_restore_generic")
                     .replace("{path}", "/etc/fail2ban/jail.local"),
-                backup,
+                backup.display().to_string(),
                 "/etc/fail2ban/jail.local".into(),
             );
         }
@@ -568,10 +569,10 @@ impl HardeningStep for AutoUpdatesStep {
 
         // 写入配置：启用自动安全更新（写入前备份并注册回滚）
         let config_path = "/etc/apt/apt.conf.d/20auto-upgrades";
-        if let Some(backup) = backup_file(config_path) {
+        if let Some(backup) = backup_file(std::path::Path::new(config_path))? {
             rollback::register_file_backup(
                 crate::i18n::tr("undo_file_restore_generic").replace("{path}", config_path),
-                backup,
+                backup.display().to_string(),
                 config_path.into(),
             );
         }
@@ -814,10 +815,10 @@ impl HardeningStep for LogAuditStep {
                 "#!/bin/bash\n# 由 U2Secure 生成：每日日志审计报告\n/usr/sbin/logwatch --output stdout --format text --range yesterday --detail high > {}/logwatch-$(date +\\%F).txt 2>&1\n",
                 report_dir(params)
             );
-            if let Some(backup) = backup_file(path) {
+            if let Some(backup) = backup_file(std::path::Path::new(path))? {
                 rollback::register_file_backup(
                     crate::i18n::tr("undo_file_restore_generic").replace("{path}", path),
-                    backup,
+                    backup.display().to_string(),
                     path.into(),
                 );
             }
@@ -880,10 +881,10 @@ impl HardeningStep for LogAuditStep {
         {
             let path = "/etc/cron.daily/99u2secure-aide";
             let script = aide::render_daily_script(plan.config.as_deref(), &report_dir(params));
-            if let Some(backup) = backup_file(path) {
+            if let Some(backup) = backup_file(std::path::Path::new(path))? {
                 rollback::register_file_backup(
                     crate::i18n::tr("undo_file_restore_generic").replace("{path}", path),
-                    backup,
+                    backup.display().to_string(),
                     path.into(),
                 );
             }
@@ -996,16 +997,6 @@ fn set_executable(path: &str) {
     let _ = path;
 }
 
-/// 备份已存在的文件（返回备份路径）；文件不存在时返回 None
-fn backup_file(path: &str) -> Option<String> {
-    if !std::path::Path::new(path).exists() {
-        return None;
-    }
-    let backup = format!("{path}.bak.{}", artifacts::stamp());
-    std::fs::copy(path, &backup).ok()?;
-    Some(backup)
-}
-
 // 步骤 12：SSH 服务重启与验证
 
 #[derive(Debug)]
@@ -1084,26 +1075,21 @@ impl HardeningStep for RestartSshStep {
 
 /// 修改 sshd_config 中的键值，返回结果描述（备份路径已注册回滚）
 fn modify_sshd_config(key: &str, value: &str) -> Result<String, DomainError> {
-    let path = std::path::Path::new("/etc/ssh/sshd_config");
-    if !path.exists() {
-        return Err(DomainError::ParseError(
-            crate::i18n::tr("err_sshd_not_found").into(),
-        ));
-    }
+    modify_sshd_config_at(std::path::Path::new("/etc/ssh/sshd_config"), key, value)
+}
 
-    // 备份
-    let backup = format!(
-        "/etc/ssh/sshd_config.bak.{}",
-        chrono::Local::now().format("%Y%m%d%H%M%S")
-    );
-    std::fs::copy(path, &backup).map_err(|e| {
-        DomainError::SystemCommandFailed(format!("{}: {e}", crate::i18n::tr("err_backup")))
-    })?;
+fn modify_sshd_config_at(
+    path: &std::path::Path,
+    key: &str,
+    value: &str,
+) -> Result<String, DomainError> {
+    let backup = backup_file(path)?
+        .ok_or_else(|| DomainError::ParseError(crate::i18n::tr("err_sshd_not_found").into()))?;
 
     // 注册撤销：从备份恢复原文件
     rollback::register_file_backup(
         crate::i18n::tr("undo_file_restore").replace("{key}", key),
-        backup.clone(),
+        backup.display().to_string(),
         path.to_string_lossy().to_string(),
     );
 
@@ -1141,5 +1127,22 @@ fn modify_sshd_config(key: &str, value: &str) -> Result<String, DomainError> {
     Ok(crate::i18n::tr("result_sshd_cfg_set")
         .replace("{key}", key)
         .replace("{value}", value)
-        .replace("{bak}", &backup))
+        .replace("{bak}", &backup.display().to_string()))
+}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_config_changes_restore_original_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sshd_config");
+        let original = "Port 22\nPasswordAuthentication yes\n";
+        std::fs::write(&path, original).unwrap();
+        modify_sshd_config_at(&path, "Port", "2222").unwrap();
+        modify_sshd_config_at(&path, "PasswordAuthentication", "no").unwrap();
+        rollback::undo_all();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+    }
 }
