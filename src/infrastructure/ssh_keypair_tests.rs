@@ -6,6 +6,25 @@ use rustix::process::{getgid, getuid};
 
 #[test]
 fn keypair_lifecycle_preserves_originals_and_tracks_only_created_files() {
+    // The undo stack belongs to a process, not to an individual test thread.
+    if std::env::var_os("U2SECURE_KEYPAIR_TEST_CHILD").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "infrastructure::ssh_keys::keypair::tests::keypair_lifecycle_preserves_originals_and_tracks_only_created_files",
+                "--nocapture",
+            ])
+            .env("U2SECURE_KEYPAIR_TEST_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     for replace in [false, true] {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");

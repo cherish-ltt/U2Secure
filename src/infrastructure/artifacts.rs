@@ -167,3 +167,7 @@ mod tests {
         assert!(read_tail("/nonexistent/u2secure/nope.log", 3, 1024).is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "artifacts_tests.rs"]
+mod coverage_tests;

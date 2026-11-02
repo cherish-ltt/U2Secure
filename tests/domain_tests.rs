@@ -3,6 +3,36 @@ use u2secure::domain::mirror::{MirrorParseError, PackageMirror};
 use u2secure::domain::steps::{ExecuteParams, MirrorOverride, SshKeyAction, StepKind};
 
 #[test]
+fn domain_errors_preserve_context_and_localized_messages() {
+    use u2secure::domain::errors::DomainError;
+    for (error, key, context) in [
+        (DomainError::PermissionDenied, "err_permission_denied", ""),
+        (DomainError::UserAborted, "err_user_aborted", ""),
+        (
+            DomainError::ParseError("invalid config".into()),
+            "err_parse_error",
+            "invalid config",
+        ),
+        (
+            DomainError::PreconditionFailed("no sudo user".into()),
+            "err_precondition_failed",
+            "no sudo user",
+        ),
+        (
+            DomainError::SystemCommandFailed("exit 17".into()),
+            "err_cmd_failed",
+            "exit 17",
+        ),
+    ] {
+        assert_eq!(
+            error.to_string(),
+            u2secure::i18n::tr(key).replace("{msg}", context)
+        );
+        assert!(std::error::Error::source(&error).is_none());
+    }
+}
+
+#[test]
 fn test_audit_status_icons() {
     assert_eq!(AuditStatus::Safe.icon(), "✅");
     assert_eq!(AuditStatus::Partial.icon(), "⚠️");

@@ -159,20 +159,31 @@ impl MirrorSession {
 
         let mut session = empty(mirror);
         match pm {
-            PackageManager::Apt => session.build_apt(&dir)?,
-            PackageManager::Yum | PackageManager::Dnf => session.build_yum(&dir)?,
+            PackageManager::Apt => session.build_apt(
+                &dir,
+                std::path::Path::new("/etc/apt/sources.list"),
+                std::path::Path::new("/etc/apt/sources.list.d"),
+            )?,
+            PackageManager::Yum | PackageManager::Dnf => {
+                session.build_yum(&dir, std::path::Path::new("/etc/yum.repos.d"))?;
+            },
             PackageManager::Unknown => {},
         }
         session.dir = Some(dir);
         Ok(session)
     }
 
-    fn build_apt(&mut self, dir: &TempDir) -> Result<(), DomainError> {
+    fn build_apt(
+        &mut self,
+        dir: &TempDir,
+        source_list: &std::path::Path,
+        source_parts: &std::path::Path,
+    ) -> Result<(), DomainError> {
         let mirror = self.mirror.clone();
         // 一列式源：/etc/apt/sources.list + sources.list.d/*.list
         let mut merged = String::new();
-        let mut files = vec![std::path::PathBuf::from("/etc/apt/sources.list")];
-        if let Ok(entries) = std::fs::read_dir("/etc/apt/sources.list.d") {
+        let mut files = vec![source_list.to_path_buf()];
+        if let Ok(entries) = std::fs::read_dir(source_parts) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("list") {
@@ -199,7 +210,7 @@ impl MirrorSession {
             merged.push('\n');
         }
 
-        if let Ok(entries) = std::fs::read_dir("/etc/apt/sources.list.d") {
+        if let Ok(entries) = std::fs::read_dir(source_parts) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) != Some("sources") {
@@ -238,13 +249,17 @@ impl MirrorSession {
         Ok(())
     }
 
-    fn build_yum(&mut self, dir: &TempDir) -> Result<(), DomainError> {
+    fn build_yum(
+        &mut self,
+        dir: &TempDir,
+        source_repos: &std::path::Path,
+    ) -> Result<(), DomainError> {
         let mirror = self.mirror.clone();
         let repos_dir = dir.path().join("yum.repos.d");
         std::fs::create_dir_all(&repos_dir)
             .map_err(|e| DomainError::SystemCommandFailed(format!("创建临时源目录失败: {e}")))?;
 
-        let Ok(entries) = std::fs::read_dir("/etc/yum.repos.d") else {
+        let Ok(entries) = std::fs::read_dir(source_repos) else {
             return Ok(());
         };
         for entry in entries.flatten() {
@@ -316,6 +331,10 @@ impl MirrorSession {
         build_pm_argv(pm, &self.override_, args)
     }
 }
+
+#[cfg(test)]
+#[path = "package_mirror_tests.rs"]
+mod coverage_tests;
 
 /// 构造包管理器命令；无临时源时等价于原命令
 pub fn build_pm_argv(pm: PackageManager, over: &MirrorOverride, args: &[&str]) -> Vec<String> {
