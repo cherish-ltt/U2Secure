@@ -232,6 +232,10 @@ msrv = "1.98.1"
 
 ## 10. 其他追加内容
 
+### 后台事件接收
+
+- `JobHandle::drain()` 是界面事件接收与断连判定的唯一入口；`is_disconnected()` 只读取最近一次 drain 的状态，禁止通过额外接收探测连接而丢弃业务事件。
+
 ### 10.1 发布流程（Release）
 
 - 版本号统一维护在 `Cargo.toml`（源码通过 `env!("CARGO_PKG_VERSION")` 读取）；每个版本的发布说明写入 `docs/versions/v{X.Y.Z}.md`。
