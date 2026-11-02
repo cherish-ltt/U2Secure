@@ -193,6 +193,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "log_rollback_failed" => "回滚未全部完成，请根据以下错误手动恢复：\n{errors}",
         "err_restore_backup" => "恢复 {path} 失败，备份保留于 {backup}：{err}",
         "err_cleanup_backup" => "{path} 已恢复，但清理备份 {backup} 失败：{err}",
+        "err_user_remove" => "userdel 撤销用户 {user} 失败：{err}",
 
         // ── 回退描述 ──
         "undo_user_remove" => "删除用户 '{user}'",
@@ -518,6 +519,7 @@ fn en(key: &str) -> Option<&'static str> {
         },
         "err_restore_backup" => "Cannot restore {path}; backup retained at {backup}: {err}",
         "err_cleanup_backup" => "Restored {path}, but cannot remove backup {backup}: {err}",
+        "err_user_remove" => "userdel failed to roll back user {user}: {err}",
 
         "undo_user_remove" => "Remove user '{user}'",
         "undo_pkg_remove" => "Remove {pkg}",
@@ -852,6 +854,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "log_rollback_failed" => "回滾未全部完成，請根據以下錯誤手動恢復：\n{errors}",
         "err_restore_backup" => "恢復 {path} 失敗，備份保留於 {backup}：{err}",
         "err_cleanup_backup" => "{path} 已恢復，但清理備份 {backup} 失敗：{err}",
+        "err_user_remove" => "userdel 撤銷用戶 {user} 失敗：{err}",
 
         "undo_user_remove" => "刪除用戶 '{user}'",
         "undo_pkg_remove" => "刪除 {pkg}",

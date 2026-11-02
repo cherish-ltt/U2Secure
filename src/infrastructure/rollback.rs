@@ -128,12 +128,29 @@ pub fn register_package_remove(description: String, package: String) {
 
 /// 注册用户删除撤销操作
 pub fn register_user_remove(username: String) {
-    register_undo(UndoAction::new(
+    register_undo(UndoAction::try_new(
         crate::i18n::tr("undo_user_remove").replace("{user}", &username),
         Box::new(move || {
-            let _ = std::process::Command::new("userdel")
+            let failure = |detail: String| {
+                DomainError::SystemCommandFailed(
+                    crate::i18n::tr("err_user_remove")
+                        .replace("{user}", &username)
+                        .replace("{err}", &detail),
+                )
+            };
+            let output = std::process::Command::new("userdel")
                 .args(["-r", &username])
-                .output();
+                .output()
+                .map_err(|e| failure(e.to_string()))?;
+            if !output.status.success() {
+                return Err(failure(format!(
+                    "{}; {}{}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+            Ok(())
         }),
     ));
 }
