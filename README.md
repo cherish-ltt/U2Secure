@@ -70,7 +70,7 @@ npm 安装仅在下载完整且落盘成功后替换本地二进制；下载或�
 两个发布器都检出该标签，缺失或非法时不发布。旧构建运行使用手动补发入口。
 `python3 tests/release_tag_test.py` 验证标签传递，不触发真实发布。
 crates.io Trusted Publishing 不支持 `workflow_run`，当前 crates.io 自动路径不可用；
-维护者确认 Binary Build 成功且两个 Linux 资产齐全后，须手动派发 `cargo-publish.yml`。
+维护者确认 Binary Build 成功且该版本矩阵中的 Linux 资产齐全后，须手动派发 `cargo-publish.yml`。
 npm 仍在 Binary Build 成功后自动发布，具体命令及升级兼容说明见 [v0.5.0](docs/versions/v0.5.0.md)。
 
 | 项目 | 支持情况 |
@@ -127,6 +127,18 @@ U2Secure 通过**环境审计 → 五大防护域 12 步加固 → 生效校验*
 >
 > **仅支持 Linux**：U2Secure 依赖 apt/dnf、ufw、sshd、systemd 与 `/var/log` 等 Linux 专有组件，
 > 只发布 Linux 二进制；在 macOS/Windows 上请通过 Docker 或 Linux 服务器/虚拟机使用。
+
+后续 Binary Build 在原有 GNU 目标外增加 musl，共生成以下四个 Release 资产；
+已发布的 v0.5.0 仍只有 GNU 资产，本次 CI 更新不自动补发或改写该版本：
+
+| 架构 | GNU 资产 | musl 资产 |
+|------|----------|-----------|
+| x86_64 | `u2secure-x86_64-unknown-linux-gnu` | `u2secure-x86_64-unknown-linux-musl` |
+| ARM64 | `u2secure-aarch64-unknown-linux-gnu` | `u2secure-aarch64-unknown-linux-musl` |
+
+npm / bun 安装器仍选择 GNU 资产，不自动识别 musl；musl 产物通过 Release 下载或
+cargo-binstall 的对应目标安装。提供 musl 二进制不代表新增 Alpine/OpenRC 加固支持，
+运行仍依赖受支持的包管理器、systemd、OpenSSH 和 UFW 等组件。
 
 #### 方式一：npm / bun（推荐）
 
