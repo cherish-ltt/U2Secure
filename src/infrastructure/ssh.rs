@@ -125,6 +125,13 @@ impl SshConfig {
 
     pub fn update(&self, settings: &[(&str, &str)]) -> Result<Option<String>, DomainError> {
         let content = std::fs::read_to_string(&self.path).map_err(read_error)?;
+        let current = self.effective_at(&self.path, &content)?;
+        if settings
+            .iter()
+            .all(|&(key, value)| current.matches(key, value))
+        {
+            return Ok(None);
+        }
         let updated = render_global(&content, settings);
         let mut candidate = tempfile::Builder::new()
             .prefix(".u2secure-sshd-")
@@ -261,7 +268,20 @@ mod tests {
         let original =
             "PasswordAuthentication yes\nMatch User restricted\n PasswordAuthentication no\n";
         std::fs::write(&path, original).unwrap();
-        std::fs::write(&program, format!("#!/bin/sh\n[ \"$2\" = -f ] || exit 50\n[ -f \"$3\" ] || exit 51\n[ \"$1\" = -t ] && exit 0\nprintf '%s' '{EFFECTIVE}'\n")).unwrap();
+        std::fs::write(&program, r#"#!/bin/sh
+[ "$2" = -f ] || exit 50
+[ -f "$3" ] || exit 51
+[ "$1" = -t ] && exit 0
+awk '
+BEGIN { port=22; password="yes"; keyboard="yes"; root="yes" }
+tolower($1)=="match" { exit }
+tolower($1)=="port" && !p++ { port=$2 }
+tolower($1)=="passwordauthentication" && !a++ { password=$2 }
+tolower($1)=="kbdinteractiveauthentication" && !k++ { keyboard=$2 }
+tolower($1)=="permitrootlogin" && !r++ { root=$2 }
+END { print "port " port; print "passwordauthentication " password; print "kbdinteractiveauthentication " keyboard; print "permitrootlogin " root }
+' "$3"
+"#).unwrap();
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
         let ssh = SshConfig::new(&path, &program);
         assert!(ssh.update(&[("Port", "2222")]).unwrap().is_some());
@@ -286,7 +306,14 @@ mod tests {
             .unwrap()
             .is_none()
         );
+        let configured = std::fs::read_to_string(&path).unwrap();
+        let repeated = ssh.update(&[("Port", "2222")]);
         rollback::undo_all();
+        assert!(
+            repeated.unwrap().is_none(),
+            "matching effective settings must not be reordered"
+        );
+        assert!(configured.starts_with("PasswordAuthentication no\n"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
         for script in [
             "#!/bin/sh\necho invalid >&2\nexit 42\n".to_string(),

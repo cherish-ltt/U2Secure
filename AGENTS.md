@@ -343,6 +343,8 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 
 ### 10.4 平台支持边界（v0.4.1 起）
 
+- SSH 生效决策由共用执行器处理：步骤通过 `StepResult::ssh_restart_required` 报告实际配置写入，CLI/TUI 必须在执行前收集 `apply_ssh_changes` 明确授权；无授权只能标记待生效，禁止暗中重启。计划测试使用 `execution_plan` 配合假步骤。
+
 - UFW 规则修改必须先备份 `user.rules` / `user6.rules` / `ufw.conf` 并登记可报告失败的恢复动作；禁止用无条件 `delete allow` 撤销。端口配置仅在已启用防火墙放行成功后写入。
 
 **本项目只支持 Linux，只发布 Linux 二进制**。理由：核心能力依赖 Linux 专有组件
@@ -365,4 +367,5 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 - 重启通过 `infrastructure::ssh_service` 处理；只对明确的 `LoadState=not-found` 回退服务名，
   已存在服务的加载、重启或状态查询失败必须显式报告，不得用另一个服务名掩盖错误。
 - 重启命令必须限时并保留日志，成功后校验同一服务的退出状态及 `active` 文本；测试只能注入假命令。
+- SSH 开始尝试重启是整批提交边界：通过 `StepResult::ssh_activation_attempted` 保留边界后的成功、失败与中断信息；禁止再单独回退配置和防火墙。边界前失败仍回退，边界后失败须明确报告修改保留及人工检查要求。
 

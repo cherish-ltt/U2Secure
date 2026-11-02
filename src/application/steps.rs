@@ -337,20 +337,12 @@ impl HardeningStep for UfwStep {
         StepKind::Ufw
     }
 
-    fn execute(&self, _params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        let config = ssh::SshConfig::default().effective()?;
-        if config.ports.len() != 1 {
-            return Err(DomainError::PreconditionFailed(
-                crate::i18n::tr("err_sshd_effective").into(),
-            ));
-        }
-        let port = config.ports[0];
-        let message = crate::i18n::tr("result_ufw_enabled").replace("{port}", &port.to_string());
-        if ufw::Ufw::default().allow_port(port, true)? {
-            Ok(StepResult::changed(self.kind(), message))
-        } else {
-            Ok(StepResult::skipped(self.kind(), message))
-        }
+    fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        configure_ufw(
+            &ssh::SshConfig::default(),
+            &ufw::Ufw::default(),
+            params.ssh_restart_required || system::detect_ssh_restart_needed(),
+        )
     }
 }
 
@@ -944,8 +936,14 @@ impl HardeningStep for RestartSshStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
-        // 幂等：配置未变更（不比服务进程更新）则无需重启
-        if !system::detect_ssh_restart_needed() {
+        if !params.apply_ssh_changes {
+            return Ok(StepResult::skipped(
+                self.kind(),
+                crate::i18n::tr("result_ssh_pending"),
+            ));
+        }
+        // 本批次的实际写入优先于进程/文件时间戳推断。
+        if !params.ssh_restart_required && !system::detect_ssh_restart_needed() {
             return Ok(StepResult::skipped(
                 self.kind(),
                 crate::i18n::tr("result_ssh_no_restart"),
@@ -966,19 +964,24 @@ impl HardeningStep for RestartSshStep {
         }
 
         let log = live_log(params, "step12-ssh-restart");
-        let status_str = crate::infrastructure::ssh_service::restart_ssh(&log)?;
-
-        Ok(StepResult::changed(
-            self.kind(),
-            crate::i18n::tr("result_ssh_restarted").replace("{status}", &status_str),
-        )
-        .with_artifacts(vec![log]))
+        let mut attempted = false;
+        let status = crate::infrastructure::ssh_service::restart_ssh(&log, || attempted = true);
+        let mut result = match status {
+            Ok(status) => StepResult::changed(
+                self.kind(),
+                crate::i18n::tr("result_ssh_restarted").replace("{status}", &status),
+            ),
+            Err(error) => StepResult::failed(self.kind(), error.to_string()),
+        }
+        .with_artifacts(vec![log]);
+        result.ssh_activation_attempted = attempted;
+        Ok(result)
     }
 }
 
 fn ssh_config_result(kind: StepKind, settings: &[(&str, &str)]) -> Result<StepResult, DomainError> {
     match ssh::SshConfig::default().update(settings)? {
-        Some(message) => Ok(StepResult::changed(kind, message)),
+        Some(message) => Ok(StepResult::changed(kind, message).requiring_ssh_restart()),
         None => Ok(StepResult::skipped(
             kind,
             crate::i18n::tr("result_sshd_unchanged"),
@@ -996,7 +999,9 @@ pub fn change_ssh_port(
         .transpose()?
         .unwrap_or(false);
     match config.update(&[("Port", &port.to_string())])? {
-        Some(message) => Ok(StepResult::changed(StepKind::SshPortChange, message)),
+        Some(message) => {
+            Ok(StepResult::changed(StepKind::SshPortChange, message).requiring_ssh_restart())
+        },
         None if firewall_changed => Ok(StepResult::changed(
             StepKind::SshPortChange,
             crate::i18n::tr("result_sshd_firewall_changed"),
@@ -1005,5 +1010,31 @@ pub fn change_ssh_port(
             StepKind::SshPortChange,
             crate::i18n::tr("result_sshd_unchanged"),
         )),
+    }
+}
+
+pub fn configure_ufw(
+    config: &ssh::SshConfig,
+    firewall: &ufw::Ufw,
+    ssh_pending: bool,
+) -> Result<StepResult, DomainError> {
+    if ssh_pending && !firewall.enabled()? {
+        return Ok(StepResult::skipped(
+            StepKind::Ufw,
+            crate::i18n::tr("result_ufw_ssh_pending"),
+        ));
+    }
+    let config = config.effective()?;
+    if config.ports.len() != 1 {
+        return Err(DomainError::PreconditionFailed(
+            crate::i18n::tr("err_sshd_effective").into(),
+        ));
+    }
+    let port = config.ports[0];
+    let message = crate::i18n::tr("result_ufw_enabled").replace("{port}", &port.to_string());
+    if firewall.allow_port(port, true)? {
+        Ok(StepResult::changed(StepKind::Ufw, message))
+    } else {
+        Ok(StepResult::skipped(StepKind::Ufw, message))
     }
 }

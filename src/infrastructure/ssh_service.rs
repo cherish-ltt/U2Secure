@@ -4,10 +4,16 @@ use std::time::Duration;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::system::{self, StreamStatus};
 
-pub fn restart_ssh(log_path: &str) -> Result<String, DomainError> {
+pub fn restart_ssh(log_path: &str, on_attempt: impl FnOnce()) -> Result<String, DomainError> {
     restart_ssh_with(
         |args| Command::new("systemctl").args(args).output(),
         |unit| {
+            if crate::infrastructure::rollback::INTERRUPTED
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Ok(StreamStatus::Cancelled);
+            }
+            on_attempt();
             system::run_streaming_argv(
                 &["systemctl".into(), "restart".into(), unit.into()],
                 &[],
