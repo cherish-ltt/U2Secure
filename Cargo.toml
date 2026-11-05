@@ -1,10 +1,10 @@
 [package]
 name = "u2secure"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.98.1"
 authors = ["cherish-ltt <125760530+cherish-ltt@users.noreply.github.com>"]
-description = "Make your Linux system more secure through interactive CLI | 通过交互式的cli让你的Linux系统更安全"
+description = "Linux security hardening with CLI/TUI and read-only audit reports | Linux 交互式安全加固与只读审计报告"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/cherish-ltt/U2Secure"

@@ -230,14 +230,23 @@ jobs:
           cat > README.md <<'README_EOF'
           # u2secure
 
-          Linux 服务器安全加固工具（CLI + TUI 双模式），基于 Rust 构建。运行一次即可完成从系统更新、用户创建、SSH 深度加固、防火墙、入侵防御、审计到自动更新的完整安全基线建设。
+          Linux 服务器安全加固工具，提供交互式 CLI/TUI 和独立只读审计报告。
 
-          > Linux server security hardening tool (CLI + TUI) built with Rust. One run builds a complete security baseline: system updates, user creation, deep SSH hardening, firewall, intrusion prevention, auditing and automatic updates.
+          > Linux server security hardening with interactive CLI/TUI and standalone read-only audit reports.
           >
           > 支持平台 / Supported platform: Linux x86_64 & ARM64 (Linux only)
           >
           > 详细文档与使用指南请访问 / For full documentation and usage guide, visit:
           > [GitHub 主页](https://github.com/cherish-ltt/U2Secure)
+
+          ```bash
+          sudo u2secure audit
+          sudo u2secure audit --format json
+          ```
+
+          审计要求 root，无需 TTY，不创建日志或报告文件。stdout 输出报告，stderr 输出诊断；退出 0 表示报告成功，不表示系统全部安全。保存文件由调用方重定向，并自行检查权限。
+
+          Audit requires root but no TTY and creates no log or report files. Reports go to stdout and diagnostics to stderr. Exit 0 means the report succeeded, not that every check is safe. Redirect output to save it and check file permissions.
           README_EOF
 
       - name: Check whether version already published
