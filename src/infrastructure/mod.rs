@@ -1,6 +1,8 @@
 pub mod aide;
 pub mod artifacts;
+mod audit;
 pub mod backup;
+mod capture;
 pub mod logger;
 pub mod lynis;
 pub mod package_mirror;

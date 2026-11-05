@@ -70,6 +70,49 @@ pub fn tr(key: &'static str) -> &'static str {
 
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_audit_failed" => "审计失败: {msg}",
+        "err_command_unavailable" => "命令不可用: {program}",
+        "audit_probe_failed" => "{program}: 探测失败或输出无效",
+        "capture_spawn" => "无法启动 {program}: {err}",
+        "capture_pipe" => "无法准备 {program} 的输出管道: {err}",
+        "capture_wait" => "无法等待 {program}: {err}",
+        "capture_read" => "无法读取 {program} 的输出: {err}",
+        "capture_limit" => "{program} 的输出超过 {limit} 字节限制",
+        "capture_timeout" => "{program} 探测超时",
+        "capture_cancel" => "{program} 探测已取消",
+        "capture_unsupported" => "此平台不支持有界命令采集",
+        "capture_missing_pipe" => "命令输出管道缺失",
+        "audit_usage" => {
+            "用法: u2secure audit [--format text|json]\n只读本机审计，需要 root；默认 text。退出 0 表示报告生成成功，不表示全部安全。\n报告写入 stdout，诊断写入 stderr；不会自动保存文件。\n"
+        },
+        "audit_report_header" => "U2Secure v{version} 只读审计 — {collected_at}",
+        "audit_report_scope" => {
+            "检查范围：本机只读、复用现有检测；SSH 仅全局配置，不验证实际连接或密钥，不执行安全扫描。状态仅对应列出的检查范围。"
+        },
+        "audit_status_safe" => "已配置",
+        "audit_status_partial" => "部分或未验证",
+        "audit_status_missing" => "未配置",
+        "audit_status_needs_update" => "需要更新",
+        "audit_scope_cache" => "仅检查 APT 缓存是否小于 7 天，不验证软件包已升级。",
+        "audit_scope_accounts" => "仅检查 sudo/wheel 组中的普通用户，不验证完整 sudo 策略。",
+        "audit_scope_ssh" => {
+            "仅全局 SSH 配置；Include/Match、多端口或无法取得有效配置时未验证，不代表实际登录安全。"
+        },
+        "audit_scope_keys" => "仅按管理用户推断，未读取或验证密钥。",
+        "audit_scope_ufw" => {
+            "仅检查 UFW 用户链是否存在，不验证完整规则，也不保证并发重载时的原子一致快照。"
+        },
+        "audit_scope_installed" => "仅检测工具已安装，未运行扫描或校验报告。",
+        "audit_scope_restart" => "仅按配置与进程时间戳推断，无法确认所有运行中 SSH 设置。",
+        "audit_detail_unverified" => "未验证",
+        "audit_detail_log_tools" => "已安装 Logwatch: {logwatch}; AIDE: {aide}",
+        "audit_detail_restart" => "重启提示: {needed}",
+        "audit_detail_root_restricted" => "root SSH 登录已受限制，可能仍允许密钥登录",
+        "audit_detail_cache_not_recent" => "未检测到近期 APT 缓存",
+        "audit_yes" => "是",
+        "audit_no" => "否",
+        "audit_serialize_failed" => "无法序列化审计报告: {err}",
+        "audit_output_failed" => "无法输出审计报告: {err}",
         "err_ufw_status" => "无法确定 UFW 启用状态",
         "result_ufw_ssh_pending" => {
             "SSH 配置待生效，暂不启用 UFW，避免阻断现有连接；SSH 生效后请重新执行防火墙步骤"
@@ -417,6 +460,61 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_audit_failed" => "Audit failed: {msg}",
+        "err_command_unavailable" => "Command unavailable: {program}",
+        "audit_probe_failed" => "{program}: probe failed or returned invalid output",
+        "capture_spawn" => "Cannot start {program}: {err}",
+        "capture_pipe" => "Cannot prepare output pipes for {program}: {err}",
+        "capture_wait" => "Cannot wait for {program}: {err}",
+        "capture_read" => "Cannot read output from {program}: {err}",
+        "capture_limit" => "Output from {program} exceeded the {limit}-byte limit",
+        "capture_timeout" => "Probe timed out: {program}",
+        "capture_cancel" => "Probe cancelled: {program}",
+        "capture_unsupported" => "Bounded command capture is unavailable on this platform",
+        "capture_missing_pipe" => "Command output pipe is missing",
+        "audit_usage" => {
+            "Usage: u2secure audit [--format text|json]\nRead-only local audit; root required; defaults to text. Exit 0 means a report was produced, not that every check is safe.\nReports go to stdout and diagnostics to stderr; no files are saved automatically.\n"
+        },
+        "audit_report_header" => "U2Secure v{version} read-only audit — {collected_at}",
+        "audit_report_scope" => {
+            "Scope: local read-only checks using existing detectors; SSH global configuration only, without live connection or key verification or security scans. Each status applies only to its stated scope."
+        },
+        "audit_status_safe" => "Configured",
+        "audit_status_partial" => "Partial or unverified",
+        "audit_status_missing" => "Missing",
+        "audit_status_needs_update" => "Needs update",
+        "audit_scope_cache" => {
+            "Checks only whether the APT cache is less than 7 days old, not whether packages have been upgraded."
+        },
+        "audit_scope_accounts" => {
+            "Checks regular users in the sudo/wheel groups, not the complete sudo policy."
+        },
+        "audit_scope_ssh" => {
+            "Global SSH configuration only; Include/Match, multiple ports or unavailable effective configuration remain unverified. This does not establish live login safety."
+        },
+        "audit_scope_keys" => {
+            "Inferred only from administrative users; keys are neither read nor verified."
+        },
+        "audit_scope_ufw" => {
+            "Checks only whether UFW user chains exist; does not verify complete rules or guarantee an atomic snapshot during concurrent reloads."
+        },
+        "audit_scope_installed" => {
+            "Checks tool installation only; no scans are run and no reports are validated."
+        },
+        "audit_scope_restart" => {
+            "Inferred from configuration and process timestamps only; running SSH settings are not fully verified."
+        },
+        "audit_detail_unverified" => "Unverified",
+        "audit_detail_log_tools" => "Installed — Logwatch: {logwatch}; AIDE: {aide}",
+        "audit_detail_restart" => "Restart suggested: {needed}",
+        "audit_detail_root_restricted" => {
+            "Root SSH login is restricted; key-based login may still be allowed"
+        },
+        "audit_detail_cache_not_recent" => "No recent APT cache detected",
+        "audit_yes" => "Yes",
+        "audit_no" => "No",
+        "audit_serialize_failed" => "Cannot serialize the audit report: {err}",
+        "audit_output_failed" => "Cannot write the audit report: {err}",
         "err_ufw_status" => "Cannot determine UFW activation status",
         "result_ufw_ssh_pending" => {
             "SSH configuration is pending; UFW remains disabled to protect existing access. Run the firewall step again after applying SSH configuration"
@@ -789,6 +887,49 @@ fn en(key: &str) -> Option<&'static str> {
 
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
+        "err_audit_failed" => "稽核失敗: {msg}",
+        "err_command_unavailable" => "命令無法使用: {program}",
+        "audit_probe_failed" => "{program}: 探測失敗或輸出無效",
+        "capture_spawn" => "無法啟動 {program}: {err}",
+        "capture_pipe" => "無法準備 {program} 的輸出管道: {err}",
+        "capture_wait" => "無法等待 {program}: {err}",
+        "capture_read" => "無法讀取 {program} 的輸出: {err}",
+        "capture_limit" => "{program} 的輸出超過 {limit} 位元組限制",
+        "capture_timeout" => "{program} 探測逾時",
+        "capture_cancel" => "{program} 探測已取消",
+        "capture_unsupported" => "此平台不支援有界命令擷取",
+        "capture_missing_pipe" => "命令輸出管道缺失",
+        "audit_usage" => {
+            "用法: u2secure audit [--format text|json]\n唯讀本機稽核，需要 root；預設 text。退出 0 表示報告產生成功，不表示全部安全。\n報告寫入 stdout，診斷寫入 stderr；不會自動儲存檔案。\n"
+        },
+        "audit_report_header" => "U2Secure v{version} 唯讀稽核 — {collected_at}",
+        "audit_report_scope" => {
+            "檢查範圍：本機唯讀、重用既有檢測；SSH 僅全域設定，不驗證實際連線或金鑰，不執行安全掃描。狀態僅對應列出的檢查範圍。"
+        },
+        "audit_status_safe" => "已設定",
+        "audit_status_partial" => "部分或未驗證",
+        "audit_status_missing" => "未設定",
+        "audit_status_needs_update" => "需要更新",
+        "audit_scope_cache" => "僅檢查 APT 快取是否小於 7 天，不驗證軟體套件已升級。",
+        "audit_scope_accounts" => "僅檢查 sudo/wheel 群組中的一般使用者，不驗證完整 sudo 原則。",
+        "audit_scope_ssh" => {
+            "僅全域 SSH 設定；Include/Match、多連接埠或無法取得有效設定時未驗證，不代表實際登入安全。"
+        },
+        "audit_scope_keys" => "僅依管理使用者推斷，未讀取或驗證金鑰。",
+        "audit_scope_ufw" => {
+            "僅檢查 UFW 使用者鏈是否存在，不驗證完整規則，也不保證同時重新載入時的原子一致快照。"
+        },
+        "audit_scope_installed" => "僅檢測工具已安裝，未執行掃描或驗證報告。",
+        "audit_scope_restart" => "僅依設定與程序時間戳記推斷，無法確認所有執行中的 SSH 設定。",
+        "audit_detail_unverified" => "未驗證",
+        "audit_detail_log_tools" => "已安裝 Logwatch: {logwatch}; AIDE: {aide}",
+        "audit_detail_restart" => "重新啟動提示: {needed}",
+        "audit_detail_root_restricted" => "root SSH 登入已受限制，可能仍允許金鑰登入",
+        "audit_detail_cache_not_recent" => "未檢測到近期 APT 快取",
+        "audit_yes" => "是",
+        "audit_no" => "否",
+        "audit_serialize_failed" => "無法序列化稽核報告: {err}",
+        "audit_output_failed" => "無法輸出稽核報告: {err}",
         "err_ufw_status" => "無法確定 UFW 啟用狀態",
         "result_ufw_ssh_pending" => {
             "SSH 配置待生效，暫不啟用 UFW，避免阻斷現有連線；SSH 生效後請重新執行防火牆步驟"

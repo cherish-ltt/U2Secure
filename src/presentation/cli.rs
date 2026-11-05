@@ -28,7 +28,13 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
         "🔍".bright_blue(),
         crate::i18n::tr("cli_auditing")
     );
-    let report = orchestrator.audit();
+    let report = match orchestrator.audit() {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("{} {}", "[!]".red(), error);
+            std::process::exit(1);
+        },
+    };
 
     render_audit_report(&report);
 

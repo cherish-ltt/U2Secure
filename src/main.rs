@@ -8,7 +8,7 @@ use u2secure::application::orchestrator::HardeningOrchestrator;
 use u2secure::i18n;
 use u2secure::i18n::Lang;
 use u2secure::infrastructure::rollback;
-use u2secure::presentation::{cli, tui};
+use u2secure::presentation::{audit, cli, tui};
 
 enum ModeChoice {
     Cli,
@@ -58,6 +58,15 @@ impl ModeChoice {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "audit") {
+        if let Err(error) = audit::run(&args[1..]) {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // 初始化 Ctrl+C 信号处理器（确保在任何修改前就位）
     if let Err(e) = rollback::init_signal_handler() {
         eprintln!("[!] {e}");

@@ -14,8 +14,8 @@ fn audit_and_permission_checks_use_the_shared_logger() {
             ),
             ("which", "exit 1"),
             ("getent", "echo sudo:x:27:"),
-            ("ufw", "echo 'Status: inactive'"),
-            ("systemctl", "exit 1"),
+            ("ufw", "exit 99"),
+            ("systemctl", "printf disabled; exit 1"),
             ("sshd", "exit 1"),
         ] {
             let path = dir.path().join(name);
@@ -55,15 +55,25 @@ fn isolated_audit_child() {
     assert!(Arc::ptr_eq(&logger, &orchestrator.logger()));
     let allowed = uid == "0";
     assert_eq!(orchestrator.check_root().is_ok(), allowed);
-    let report = orchestrator.audit();
+    if uid != "unavailable" {
+        crate::infrastructure::rollback::INTERRUPTED
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    let result = orchestrator.audit();
+    let text = fs::read_to_string(path).unwrap();
+    assert!(text.contains(crate::i18n::tr("log_audit_start")));
+    if uid == "unavailable" {
+        assert!(result.is_err());
+        assert_eq!(text.lines().count(), 1);
+        return;
+    }
+    let report = result.unwrap();
     assert_eq!(report.is_root, allowed);
     assert_eq!(
         report.package_manager,
         crate::domain::audit::PackageManager::Unknown
     );
     assert!(!report.items.is_empty());
-    let text = fs::read_to_string(path).unwrap();
-    assert!(text.contains(crate::i18n::tr("log_audit_start")));
     assert!(text.contains(
         &crate::i18n::tr("log_audit_done").replace("{n}", &report.items.len().to_string())
     ));
