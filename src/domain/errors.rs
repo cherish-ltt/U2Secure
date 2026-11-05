@@ -7,6 +7,8 @@ pub enum DomainError {
     PermissionDenied,
     /// 底层系统命令失败
     SystemCommandFailed(String),
+    AuditFailed(String),
+    CommandUnavailable(String),
     /// 解析配置文件失败
     ParseError(String),
     /// 前置条件不满足（如无 sudo 用户时禁止 root 登录）
@@ -27,6 +29,16 @@ impl fmt::Display for DomainError {
                     crate::i18n::tr("err_cmd_failed").replace("{msg}", msg)
                 )
             },
+            Self::AuditFailed(msg) => write!(
+                f,
+                "{}",
+                crate::i18n::tr("err_audit_failed").replace("{msg}", msg)
+            ),
+            Self::CommandUnavailable(program) => write!(
+                f,
+                "{}",
+                crate::i18n::tr("err_command_unavailable").replace("{program}", program)
+            ),
             Self::ParseError(msg) => {
                 write!(
                     f,

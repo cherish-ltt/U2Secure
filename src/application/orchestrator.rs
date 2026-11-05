@@ -26,13 +26,13 @@ impl HardeningOrchestrator {
     }
 
     /// 执行环境审计（只读）
-    pub fn audit(&self) -> AuditReport {
+    pub fn audit(&self) -> Result<AuditReport, DomainError> {
         self.logger.log(crate::i18n::tr("log_audit_start"));
-        let report = system::run_full_audit();
+        let report = system::run_full_audit()?;
         self.logger.log(
             &crate::i18n::tr("log_audit_done").replace("{n}", &report.items.len().to_string()),
         );
-        report
+        Ok(report)
     }
 
     /// 检查 root 权限

@@ -1,7 +1,7 @@
 <div align="center">
 <img src="docs/logo.png" width="128" alt="U2Secure Logo"/>
 <h1>U2Secure</h1>
-<h3>Linux 服务器安全加固工具 — CLI / TUI 双模式</h3>
+<h3>Linux 服务器安全加固工具 — CLI / TUI 与只读审计</h3>
 <p>
   <a href="https://github.com/cherish-ltt/u2secure/actions/workflows/rust-ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/cherish-ltt/u2secure/rust-ci.yml?branch=main" alt="Build Status"/>
@@ -22,7 +22,7 @@
 </p>
 </div>
 
-> 🚀 面向 Linux 运维人员的交互式安全加固工具。支持 **TUI 终端图形界面**与**传统 CLI** 双模式。运行一次即可完成从系统更新、用户创建、SSH 深度加固、防火墙、入侵防御、审计到自动更新的完整安全基线建设。
+> 面向 Linux 运维人员的安全加固工具。支持 **TUI 终端图形界面**与**传统 CLI** 交互式加固，以及独立的 **`audit` 只读报告**。加固流程涵盖系统更新、用户创建、SSH、防火墙、入侵防御、审计与自动更新。
 
 ## 目录
 
@@ -30,6 +30,7 @@
 - [安全加固体系](#安全加固体系)
 - [快速开始](#快速开始)
 - [启动模式](#启动模式)
+- [只读审计报告](#只读审计报告)
 - [TUI 界面](#tui-界面)
 - [功能详解](#功能详解)
   - [Step 0：环境审计](#step-0环境审计)
@@ -48,6 +49,7 @@
 - 首次运行自动审计系统当前安全状态，对已加固项目标记"安全可靠"（**幂等**）
 - **TUI 模式**：ratatui 终端图形界面，步骤列表 + 日志面板 + 进度条，支持单项强制执行
 - **CLI 模式**：传统 dialoguer 向导式交互，兼容原版体验
+- **只读审计**：`audit` 无需 TTY，输出文本或稳定 JSON，不创建操作日志或报告文件
 - 每步执行前检测状态，不重复配置
 - 同批次创建用户与设置密钥时，同一用户只生成一次密钥，执行器会明确报告跳过重复生成。
 - 支持自动备份与回退；SSH 生效尝试是整批提交边界，其后失败或中断保留修改并要求人工检查
@@ -76,7 +78,7 @@ npm 仍在 Binary Build 成功后自动发布，具体命令及升级兼容说�
 | 项目 | 支持情况 |
 |------|---------|
 | 发行版 | Debian/Ubuntu（首选），兼容 RHEL/CentOS（yum/dnf） |
-| 权限 | **必须以 root 运行**，审计阶段只读不写 |
+| 权限 | **必须以 root 运行**；独立 `audit` 不落盘，交互式加固会写操作日志 |
 | 内核 | Linux 3.10+ |
 | SSH 服务 | OpenSSH（sshd） |
 | 防火墙 | UFW（首选），检测到 firewalld 时提示适配 |
@@ -85,7 +87,7 @@ npm 仍在 Binary Build 成功后自动发布，具体命令及升级兼容说�
 
 ```
 src/
-├── main.rs                 # 入口：三级路由 → CLI / TUI / 交互选择
+├── main.rs                 # 入口：audit / CLI / TUI / 交互选择
 ├── domain/                 # 领域层（零外部依赖）
 │   ├── audit.rs            # AuditReport（全项目唯一状态真值）、AuditStatus、PackageManager
 │   ├── steps.rs            # StepKind、HardeningStep trait、ExecuteParams、StepResult/StepOutcome
@@ -98,6 +100,8 @@ src/
 │   └── steps.rs            # 12 个步骤的具体实现
 ├── infrastructure/         # 基础设施
 │   ├── system.rs           # 系统命令、流式执行（超时/取消）、配置解析、用户与密钥管理
+│   ├── audit.rs            # 共用只读探测，区分正常发现与采集失败
+│   ├── capture.rs          # 命令输出内存采集（限时、限量、进程组清理）
 │   ├── artifacts.rs        # 报告目录（扫描产物持久化）
 │   ├── package_mirror.rs   # 临时软件源：主机改写 / 延迟探测 / apt -o 覆盖
 │   ├── lynis.rs            # lynis-report.dat 解析
@@ -105,6 +109,7 @@ src/
 │   ├── logger.rs           # 日志记录（含公钥脱敏）
 │   └── rollback.rs         # 回退管理器：undo 栈 + Ctrl+C 信号处理
 └── presentation/           # 表示层
+    ├── audit.rs            # 独立 text / JSON 审计报告
     ├── cli.rs              # dialoguer 交互式 CLI
     └── tui.rs              # ratatui 终端图形界面（TUI）
 ```
@@ -183,6 +188,7 @@ sudo cp target/release/u2secure /usr/local/bin/
 sudo u2secure           # 交互式选择启动模式
 sudo u2secure -t        # 直接启动 TUI 模式（推荐）
 sudo u2secure -c        # 直接启动 CLI 模式
+sudo u2secure audit     # 仅输出只读审计报告
 ```
 
 ## 启动模式
@@ -192,6 +198,81 @@ sudo u2secure -c        # 直接启动 CLI 模式
 | `u2secure` | 交互选择 | 弹窗选择 CLI 或 TUI |
 | `u2secure -t` / `--tui` | **TUI** | ratatui 终端图形界面（默认推荐） |
 | `u2secure -c` / `--cli` | **CLI** | 传统 dialoguer 交互式向导 |
+| `u2secure audit [--format text\|json]` | **只读审计** | 默认 text，无需终端交互 |
+
+## 只读审计报告
+
+```bash
+sudo u2secure audit                     # 文本报告
+sudo u2secure audit --format json       # 单个 JSON 文档
+u2secure audit --help                   # 查看用法，无需 root
+
+# 保存由调用方负责；umask 只限制新建文件，已有文件请先检查权限。
+(umask 077; sudo u2secure audit --format json > audit.json)
+```
+
+`audit` 要求 root，可在重定向输入、管道或无 TTY 环境运行，不进入语言选择、CLI/TUI、
+加固执行器或日志初始化。`sudo` 自身可能询问密码；无人值守调用需已有 root 或 `sudo -n` 权限。
+程序不自动创建日志、备份、扫描产物或报告文件；stdout 只输出报告，stderr 输出失败诊断。
+报告含管理用户名与安全配置状态，保存和分享前应检查目标文件权限。
+文本支持项目三语翻译，独立命令使用默认简体中文；JSON 的键、ID、状态和详情不随语言变化。
+
+退出码 **0** 表示报告生成并输出成功（或显示帮助），不表示所有检查均安全；未安装工具、
+未配置功能与 SSH 未验证都可作为正常发现返回。参数错误、非 root、必要探测失败、超时、
+输出超限、配置读取失败或 stdout 写入/刷新失败返回 **1**。采集或序列化失败不输出半份报告；
+若输出设备写入失败，调用方应丢弃可能已收到的部分内容，并始终检查退出码。
+
+每条外部探测命令限时 **5 秒**，其 stdout 与 stderr 合计最多 **1 MiB**，均在内存采集。
+超时、取消、超限或异常时终止同一进程组并回收直接子进程；主进程正常退出也清理组内残留任务。
+主动脱离进程组的守护进程不在此保证范围内，整份审计也没有固定的总耗时上限。
+
+### JSON 契约（schema 1）
+
+| 顶层键 | 类型与含义 |
+|--------|------------|
+| `schema_version` | 整数，固定为 `1` |
+| `tool_version` | 字符串，当前 U2Secure 版本 |
+| `collected_at` | 字符串，采集结束时的 UTC RFC 3339 时间 |
+| `check_scope` | 字符串数组，检查范围代码，含义见下表 |
+| `is_root` | 布尔值，成功审计为 `true` |
+| `package_manager` | `apt` / `yum` / `dnf` / `unknown` |
+| `checks` | 包含全部 12 项的数组，每项含 `id`、`status`、`details` |
+
+`id` 使用 `StepKind::slug()`；`status` 与交互式加固共用 `AuditReport::status_for()`，
+只取 `safe`（符合该项现有判定）、`partial`（部分满足或未验证）、`missing`（未检测到配置或工具）、
+`needs_update`（现有启发式提示更新或重启）。调用方应按 ID 查找检查项，并结合范围解释状态。
+
+| 检查 ID | `details` 字段 |
+|---------|------------------|
+| `system-update` | `apt_cache_recent`：布尔值 |
+| `user-creation` | `sudo_users`：用户名字符串数组 |
+| `ssh-root-login` | `global_config_verified`：布尔值；`root_login_restricted`：布尔值或 `null` |
+| `ssh-port-change` | `global_config_verified`：布尔值；`port`：端口整数或 `null` |
+| `ssh-password-auth` | `global_config_verified`：布尔值；`password_auth_disabled`：布尔值或 `null` |
+| `ssh-key-setup` | `keys_verified`：固定 `false` |
+| `ufw` | `enabled`：布尔值，按 UFW 用户链存在性推断，不验证完整规则 |
+| `fail2ban` | `installed`：布尔值，不验证监狱规则或运行状态 |
+| `auto-updates` | `enabled`：布尔值，来自服务启用状态或现有 APT 配置，不证明升级已执行 |
+| `security-scan` | `lynis_installed`：布尔值；`scan_executed`：固定 `false` |
+| `log-audit` | `logwatch_installed`、`aide_installed`：布尔值；`scan_executed`：固定 `false` |
+| `restart-ssh` | `restart_needed_hint`：布尔值；`live_settings_verified`：固定 `false` |
+
+### 检查范围与限制
+
+| `check_scope` 代码 | 含义 |
+|--------------------|------|
+| `local-read-only` | 本机只读检查，不安装软件、修改配置、重启服务或执行扫描 |
+| `apt-cache-age-not-package-upgrades` | 仅按 APT 缓存是否小于 7 天判断，不查询待升级包；缓存缺失也可提示更新 |
+| `sudo-wheel-members-not-complete-sudo-policy` | 检查 sudo（缺失时 wheel）组中 UID ≥ 1000 的成员，不解析完整 sudo 策略 |
+| `ssh-global-only-no-connection-or-key-verification` | 使用 `sshd -T -f` 的全局配置，不验证连接上下文、实际远程登录或密钥 |
+| `ssh-include-match-multiple-ports-unverified` | Include、Match、多端口或无法取得有效 SSH 配置时，三个 SSH 配置项保持 `partial`，未验证值为 `null` |
+| `firewall-chains-not-complete-rules-or-atomic-snapshot` | 仅检查 filter 表的三条 `ufw-user-*` 链，使用 IPv6 时还检查 `ufw6-user-*` 链；不验证完整规则或并发重载时的原子一致快照 |
+| `tool-presence-not-security-scans` | Lynis、Logwatch、AIDE 仅检查安装情况，不运行扫描、不验证数据库或历史报告 |
+| `ssh-restart-timestamp-heuristic` | 按配置与进程时间戳推断是否需要重启；未发现待重启不证明运行配置已生效 |
+
+`root_login_restricted: true` 可能对应 `PermitRootLogin prohibit-password`，仍可允许密钥登录。
+配置文件缺失或 `sshd` 不存在、返回普通非零退出码时可报告 SSH 未验证；被信号终止属于采集失败。配置不可读取、不是普通文件、
+超过读取限制或不是 UTF-8 则属于采集失败。任何状态都不能替代从另一终端建立真实 SSH 连接的验证。
 
 ## TUI 界面
 
@@ -262,20 +343,21 @@ sudo u2secure
 
 ### Step 0：环境审计
 
-运行任何修改前，工具会**只读**扫描系统，输出"当前安全状态报告"。检测项包括：
+交互式加固在修改前采集系统状态，并写入操作日志；独立 `audit` 复用同一采集与状态判定，
+不创建日志。检测能力和限制见[只读审计报告](#只读审计报告)。检测项包括：
 
 | 检测项 | 方式 | 识别结果 |
 |--------|------|---------|
 | root 权限 | `id -u` | 非 root 禁止执行 |
 | 包管理器 | `which apt/yum/dnf` | 确定后续安装命令 |
-| SSH 端口 | 解析 `/etc/ssh/sshd_config` 中 `Port` | 非 22 标记"已自定义" |
-| 密码登录 | 检查 `PasswordAuthentication` + `ChallengeResponseAuthentication` | 均为 no 标记"已禁用" |
-| root 登录 | 检查 `PermitRootLogin` | no/prohibit-password 标记"已禁止" |
-| sudo 用户 | `getent group sudo`，过滤 UID≥1000 | 标记已有管理用户列表 |
-| fail2ban | `which fail2ban-server` | 标记状态及版本 |
-| UFW | `ufw status` | 标记启用状态及规则摘要 |
-| 自动更新 | 检查 `unattended-upgrades` 配置或 systemd timer | 标记启用状态 |
-| 系统更新 | 检查缓存文件时间戳（7 天内为最新） | 标记"需要更新"或"已最新" |
+| SSH 端口 | `sshd -T -f` 有效全局配置 | 已验证单端口非 22 时标记已自定义，否则可能未验证 |
+| 密码登录 | 有效 `PasswordAuthentication` 与交互式认证设置 | 全局配置已验证且均禁用时标记已配置 |
+| root 登录 | 有效 `PermitRootLogin` | no/prohibit-password/without-password 表示受限，可能仍允许密钥登录 |
+| sudo 用户 | `getent group sudo`，缺失时查询 wheel，过滤 UID≥1000 | 管理组成员，不代表完整 sudo 策略 |
+| fail2ban | `which fail2ban-server` | 仅是否安装 |
+| UFW | `iptables-save -M /bin/false`，使用 IPv6 时还调用 `ip6tables-save -M /bin/false` | 仅检查 filter 表的 UFW 用户 input/output/forward 链，不验证完整规则 |
+| 自动更新 | 检查 `unattended-upgrades` 服务启用状态或 APT 配置 | 配置启用提示 |
+| 系统更新 | 检查 APT 缓存时间戳（小于 7 天） | 缓存新旧提示，不证明软件包已更新 |
 | lynis（步骤 10） | `which lynis` | 已安装标记"✅"，未安装标记"❌" |
 | logwatch / aide（步骤 11） | `which logwatch` / `which aide` | 两者齐备 ✅，仅一项 ⚠️，都没有 ❌ |
 | sshd 配置待生效（步骤 12） | 比较 `/etc/ssh/sshd_config` 与 sshd 进程启动时间 | 配置更新则标"🔄 需要重启"，否则 ✅ 并跳过重启 |
@@ -344,7 +426,7 @@ passwd -l deploy                        # 锁定密码（强制密钥登录）
 
 ## 扫描结果与日志（持久化）
 
-所有长耗时/扫描类步骤的完整输出都会写入报告目录，界面只展示摘要与路径，
+交互式加固中所有长耗时/扫描类步骤的完整输出都会写入报告目录，界面只展示摘要与路径，
 不会因为终端滚动或退出而丢失：
 
 | 目录 | 说明 |
@@ -500,7 +582,7 @@ aide 每日脚本会显式带上步骤 11 探测到的 `--config`，并按 AIDE 
 
 ### 日志
 
-所有操作记录到 `/var/log/secure-init.log`（不可用时 fallback 到 `./secure-init.log`）。日志中公钥内容自动脱敏（仅显示指纹或截断内容）。
+交互式加固的操作记录到 `/var/log/secure-init.log`（不可用时 fallback 到 `./secure-init.log`）。日志中公钥内容自动脱敏（仅显示指纹或截断内容）。独立 `audit` 不创建该日志。
 
 ---
 
@@ -567,7 +649,7 @@ ufw status
 ## 贡献指南
 
 SSH 审计使用 `sshd -T -f` 读取有效全局配置，而不是扫描最后一条文本指令。
-含 `Include` / `Match`、多个监听端口或读取失败时，报告明确标为未验证，不宣称所有连接已安全。
+含 `Include` / `Match`、多个监听端口或无法取得有效配置时，报告明确标为未验证，不宣称所有连接已安全；配置 I/O、格式与大小限制错误须返回采集失败。
 修改只规范化主文件的全局配置，保留条件块；临时候选先通过 `sshd -t/-T`，目标值或唯一端口不符则拒绝落盘。
 配置写入不等于运行中的服务已生效。SSH 回归测试使用临时配置及假命令，不启动宿主 SSH 服务。
 CLI 与 TUI 在执行 SSH 配置批次（含单项端口修改）前明确询问是否允许末尾重启生效，默认否。

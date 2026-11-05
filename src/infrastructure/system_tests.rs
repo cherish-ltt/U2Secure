@@ -12,7 +12,7 @@ fn system_detection_uses_isolated_commands_and_account_fixtures() {
         let scripts = [
             (
                 "which",
-                "case \"$U2C_MODE:$1\" in active:*|wheel:yum|broken:dnf) exit 0;; *) exit 1;; esac",
+                "[ ! -e \"$U2C_DIR/which-failed\" ] || exit 2; case \"$U2C_MODE:$1\" in active:*|wheel:yum|broken:dnf) exit 0;; *) exit 1;; esac",
             ),
             (
                 "id",
@@ -20,15 +20,16 @@ fn system_detection_uses_isolated_commands_and_account_fixtures() {
             ),
             (
                 "getent",
-                "case \"$1:$2:$U2C_MODE\" in group:sudo:active) printf 'sudo:x:27:alice, daemon, invalid, bob';; group:wheel:wheel) printf 'wheel:x:27:alice';; group:sudo:broken) printf malformed;; passwd:alice:*) printf 'alice:x:1000:1000::/fixture/home:/bin/sh';; passwd:empty:*) printf 'empty:x:1000:1000:::/bin/sh';; *) exit 1;; esac",
+                "case \"$1:$2:$U2C_MODE\" in group:sudo:active) printf 'sudo:x:27:alice, daemon, bob';; group:wheel:wheel) printf 'wheel:x:27:alice';; group:sudo:broken) printf malformed;; passwd:alice:*) printf 'alice:x:1000:1000::/fixture/home:/bin/sh';; passwd:empty:*) printf 'empty:x:1000:1000:::/bin/sh';; *) exit 2;; esac",
             ),
             (
                 "systemctl",
-                "[ \"$U2C_MODE\" = active ] && [ \"$1\" = is-enabled ]",
+                "[ \"$1\" = is-enabled ] || exit 4; [ \"$U2C_MODE\" = active ] && printf enabled || { printf disabled; exit 1; }",
             ),
+            ("ufw", "exit 99"),
             (
-                "ufw",
-                "[ \"$LC_ALL\" = C ] || exit 9; [ \"$U2C_MODE\" = active ] && printf 'Status: active\\n' || printf 'Status: inactive\\n'",
+                "iptables-save",
+                "[ \"$LC_ALL:$*\" = 'C:-M /bin/false' ] || exit 9; printf '*filter\\n:ufw-user-input - [0:0]\\n:ufw-user-output - [0:0]\\n:ufw-user-forward - [0:0]\\nCOMMIT\\n'",
             ),
             (
                 "dpkg-query",
@@ -83,6 +84,12 @@ fn isolated_system_detection() {
         return;
     };
     let dir = std::path::PathBuf::from(std::env::var_os("U2C_DIR").unwrap());
+    if mode == "missing" {
+        assert!(!detect_ufw_enabled());
+        std::fs::write(dir.join("which-failed"), "fixture").unwrap();
+        assert!(!detect_ufw_enabled());
+        std::fs::remove_file(dir.join("which-failed")).unwrap();
+    }
     assert_eq!(detect_is_root(), mode == "active");
     assert_eq!(
         detect_package_manager(),
@@ -124,7 +131,20 @@ fn isolated_system_detection() {
     );
     let config = dir.join("sshd_config");
     std::fs::write(&config, "Port 2222\n").unwrap();
-    let report = run_full_audit_with(ssh::SshConfig::new(&config, "sshd"));
+    std::fs::create_dir_all(dir.join("etc/default")).unwrap();
+    std::fs::create_dir_all(dir.join("etc/ufw")).unwrap();
+    std::fs::write(
+        dir.join("etc/default/ufw"),
+        "DEFAULT_INPUT_POLICY=DROP\nDEFAULT_OUTPUT_POLICY=ACCEPT\nDEFAULT_FORWARD_POLICY=DROP\nIPV6=no\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("etc/ufw/ufw.conf"), "ENABLED=no\n").unwrap();
+    let report = run_full_audit_with(ssh::SshConfig::new(&config, "sshd"), &dir, false);
+    if mode == "broken" {
+        assert!(matches!(report, Err(DomainError::AuditFailed(_))));
+        return;
+    }
+    let report = report.unwrap();
     assert_eq!(report.items.len(), 10);
     assert_eq!(report.is_root, mode == "active");
     assert_eq!(report.ufw_enabled, mode == "active");
@@ -140,7 +160,11 @@ fn isolated_system_detection() {
         assert!(report.auto_updates_enabled);
     }
     std::fs::write(&config, "Include extras\n").unwrap();
-    assert!(!run_full_audit_with(ssh::SshConfig::new(&config, "sshd")).ssh_config_verified);
+    assert!(
+        !run_full_audit_with(ssh::SshConfig::new(&config, "sshd"), &dir, false)
+            .unwrap()
+            .ssh_config_verified
+    );
 
     let keys = dir.join("authorized_keys");
     assert!(key_fingerprint_at(&keys).is_none());

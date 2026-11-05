@@ -271,7 +271,7 @@ fn executing_and_summary_keys_respect_press_and_scroll_boundaries() {
         let mut report = report();
         report.ssh_port = 2222;
         report.ufw_enabled = true;
-        report
+        Ok(report)
     });
     assert!(matches!(app.mode, AppMode::Select));
     assert_eq!(app.summary_scroll, 0);
@@ -283,6 +283,19 @@ fn executing_and_summary_keys_respect_press_and_scroll_boundaries() {
             .unwrap()
             .checked
     );
+    app.mode = AppMode::Summary;
+    app.summary_scroll = 7;
+    let error = DomainError::AuditFailed("fixture-audit-failure".into());
+    let message = error.to_string();
+    handle_summary_mode(&mut app, key(KeyCode::Enter), || Err(error));
+    assert!(matches!(app.mode, AppMode::Summary));
+    assert_eq!(app.summary_scroll, 7);
+    assert_eq!(app.report.ssh_port, 2222);
+    assert_eq!(app.status, message);
+    assert!(text(&draw(&app, 160, 40)).contains("fixture-audit-failure"));
+    assert!(apply_audit_result(&mut app, Ok(report())));
+    assert_eq!(app.report.ssh_port, 22);
+    assert!(app.status.is_empty());
     assert!(is_ctrl_c(&KeyEvent::new(
         KeyCode::Char('c'),
         KeyModifiers::CONTROL

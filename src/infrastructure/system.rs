@@ -181,8 +181,8 @@ pub fn run_streaming_watchdog(
     }
 }
 
-#[cfg(target_os = "linux")]
-fn command_status(
+#[cfg(unix)]
+pub(super) fn command_status(
     child: &mut std::process::Child,
 ) -> std::io::Result<Option<std::process::ExitStatus>> {
     use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
@@ -198,17 +198,33 @@ fn command_status(
     child.wait().map(Some)
 }
 
-#[cfg(not(target_os = "linux"))]
-fn command_status(
+#[cfg(not(unix))]
+pub(super) fn command_status(
     child: &mut std::process::Child,
 ) -> std::io::Result<Option<std::process::ExitStatus>> {
     child.try_wait()
 }
 
-fn stop_command(child: &mut std::process::Child) -> Result<(), DomainError> {
+pub(super) fn stop_command(child: &mut std::process::Child) -> Result<(), DomainError> {
     #[cfg(unix)]
     let stopped = {
-        use rustix::process::{Pid, Signal, kill_process_group};
+        use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
+        loop {
+            match waitid(
+                WaitId::Pid(Pid::from_child(child)),
+                WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+            ) {
+                Ok(_) => break,
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(rustix::io::Errno::CHILD) => {
+                    return child
+                        .wait()
+                        .map(|_| ())
+                        .map_err(|error| DomainError::SystemCommandFailed(error.to_string()));
+                },
+                Err(error) => return Err(DomainError::SystemCommandFailed(error.to_string())),
+            }
+        }
         match kill_process_group(Pid::from_child(child), Signal::KILL) {
             Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
             Err(error) => Err(std::io::Error::from(error)),
@@ -221,6 +237,17 @@ fn stop_command(child: &mut std::process::Child) -> Result<(), DomainError> {
         let _ = child.kill();
     }
     let waited = child.wait();
+    #[cfg(target_os = "macos")]
+    if stopped
+        .as_ref()
+        .is_err_and(|error| error.raw_os_error() == Some(rustix::io::Errno::PERM.raw_os_error()))
+        && waited.is_ok()
+        && rustix::process::test_kill_process_group(rustix::process::Pid::from_child(child))
+            == Err(rustix::io::Errno::SRCH)
+    {
+        // Darwin reports EPERM for zombie-only groups; verify disappearance after reaping.
+        return Ok(());
+    }
     stopped.and(waited.map(|_| ())).map_err(|error| {
         DomainError::SystemCommandFailed(
             crate::i18n::tr("err_stop_command").replace("{err}", &error.to_string()),
@@ -244,32 +271,17 @@ pub fn run_streaming(
 
 /// 检测是否以 root 运行
 pub fn detect_is_root() -> bool {
-    // 使用 id -u 更可靠
-    run_cmd("id", &["-u"])
-        .map(|uid| uid.trim() == "0")
-        .unwrap_or(false)
+    super::audit::is_root().unwrap_or(false)
 }
 
 /// 检测包管理器
 pub fn detect_package_manager() -> PackageManager {
-    if which("apt") {
-        PackageManager::Apt
-    } else if which("yum") {
-        PackageManager::Yum
-    } else if which("dnf") {
-        PackageManager::Dnf
-    } else {
-        PackageManager::Unknown
-    }
+    super::audit::package_manager().unwrap_or(PackageManager::Unknown)
 }
 
 /// 检查命令是否存在
 pub fn which(cmd: &str) -> bool {
-    Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    super::audit::which(cmd).unwrap_or(false)
 }
 
 /// 获取 SSH 全局端口；审计通过 ssh_config_verified 区分未知与已验证值。
@@ -283,78 +295,7 @@ pub fn detect_ssh_port() -> u16 {
 
 /// 获取非 root 的 sudo 用户列表
 pub fn detect_sudo_users() -> Vec<String> {
-    // 尝试从 sudo group 获取
-    let output = Command::new("getent")
-        .args(["group", "sudo"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                let s = String::from_utf8_lossy(&o.stdout).to_string();
-                Some(s)
-            } else {
-                None
-            }
-        })
-        .or_else(|| {
-            // fallback: 读 wheel group
-            Command::new("getent")
-                .args(["group", "wheel"])
-                .output()
-                .ok()
-                .and_then(|o| {
-                    if o.status.success() {
-                        Some(String::from_utf8_lossy(&o.stdout).to_string())
-                    } else {
-                        None
-                    }
-                })
-        });
-
-    match output {
-        Some(line) => {
-            // format: "sudo:x:27:user1,user2"
-            if let Some(colon_pos) = line.rfind(':') {
-                let after = &line[colon_pos + 1..].trim();
-                if after.is_empty() {
-                    return vec![];
-                }
-                let users: Vec<String> = after
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-
-                // 过滤掉 UID < 1000 的系统用户
-                users
-                    .into_iter()
-                    .filter(|u| {
-                        let uid = get_user_uid(u);
-                        uid >= 1000
-                    })
-                    .collect()
-            } else {
-                vec![]
-            }
-        },
-        None => vec![],
-    }
-}
-
-fn get_user_uid(username: &str) -> u32 {
-    Command::new("id")
-        .args(["-u", username])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                let s = String::from_utf8_lossy(&o.stdout);
-                s.trim().parse().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0)
+    super::audit::sudo_users().unwrap_or_default()
 }
 
 /// 检测 fail2ban 是否已安装
@@ -364,41 +305,12 @@ pub fn detect_fail2ban_installed() -> bool {
 
 /// 检测 UFW 是否已启用
 pub fn detect_ufw_enabled() -> bool {
-    Command::new("ufw")
-        .arg("status")
-        .env("LC_ALL", "C")
-        .output()
-        .is_ok_and(|output| {
-            output.status.success()
-                && String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .any(|line| line.trim() == "Status: active")
-        })
+    super::audit::ufw_enabled(Path::new("/")).unwrap_or(false)
 }
 
 /// 检测自动安全更新是否已启用
 pub fn detect_auto_updates_enabled() -> bool {
-    // Debian/Ubuntu: 检查 unattended-upgrades 服务
-    let systemd = Command::new("systemctl")
-        .args(["is-enabled", "unattended-upgrades"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if systemd {
-        return true;
-    }
-
-    // 检查配置文件
-    let path = Path::new("/etc/apt/apt.conf.d/20auto-upgrades");
-    if path.exists()
-        && let Ok(content) = std::fs::read_to_string(path)
-    {
-        return content.contains("APT::Periodic::Update-Package-Lists \"1\"")
-            || content.contains("APT::Periodic::Unattended-Upgrade \"1\"");
-    }
-
-    false
+    super::audit::auto_updates_enabled(Path::new("/")).unwrap_or(false)
 }
 
 /// 检测 lynis 是否已安装（步骤 10）
@@ -457,76 +369,43 @@ fn installed_from_output(output: &str) -> bool {
     !text.contains("not installed") && text.contains('-')
 }
 
-/// 运行中的 sshd 主进程 PID
-fn sshd_main_pid() -> Option<u32> {
-    // Debian/Ubuntu: /run/sshd.pid
-    for path in ["/run/sshd.pid", "/var/run/sshd.pid"] {
-        if let Ok(content) = std::fs::read_to_string(path)
-            && let Ok(pid) = content.trim().parse::<u32>()
-        {
-            return Some(pid);
-        }
-    }
-    // systemd: 取 MainPID
-    for unit in ["sshd", "ssh"] {
-        if let Ok(value) = run_cmd("systemctl", &["show", "-p", "MainPID", "--value", unit])
-            && let Ok(pid) = value.trim().parse::<u32>()
-            && pid > 0
-        {
-            return Some(pid);
-        }
-    }
-    None
-}
-
-/// 判断 sshd_config 是否比运行中的服务更新（即步骤 12 是否真的需要重启）
-///
-/// 依赖 procfs 中 `/proc/<pid>` 的时间戳等于进程启动时间这一特性。
-/// 无法判定时保守返回 false（不做无意义的重启）。
+/// 无法判定时不请求重启；报告中明确标注这只是时间戳提示。
 pub fn detect_ssh_restart_needed() -> bool {
-    let Ok(config_mtime) = std::fs::metadata("/etc/ssh/sshd_config").and_then(|m| m.modified())
-    else {
-        return false;
-    };
-    let Some(pid) = sshd_main_pid() else {
-        return false;
-    };
-    match std::fs::metadata(format!("/proc/{pid}")).and_then(|m| m.modified()) {
-        Ok(started) => config_mtime > started,
-        // 无法读取进程启动时间时，保守认为需要重启（配置已改但无法确认是否生效）
-        Err(_) => true,
-    }
+    super::audit::ssh_restart_needed(Path::new("/")).unwrap_or(false)
 }
 
 /// 系统包列表是否最新（缓存小于 7 天即认为最新）
 pub fn detect_system_up_to_date() -> bool {
-    // 对于 apt，检查缓存文件时间戳
-    let cache_paths = ["/var/lib/apt/lists", "/var/cache/apt/pkgcache.bin"];
-
-    for path_str in &cache_paths {
-        let path = Path::new(path_str);
-        if let Ok(metadata) = path.metadata()
-            && let Ok(modified) = metadata.modified()
-            && let Ok(elapsed) = modified.elapsed()
-        {
-            // 7 天 = 604800 秒
-            return elapsed.as_secs() < 604800;
-        }
-    }
-
-    // 如果什么也查不到，保守返回 false
-    false
+    super::audit::system_up_to_date(Path::new("/"))
 }
 
 /// 执行完整的系统审计，返回 AuditReport
-pub fn run_full_audit() -> AuditReport {
-    run_full_audit_with(ssh::SshConfig::default())
+pub fn run_full_audit() -> Result<AuditReport, DomainError> {
+    rollback::INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
+    run_full_audit_with(ssh::SshConfig::default(), Path::new("/"), false)
 }
 
-fn run_full_audit_with(config: ssh::SshConfig) -> AuditReport {
-    let is_root = detect_is_root();
-    let package_manager = detect_package_manager();
+pub fn audit_readonly() -> Result<AuditReport, DomainError> {
+    rollback::init_signal_handler().map_err(|error| DomainError::AuditFailed(error.to_string()))?;
+    run_full_audit_with(ssh::SshConfig::default(), Path::new("/"), true)
+}
+
+fn run_full_audit_with(
+    config: ssh::SshConfig,
+    root: &Path,
+    require_root: bool,
+) -> Result<AuditReport, DomainError> {
+    use super::audit;
+    let is_root = audit::is_root()?;
+    if require_root && !is_root {
+        return Err(DomainError::PermissionDenied);
+    }
+    let package_manager = audit::package_manager()?;
     let ssh_config = config.effective();
+    let ssh_config = match ssh_config {
+        Err(error @ DomainError::AuditFailed(_)) => return Err(error),
+        result => result,
+    };
     let ssh_config_verified = ssh_config.as_ref().is_ok_and(|config| config.verified);
     let ssh_port = ssh_config
         .as_ref()
@@ -551,15 +430,15 @@ fn run_full_audit_with(config: ssh::SshConfig) -> AuditReport {
         ),
         Err(error) => error.to_string(),
     };
-    let sudo_users = detect_sudo_users();
-    let fail2ban_installed = detect_fail2ban_installed();
-    let ufw_enabled = detect_ufw_enabled();
-    let auto_updates_enabled = detect_auto_updates_enabled();
-    let system_up_to_date = detect_system_up_to_date();
-    let lynis_installed = detect_lynis_installed();
-    let logwatch_installed = detect_logwatch_installed();
-    let aide_installed = detect_aide_installed();
-    let ssh_restart_needed = detect_ssh_restart_needed();
+    let sudo_users = audit::sudo_users()?;
+    let fail2ban_installed = audit::which("fail2ban-server")?;
+    let ufw_enabled = audit::ufw_enabled(root)?;
+    let auto_updates_enabled = audit::auto_updates_enabled(root)?;
+    let system_up_to_date = audit::system_up_to_date(root);
+    let lynis_installed = audit::which("lynis")?;
+    let logwatch_installed = audit::which("logwatch")?;
+    let aide_installed = audit::which("aide")? || audit::which("aide.wrapper")?;
+    let ssh_restart_needed = audit::ssh_restart_needed(root)?;
 
     let mut report = AuditReport {
         items: vec![],
@@ -700,7 +579,7 @@ fn run_full_audit_with(config: ssh::SshConfig) -> AuditReport {
     });
 
     report.items = items;
-    report
+    Ok(report)
 }
 
 /// 创建系统用户，加入管理员组，返回创建是否成功

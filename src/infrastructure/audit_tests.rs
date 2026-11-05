@@ -1,0 +1,449 @@
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::process::Stdio;
+use std::time::{Instant, SystemTime};
+
+use super::*;
+
+fn fixture(bin: &Path, name: &str, body: &str) {
+    let path = bin.join(name);
+    fs::write(
+        &path,
+        format!("#!/bin/sh\n[ \"$LC_ALL\" = C ] || exit 90\n{body}\n"),
+    )
+    .unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+fn assert_failed<T: std::fmt::Debug>(result: Result<T, DomainError>) {
+    assert!(
+        matches!(result, Err(DomainError::AuditFailed(_))),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn audit_probes_use_private_commands_and_temporary_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "infrastructure::audit::tests::isolated_audit_probes",
+            "--nocapture",
+        ])
+        .current_dir(dir.path())
+        .env("PATH", &bin)
+        .env("U2SECURE_AUDIT_FIXTURE", dir.path())
+        .stdin(Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "isolated audit probes: {status}");
+            break;
+        }
+        if started.elapsed() >= Duration::from_secs(40) {
+            let killed = child.kill();
+            let waited = child.wait();
+            panic!("isolated audit probes timed out; kill={killed:?}, wait={waited:?}");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+fn isolated_audit_probes() {
+    let Some(root) = std::env::var_os("U2SECURE_AUDIT_FIXTURE") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(root);
+    let bin = root.join("bin");
+    check_identity(&bin);
+    check_tool_lookup(&bin);
+    check_sudo_users(&bin);
+    check_firewall(&bin, &root);
+    check_auto_updates(&bin, &root);
+    check_ssh_restart(&bin, &root);
+}
+
+fn check_identity(bin: &Path) {
+    assert_failed(is_root());
+    for (body, expected) in [
+        ("printf '0\\n'", Some(true)),
+        ("printf 1000", Some(false)),
+        ("printf invalid", None),
+        ("printf '\\377'", None),
+        ("exit 1", None),
+    ] {
+        fixture(bin, "id", body);
+        match expected {
+            Some(expected) => assert_eq!(is_root().unwrap(), expected),
+            None => assert_failed(is_root()),
+        }
+    }
+    fs::set_permissions(bin.join("id"), fs::Permissions::from_mode(0o600)).unwrap();
+    assert_failed(is_root());
+}
+
+fn check_tool_lookup(bin: &Path) {
+    assert_failed(which("apt"));
+    for (body, expected) in [
+        ("exit 0", Some(true)),
+        ("exit 1", Some(false)),
+        ("exit 2", None),
+    ] {
+        fixture(bin, "which", body);
+        match expected {
+            Some(expected) => assert_eq!(which("fixture").unwrap(), expected),
+            None => {
+                assert_failed(which("fixture"));
+                assert_failed(package_manager());
+            },
+        }
+    }
+    for (name, expected) in [
+        ("apt", PackageManager::Apt),
+        ("yum", PackageManager::Yum),
+        ("dnf", PackageManager::Dnf),
+        ("absent", PackageManager::Unknown),
+    ] {
+        fixture(bin, "which", &format!("[ \"$1\" = {name} ]"));
+        assert_eq!(package_manager().unwrap(), expected);
+    }
+}
+
+fn check_sudo_users(bin: &Path) {
+    fixture(
+        bin,
+        "id",
+        "case \"$*\" in '-u alice') printf 1000;; '-u daemon') printf 1;; '-u bob') printf 1001;; *) exit 1;; esac",
+    );
+    assert_failed(sudo_users());
+    for (body, expected) in [
+        (
+            "printf 'sudo:x:27:alice, daemon, bob'",
+            Some(vec!["alice", "bob"]),
+        ),
+        (
+            "[ \"$2\" = sudo ] && exit 2; printf 'wheel:x:10:alice'",
+            Some(vec!["alice"]),
+        ),
+        (
+            "[ \"$2\" = sudo ] && { printf 'sudo:x:27:'; exit 0; }; exit 9",
+            Some(vec![]),
+        ),
+        ("exit 2", Some(vec![])),
+        ("exit 1", None),
+        ("printf malformed", None),
+        ("printf 'sudo:x:27:missing'", None),
+    ] {
+        fixture(bin, "getent", body);
+        match expected {
+            Some(expected) => assert_eq!(sudo_users().unwrap(), expected),
+            None => assert_failed(sudo_users()),
+        }
+    }
+    fixture(bin, "getent", "printf 'sudo:x:27:alice'");
+    for body in ["printf invalid", "printf -- -1", "exit 7"] {
+        fixture(bin, "id", body);
+        assert_failed(sudo_users());
+    }
+    fs::remove_file(bin.join("id")).unwrap();
+    assert_failed(sudo_users());
+}
+
+const UFW_DEFAULTS: &str = "DEFAULT_INPUT_POLICY=\"DROP\"\nDEFAULT_OUTPUT_POLICY=\"ACCEPT\"\nDEFAULT_FORWARD_POLICY=\"DROP\"\n";
+const UFW_RULES: &str = "# Generated by iptables-save\n*filter\n:INPUT ACCEPT [0:0]\n:ufw-user-input - [0:0]\n:ufw-user-output - [0:0]\n:ufw-user-forward - [0:0]\n-A INPUT -j ufw-user-input\nCOMMIT\n# Completed\n";
+
+fn firewall_dump(bin: &Path, program: &str, content: &str, status: u8) {
+    fixture(
+        bin,
+        program,
+        &format!(
+            "[ \"$*\" = '-M /bin/false' ] || exit 91\nprintf '%s' '{}'\nexit {status}",
+            content.replace('\'', "'\\''")
+        ),
+    );
+}
+
+fn check_firewall(bin: &Path, root: &Path) {
+    assert!(!ufw_enabled(root).unwrap());
+    fixture(bin, "which", "[ \"$1\" = ufw ]");
+    fixture(bin, "ufw", ": > ufw-was-executed; exit 99");
+    assert_failed(ufw_enabled(root));
+    let defaults = root.join("etc/default/ufw");
+    let config = root.join("etc/ufw/ufw.conf");
+    fs::create_dir_all(defaults.parent().unwrap()).unwrap();
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&defaults, format!("{UFW_DEFAULTS}IPV6=no\n")).unwrap();
+    assert_failed(ufw_enabled(root));
+    fs::write(&config, "ENABLED=no\n").unwrap();
+    assert_failed(ufw_enabled(root));
+    for (rules, status, expected) in [
+        (UFW_RULES.to_string(), 0, Some(true)),
+        (UFW_RULES.to_string(), 1, None),
+        (String::new(), 0, Some(false)),
+        ("# no loaded tables\n".to_string(), 0, Some(false)),
+        (
+            "*filter\n:INPUT ACCEPT [0:0]\nCOMMIT\n".to_string(),
+            0,
+            Some(false),
+        ),
+        (
+            UFW_RULES.replace(":ufw-user-forward - [0:0]\n", ""),
+            0,
+            Some(false),
+        ),
+        (UFW_RULES.replace("*filter", "*nat"), 0, Some(false)),
+        (
+            "*filter\n:INPUT ACCEPT [0:0]\n-A INPUT -m comment --comment \"fixture\\\"line\n:ufw-user-input - [0:0]\n:ufw-user-output - [0:0]\n:ufw-user-forward - [0:0]\n\" -j ACCEPT\nCOMMIT\n".to_string(),
+            0,
+            Some(false),
+        ),
+        (
+            UFW_RULES.replace("-A INPUT -j ufw-user-input", "-A INPUT -m comment --comment \"first\nsecond\" -j ufw-user-input"),
+            0,
+            Some(true),
+        ),
+        (UFW_RULES.replace("COMMIT\n", ""), 0, None),
+        (UFW_RULES.replace("-A INPUT -j ufw-user-input", "-A INPUT -m comment --comment \"unterminated"), 0, None),
+        (UFW_RULES.replace("[0:0]", "[invalid]"), 0, None),
+        (UFW_RULES.replace("*filter", "*filter\n*nat"), 0, None),
+        (format!("{UFW_RULES}{UFW_RULES}"), 0, None),
+        ("unexpected output".to_string(), 0, None),
+        ("COMMIT\n".to_string(), 0, None),
+        (
+            "# Table `filter' is incompatible, use 'nft' tool.\n".to_string(),
+            0,
+            None,
+        ),
+    ] {
+        firewall_dump(bin, "iptables-save", &rules, status);
+        match expected {
+            Some(expected) => assert_eq!(ufw_enabled(root).unwrap(), expected),
+            None => assert_failed(ufw_enabled(root)),
+        }
+    }
+    for body in ["printf '\\377'", "printf 'warning' >&2", "kill -TERM $$"] {
+        fixture(bin, "iptables-save", body);
+        assert_failed(ufw_enabled(root));
+    }
+    firewall_dump(bin, "iptables-save", UFW_RULES, 0);
+    check_firewall_config(bin, root, &defaults, &config);
+    assert!(!root.join("ufw-was-executed").exists());
+}
+
+fn check_firewall_config(bin: &Path, root: &Path, defaults: &Path, config: &Path) {
+    for content in ["", "DEFAULT_INPUT_POLICY=INVALID\n", "\u{fffd}"] {
+        fs::write(defaults, content).unwrap();
+        assert_failed(ufw_enabled(root));
+    }
+    fs::write(defaults, [0xff]).unwrap();
+    assert_failed(ufw_enabled(root));
+    fs::write(defaults, format!("{UFW_DEFAULTS}IPV6=yes\n")).unwrap();
+    assert!(ufw_enabled(root).unwrap());
+    fs::create_dir_all(root.join("proc/sys/net/ipv6")).unwrap();
+    assert_failed(ufw_enabled(root));
+    firewall_dump(
+        bin,
+        "ip6tables-save",
+        &UFW_RULES.replace("ufw-", "ufw6-"),
+        0,
+    );
+    assert!(ufw_enabled(root).unwrap());
+    for rules in ["", UFW_RULES, "*filter\n:ufw6-user-input - [0:0]\nCOMMIT\n"] {
+        firewall_dump(bin, "ip6tables-save", rules, 0);
+        assert_failed(ufw_enabled(root));
+    }
+    firewall_dump(
+        bin,
+        "ip6tables-save",
+        &UFW_RULES.replace("ufw-", "ufw6-"),
+        1,
+    );
+    assert_failed(ufw_enabled(root));
+    fs::remove_file(bin.join("ip6tables-save")).unwrap();
+    for override_config in [
+        "IPV6=no\n",
+        "IPV6=\"NO\"\n",
+        "ipv6=no\n",
+        "IPV6=yes # a comment remains part of the value\n",
+    ] {
+        fs::write(config, override_config).unwrap();
+        assert!(ufw_enabled(root).unwrap());
+    }
+    for ignored_config in [" IPV6=no\n", "IPV6 =no\n", "IPV6='no'\n", "#IPV6=no\n"] {
+        fs::write(config, ignored_config).unwrap();
+        assert_failed(ufw_enabled(root));
+    }
+    fs::write(config, "DEFAULT_INPUT_POLICY=bad\n").unwrap();
+    assert_failed(ufw_enabled(root));
+    fs::remove_file(config).unwrap();
+    assert_failed(ufw_enabled(root));
+    fixture(bin, "which", "exit 1");
+    assert!(!ufw_enabled(root).unwrap());
+    fixture(bin, "which", "exit 2");
+    assert_failed(ufw_enabled(root));
+}
+
+fn check_auto_updates(bin: &Path, root: &Path) {
+    assert!(!auto_updates_enabled(root).unwrap());
+    let path = root.join("etc/apt/apt.conf.d/20auto-upgrades");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for (content, expected) in [
+        ("APT::Periodic::Update-Package-Lists \"1\";", true),
+        ("APT::Periodic::Unattended-Upgrade \"1\";", true),
+        ("APT::Periodic::Unattended-Upgrade \"0\";", false),
+    ] {
+        fs::write(&path, content).unwrap();
+        assert_eq!(auto_updates_enabled(root).unwrap(), expected);
+    }
+    for (body, expected) in [
+        ("printf enabled", Some(true)),
+        ("printf enabled-runtime", Some(true)),
+        ("printf static", Some(true)),
+        ("printf alias", Some(true)),
+        ("printf indirect", Some(true)),
+        ("printf generated", Some(true)),
+        ("printf transient", Some(true)),
+        ("printf disabled; exit 1", Some(false)),
+        ("printf masked; exit 1", Some(false)),
+        ("printf masked-runtime; exit 1", Some(false)),
+        ("printf linked; exit 1", Some(false)),
+        ("printf linked-runtime; exit 1", Some(false)),
+        ("printf transient; exit 1", Some(false)),
+        ("printf not-found; exit 4", Some(false)),
+        ("exit 0", None),
+        ("exit 1", None),
+        ("exit 3", None),
+        ("exit 4", None),
+        ("exit 5", None),
+        ("printf unknown", None),
+        ("printf disabled", None),
+        ("printf enabled; exit 1", None),
+        ("printf not-found; exit 1", None),
+        ("printf bad; exit 1", None),
+        ("printf '\\377'", None),
+        ("kill -TERM $$", None),
+    ] {
+        fixture(bin, "systemctl", body);
+        match expected {
+            Some(expected) => assert_eq!(auto_updates_enabled(root).unwrap(), expected),
+            None => assert_failed(auto_updates_enabled(root)),
+        }
+    }
+    fixture(bin, "systemctl", "printf disabled; exit 1");
+    fs::write(&path, "APT::Periodic::Unattended-Upgrade \"1\";").unwrap();
+    assert!(auto_updates_enabled(root).unwrap());
+    fixture(
+        bin,
+        "systemctl",
+        "printf 'Failed to connect to bus' >&2; exit 1",
+    );
+    assert_failed(auto_updates_enabled(root));
+    fixture(bin, "systemctl", "printf disabled; exit 1");
+    fs::write(&path, [0xff]).unwrap();
+    assert_failed(auto_updates_enabled(root));
+    fs::remove_file(bin.join("systemctl")).unwrap();
+}
+
+fn set_modified(path: &Path, seconds: u64) {
+    fs::File::open(path)
+        .unwrap()
+        .set_times(
+            fs::FileTimes::new()
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)),
+        )
+        .unwrap();
+}
+
+fn check_ssh_restart(bin: &Path, root: &Path) {
+    assert!(!ssh_restart_needed(root).unwrap());
+    let config = root.join("etc/ssh/sshd_config");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, "Port 22\n").unwrap();
+    set_modified(&config, 200);
+    assert!(!ssh_restart_needed(root).unwrap());
+    let process = root.join("proc/42");
+    fs::create_dir_all(&process).unwrap();
+    let pid = root.join("run/sshd.pid");
+    fs::create_dir_all(pid.parent().unwrap()).unwrap();
+    fs::write(&pid, "42\n").unwrap();
+    for (time, expected) in [(100, true), (200, false), (300, false)] {
+        set_modified(&process, time);
+        assert_eq!(ssh_restart_needed(root).unwrap(), expected);
+    }
+    fs::remove_dir(&process).unwrap();
+    assert!(ssh_restart_needed(root).unwrap());
+    fs::write(&pid, "invalid").unwrap();
+    let fallback = root.join("var/run/sshd.pid");
+    fs::create_dir_all(fallback.parent().unwrap()).unwrap();
+    fs::write(&fallback, "42").unwrap();
+    assert!(ssh_restart_needed(root).unwrap());
+    fs::remove_file(&fallback).unwrap();
+    for (body, expected) in [
+        ("[ \"$5\" = sshd ] && exit 4; printf 42", true),
+        ("printf 42", true),
+        ("printf 0", false),
+        ("printf invalid", false),
+        ("exit 4", false),
+    ] {
+        fixture(bin, "systemctl", body);
+        assert_eq!(ssh_restart_needed(root).unwrap(), expected);
+    }
+    fs::write(&pid, [0xff]).unwrap();
+    assert_failed(ssh_restart_needed(root));
+}
+
+#[test]
+fn config_reads_are_bounded_and_reject_invalid_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config");
+    assert!(read_config(&path).unwrap().is_none());
+    assert_failed(read_config(dir.path()));
+    let looped = dir.path().join("loop");
+    std::os::unix::fs::symlink(&looped, &looped).unwrap();
+    assert_failed(read_config(&looped));
+    fs::write(&path, "fixture\n").unwrap();
+    assert_eq!(read_config(&path).unwrap().as_deref(), Some("fixture\n"));
+    fs::write(&path, [0xff]).unwrap();
+    assert_failed(read_config(&path));
+    fs::write(&path, vec![b'x'; CONFIG_LIMIT as usize]).unwrap();
+    assert_eq!(
+        read_config(&path).unwrap().unwrap().len(),
+        CONFIG_LIMIT as usize
+    );
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(CONFIG_LIMIT + 1)
+        .unwrap();
+    assert_failed(read_config(&path));
+}
+
+#[test]
+fn apt_cache_freshness_uses_only_injected_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    assert!(!system_up_to_date(root));
+    let cache = root.join("var/cache/apt/pkgcache.bin");
+    fs::create_dir_all(cache.parent().unwrap()).unwrap();
+    fs::write(&cache, "fixture").unwrap();
+    assert!(system_up_to_date(root));
+    fs::File::open(&cache)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(3600)))
+        .unwrap();
+    assert!(!system_up_to_date(root));
+    set_modified(&cache, 100);
+    assert!(!system_up_to_date(root));
+    let lists = root.join("var/lib/apt/lists");
+    fs::create_dir_all(&lists).unwrap();
+    assert!(system_up_to_date(root));
+    set_modified(&lists, 100);
+    assert!(!system_up_to_date(root));
+}

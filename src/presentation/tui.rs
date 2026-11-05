@@ -37,6 +37,7 @@ use ratatui::{
 use crate::application::job::{JobEvent, JobHandle, StepRunner};
 use crate::application::orchestrator::HardeningOrchestrator;
 use crate::domain::audit::{AuditReport, AuditStatus};
+use crate::domain::errors::DomainError;
 use crate::domain::mirror::PackageMirror;
 use crate::domain::steps::{ExecuteParams, SshKeyAction, StepKind, StepOutcome, StepResult};
 use crate::infrastructure::rollback;
@@ -204,6 +205,10 @@ struct TuiApp {
 
 /// 运行 TUI 界面
 pub fn run_tui(orchestrator: &HardeningOrchestrator) -> anyhow::Result<()> {
+    // 执行初始审计
+    let report = orchestrator.audit()?;
+    let steps = init_steps(&report);
+
     // 初始化终端
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -211,10 +216,6 @@ pub fn run_tui(orchestrator: &HardeningOrchestrator) -> anyhow::Result<()> {
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
-    // 执行初始审计
-    let report = orchestrator.audit();
-    let steps = init_steps(&report);
 
     let mut app = TuiApp {
         report,
@@ -467,11 +468,10 @@ fn handle_select_mode(
         SelectAction::Audit => {
             app.status = crate::i18n::tr("tui_reauditing").into();
             terminal.draw(|f| render(f, app))?;
-            app.report = orchestrator.audit();
-            app.steps = init_steps(&app.report);
-            app.logs.clear();
-            app.results.clear();
-            app.status.clear();
+            if apply_audit_result(app, orchestrator.audit()) {
+                app.logs.clear();
+                app.results.clear();
+            }
         },
     }
     Ok(false)
@@ -585,7 +585,11 @@ fn handle_executing_mode(app: &mut TuiApp, event: Event) {
     }
 }
 
-fn handle_summary_mode(app: &mut TuiApp, event: Event, audit: impl FnOnce() -> AuditReport) {
+fn handle_summary_mode(
+    app: &mut TuiApp,
+    event: Event,
+    audit: impl FnOnce() -> Result<AuditReport, DomainError>,
+) {
     let Event::Key(key) = event else {
         return;
     };
@@ -612,10 +616,25 @@ fn handle_summary_mode(app: &mut TuiApp, event: Event, audit: impl FnOnce() -> A
         _ => {},
     }
     // 返回步骤列表并重新审计
-    app.report = audit();
-    app.steps = init_steps(&app.report);
-    app.summary_scroll = 0;
-    app.mode = AppMode::Select;
+    if apply_audit_result(app, audit()) {
+        app.summary_scroll = 0;
+        app.mode = AppMode::Select;
+    }
+}
+
+fn apply_audit_result(app: &mut TuiApp, result: Result<AuditReport, DomainError>) -> bool {
+    match result {
+        Ok(report) => {
+            app.report = report;
+            app.steps = init_steps(&app.report);
+            app.status.clear();
+            true
+        },
+        Err(error) => {
+            app.status = error.to_string();
+            false
+        },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1668,6 +1687,12 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiApp) {
         ),
         AppMode::Executing => (
             crate::i18n::tr("tui_footer_exec"),
+            Style::default()
+                .fg(Color::Yellow)
+                .bg(Color::Rgb(40, 20, 20)),
+        ),
+        AppMode::Summary if !app.status.is_empty() => (
+            app.status.as_str(),
             Style::default()
                 .fg(Color::Yellow)
                 .bg(Color::Rgb(40, 20, 20)),

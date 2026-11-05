@@ -97,17 +97,21 @@ impl SshConfig {
     }
 
     pub fn effective(&self) -> Result<EffectiveConfig, DomainError> {
-        let content = std::fs::read_to_string(&self.path).map_err(read_error)?;
+        let content =
+            super::audit::read_config(&self.path)?.ok_or_else(|| invalid_config("sshd_config"))?;
         self.effective_at(&self.path, &content)
     }
 
     fn check(&self, path: &Path, flag: &str) -> Result<String, DomainError> {
-        let output = Command::new(&self.program)
-            .arg(flag)
-            .arg("-f")
-            .arg(path)
-            .output()
-            .map_err(|e| DomainError::SystemCommandFailed(format!("sshd {flag}: {e}")))?;
+        let output = super::capture::output(
+            Command::new(&self.program).arg(flag).arg("-f").arg(path),
+            super::audit::PROBE_TIMEOUT,
+        )?;
+        if output.status.code().is_none() {
+            return Err(DomainError::AuditFailed(
+                crate::i18n::tr("audit_probe_failed").replace("{program}", "sshd"),
+            ));
+        }
         if !output.status.success() {
             return Err(DomainError::SystemCommandFailed(format!(
                 "sshd {flag}: {}: {}{}",
@@ -324,6 +328,8 @@ END { print "port " port; print "passwordauthentication " password; print "kbdin
             assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
             assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
         }
+        std::fs::write(&program, "#!/bin/sh\nkill -KILL $$\n").unwrap();
+        assert!(matches!(ssh.effective(), Err(DomainError::AuditFailed(_))));
         assert!(
             SshConfig::new(&path, dir.path().join("missing-command"))
                 .effective()
