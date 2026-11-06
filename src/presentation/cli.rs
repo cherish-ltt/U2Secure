@@ -166,6 +166,16 @@ fn print_event(event: &JobEvent) {
         },
         JobEvent::Log(message) => println!("    {} {}", "ℹ️".dimmed(), message.dimmed()),
         JobEvent::MirrorFailed { reason } => println!("    {} {}", "❌".red(), reason.red()),
+        JobEvent::BatchRecord { result } => match result {
+            Ok(path) => println!(
+                "{}",
+                crate::i18n::tr("batch_record_saved").replace("{path}", path)
+            ),
+            Err(error) => eprintln!(
+                "{}",
+                crate::i18n::tr("batch_record_failed").replace("{error}", error)
+            ),
+        },
         JobEvent::Interrupted => println!(
             "\n{} {}",
             "⚠️".yellow(),

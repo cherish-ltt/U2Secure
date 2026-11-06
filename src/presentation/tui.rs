@@ -177,6 +177,7 @@ struct TuiApp {
     logs: Vec<LogEntry>,
     /// 执行结果
     results: Vec<StepResult>,
+    batch_record: Option<Result<String, String>>,
     /// 当前执行进度
     progress: (usize, usize),
     /// TUI 弹窗（激活时覆盖主界面）
@@ -224,6 +225,7 @@ pub fn run_tui(orchestrator: &HardeningOrchestrator) -> anyhow::Result<()> {
         mode: AppMode::Select,
         logs: vec![],
         results: vec![],
+        batch_record: None,
         progress: (0, 0),
         popup: None,
         job: None,
@@ -392,6 +394,13 @@ fn apply_job_events(app: &mut TuiApp, events: Vec<JobEvent>, disconnected: bool)
             }),
             JobEvent::MirrorFailed { reason } => {
                 app.mirror_failure = Some(reason);
+            },
+            JobEvent::BatchRecord { result } => {
+                app.logs.push(LogEntry {
+                    icon: if result.is_ok() { "ℹ️" } else { "❌" },
+                    message: record_message(&result),
+                });
+                app.batch_record = Some(result);
             },
             JobEvent::AllFinished => finished = true,
         }
@@ -1106,6 +1115,7 @@ fn start_pending(app: &mut TuiApp, orchestrator: &HardeningOrchestrator) {
 
     app.logs.clear();
     app.results.clear();
+    app.batch_record = None;
     app.live_tail.clear();
     app.summary_scroll = 0;
     app.progress = (0, pending.selected.len());
@@ -1641,6 +1651,16 @@ fn render_right_summary(
     }
 
     lines.push(Line::from(vec![Span::raw("")]));
+    if let Some(result) = &app.batch_record {
+        lines.push(Line::from(Span::styled(
+            record_message(result),
+            Style::default().fg(if result.is_ok() {
+                Color::Cyan
+            } else {
+                Color::Red
+            }),
+        )));
+    }
     let stats = crate::i18n::tr("tui_result_summary")
         .replace("{ok}", &changed.to_string())
         .replace("{skip}", &skipped.to_string())
@@ -1673,6 +1693,13 @@ fn render_right_summary(
         .scroll((app.summary_scroll, 0));
 
     frame.render_widget(text, area);
+}
+
+fn record_message(result: &Result<String, String>) -> String {
+    match result {
+        Ok(path) => crate::i18n::tr("batch_record_saved").replace("{path}", path),
+        Err(error) => crate::i18n::tr("batch_record_failed").replace("{error}", error),
+    }
 }
 
 // ---------------------------------------------------------------------------

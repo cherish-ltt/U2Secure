@@ -3,7 +3,7 @@ use std::process::Command;
 
 use crate::domain::errors::DomainError;
 use crate::domain::undo::UndoAction;
-use crate::infrastructure::{backup, rollback};
+use crate::infrastructure::{backup, batch_record, rollback};
 
 #[derive(Clone)]
 pub struct Ufw {
@@ -65,10 +65,15 @@ impl Ufw {
         let snapshot = Snapshot::capture(&self.config_dir)?;
         let before = snapshot.current_bytes()?;
         let undo_firewall = self.clone();
-        rollback::register_undo(UndoAction::try_new(
-            crate::i18n::tr("undo_ufw_restore").into(),
-            Box::new(move || snapshot.restore(&undo_firewall, was_enabled)),
-        ));
+        let paths = snapshot.files.clone();
+        rollback::register_tracked(
+            UndoAction::try_new(
+                crate::i18n::tr("undo_ufw_restore").into(),
+                Box::new(move || snapshot.restore(&undo_firewall, was_enabled)),
+            ),
+            "ufw_restore",
+            &paths,
+        );
         self.run(&["allow", &port.to_string()])?;
         if !was_enabled && enable {
             self.run(&["--force", "enable"])?;
@@ -113,6 +118,9 @@ impl Snapshot {
             matches!((current, old), (Ok(current), Ok(old)) if current == old)
         });
         if unchanged && firewall.enabled().ok() == Some(was_enabled) {
+            for (original, saved) in &self.files {
+                batch_record::backup_unchanged(original, saved.as_deref());
+            }
             return self.cleanup();
         }
         // Disable before restoring ufw.conf: disable itself rewrites that file.
@@ -129,6 +137,7 @@ impl Snapshot {
                     result => result,
                 }
             };
+            batch_record::backup_restored(original, saved.as_deref(), &result);
             if let Err(error) = result {
                 failures.push(format!("{}: {error}", original.display()));
             }
@@ -155,9 +164,11 @@ impl Snapshot {
     }
 
     fn cleanup(self) -> Result<(), DomainError> {
-        for (_, saved) in self.files {
+        for (original, saved) in self.files {
+            let result = saved.as_ref().map_or(Ok(()), std::fs::remove_file);
+            batch_record::backup_cleaned(&original, saved.as_deref(), &result);
             if let Some(saved) = saved {
-                std::fs::remove_file(&saved).map_err(|e| {
+                result.map_err(|e| {
                     DomainError::SystemCommandFailed(format!("{}: {e}", saved.display()))
                 })?;
             }
