@@ -435,6 +435,7 @@ fn run_full_audit_with(
     let ufw_enabled = audit::ufw_enabled(root)?;
     let auto_updates_enabled = audit::auto_updates_enabled(root)?;
     let system_up_to_date = audit::system_up_to_date(root);
+    let reboot_hint = super::reboot::detect(root)?;
     let lynis_installed = audit::which("lynis")?;
     let logwatch_installed = audit::which("logwatch")?;
     let aide_installed = audit::which("aide")? || audit::which("aide.wrapper")?;
@@ -453,6 +454,7 @@ fn run_full_audit_with(
         ufw_enabled,
         auto_updates_enabled,
         system_up_to_date,
+        reboot_hint,
         lynis_installed,
         logwatch_installed,
         aide_installed,
@@ -566,17 +568,19 @@ fn run_full_audit_with(
         )
     });
 
-    items.push(if system_up_to_date {
-        AuditItem::safe(
-            crate::i18n::tr("audit_sys_update"),
-            crate::i18n::tr("audit_detail_sys_uptodate").into(),
-        )
-    } else {
-        AuditItem::needs_update(
-            crate::i18n::tr("audit_sys_update"),
-            crate::i18n::tr("audit_detail_sys_needs_update").into(),
-        )
-    });
+    items.push(AuditItem::new(
+        crate::i18n::tr("audit_sys_update"),
+        report.status_for(crate::domain::steps::StepKind::SystemUpdate),
+        format!(
+            "{}; {}",
+            crate::i18n::tr(if system_up_to_date {
+                "audit_detail_sys_uptodate"
+            } else {
+                "audit_detail_sys_needs_update"
+            }),
+            crate::i18n::reboot_hint(reboot_hint),
+        ),
+    ));
 
     report.items = items;
     Ok(report)

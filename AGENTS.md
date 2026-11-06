@@ -429,3 +429,9 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 - UFW 审计使用 `iptables-save` / `ip6tables-save` 并传 `-M /bin/false`，不得使用 `-t` / `-f` 或会创建锁文件的 `ufw status`；只检查 filter 表的 UFW 用户链存在性，必须说明不验证完整规则或并发重载时的原子一致快照。
 - 审计测试注入报告与 writer，系统采集使用临时配置及独立子进程私有 PATH 的假命令；三语在隔离子进程初始化。覆盖无 TTY、无默认文件、稳定 JSON、错误不输出报告和写入失败，不调用宿主真实审计或加固，继续遵守 10.9 的 macOS 沙箱约束。
 
+### 系统待重启提示
+
+- 更新步骤与审计统一使用 `infrastructure::reboot::detect()`；仅按 os-release 的精确 Debian/Ubuntu ID 检查约定标记存在性，不以 APT 或 ID_LIKE 扩大支持范围，不读取包清单、不重启系统。
+- `RebootHint` 只补充来源与维护提示，不改变 `AuditReport::status_for()`、APT 缓存或 SSH 生效语义；未发现不保证无需重启，三语与 schema 1 的 `reboot_hint` 字段须表达同一范围。
+- 配置读取及标记探测失败必须显式报告。独立审计失败不输出正常报告；更新成功后的辅助探测失败保留 `Changed`，不掩盖原更新失败、不触发回退。测试只用临时根路径、注入报告和假更新命令。
+

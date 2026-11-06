@@ -2,7 +2,7 @@ use std::io;
 use std::process::{Command, Stdio};
 
 use super::*;
-use crate::domain::audit::{AuditItem, PackageManager};
+use crate::domain::audit::{AuditItem, PackageManager, RebootHint};
 use crate::i18n::{self, Lang};
 
 fn report() -> AuditReport {
@@ -22,11 +22,89 @@ fn report() -> AuditReport {
         ufw_enabled: true,
         auto_updates_enabled: false,
         system_up_to_date: false,
+        reboot_hint: RebootHint::Unsupported,
         lynis_installed: true,
         logwatch_installed: true,
         aide_installed: false,
         ssh_restart_needed: true,
     }
+}
+
+#[test]
+fn system_update_includes_a_typed_reboot_hint() {
+    let details = details(&report(), StepKind::SystemUpdate);
+    assert_eq!(details["apt_cache_recent"], false);
+    assert_eq!(details["reboot_hint"]["status"], "unsupported");
+    assert_eq!(details["reboot_hint"]["source"], Value::Null);
+}
+
+#[test]
+fn reboot_hints_extend_schema_without_changing_cache_or_ssh_status() {
+    let mut report = report();
+    let mut bytes = Vec::new();
+    for recent in [false, true] {
+        report.system_up_to_date = recent;
+        for (hint, status, source) in [
+            (
+                RebootHint::Found("/run/reboot-required"),
+                "found",
+                Some("/run/reboot-required"),
+            ),
+            (
+                RebootHint::NotFound("/var/run/reboot-required"),
+                "not_found",
+                Some("/var/run/reboot-required"),
+            ),
+            (RebootHint::Unsupported, "unsupported", None),
+        ] {
+            report.reboot_hint = hint;
+            bytes.clear();
+            run_with(
+                &["--format".into(), "json".into()],
+                || Ok(report.clone()),
+                &mut bytes,
+            )
+            .unwrap();
+            let value: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(value["schema_version"], 1);
+            let checks = value["checks"].as_array().unwrap();
+            let update = checks
+                .iter()
+                .find(|check| check["id"] == "system-update")
+                .unwrap();
+            assert_eq!(update["details"]["apt_cache_recent"], recent);
+            assert_eq!(
+                update["details"]["reboot_hint"],
+                json!({"status": status, "source": source})
+            );
+            assert_eq!(
+                update["status"],
+                if recent { "safe" } else { "needs_update" }
+            );
+            assert_eq!(
+                report.status_for(StepKind::RestartSsh),
+                AuditStatus::NeedsUpdate
+            );
+            assert!(
+                text_detail(&report, StepKind::SystemUpdate).contains(&i18n::reboot_hint(hint))
+            );
+        }
+    }
+    bytes.clear();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("etc/os-release")).unwrap();
+    assert!(
+        run_with(
+            &[],
+            || {
+                report.reboot_hint = crate::infrastructure::reboot::detect(dir.path())?;
+                Ok(report)
+            },
+            &mut bytes
+        )
+        .is_err()
+    );
+    assert!(bytes.is_empty());
 }
 
 #[test]
@@ -94,7 +172,10 @@ fn json_retains_partial_scope_and_excludes_unverified_or_raw_data() {
     assert_eq!(value["package_manager"], "apt");
     assert_eq!(value["is_root"], true);
     let scope = value["check_scope"].as_array().unwrap();
-    assert_eq!(scope.len(), 8);
+    assert_eq!(scope.len(), 9);
+    assert!(scope.contains(&json!(
+        "debian-ubuntu-reboot-marker-not-complete-patch-activation"
+    )));
     assert!(scope.contains(&json!(
         "firewall-chains-not-complete-rules-or-atomic-snapshot"
     )));
@@ -275,6 +356,20 @@ fn isolated_locale() {
     assert!(text.contains(tr("audit_status_partial")));
     assert!(!text.contains("audit_scope_"));
     assert!(!text.contains("audit_status_"));
+    for hint in [
+        RebootHint::Found("/run/reboot-required"),
+        RebootHint::NotFound("/var/run/reboot-required"),
+        RebootHint::Unsupported,
+    ] {
+        let mut report = report();
+        report.reboot_hint = hint;
+        let text = render_text(&report, "fixture-time");
+        assert!(text.contains(&i18n::reboot_hint(hint)));
+        assert!(!text.contains("reboot_"));
+        if let Some(source) = hint.source() {
+            assert!(text.contains(source));
+        }
+    }
     println!("JSON_BEGIN");
     render(
         &report(),

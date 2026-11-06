@@ -21,6 +21,7 @@ fn report() -> AuditReport {
         ufw_enabled: false,
         auto_updates_enabled: false,
         system_up_to_date: false,
+        reboot_hint: crate::domain::audit::RebootHint::Unsupported,
         lynis_installed: false,
         logwatch_installed: false,
         aide_installed: false,
@@ -128,6 +129,39 @@ fn lines_text(lines: &[Line<'_>]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[test]
+fn selected_update_shows_reboot_hint_source_and_limits_without_probing() {
+    use crate::domain::audit::RebootHint;
+    let mut app = app();
+    app.cursor = app
+        .steps
+        .iter()
+        .position(|step| step.kind == StepKind::SystemUpdate)
+        .unwrap();
+    for hint in [
+        RebootHint::Found("/run/reboot-required"),
+        RebootHint::NotFound("/var/run/reboot-required"),
+        RebootHint::Unsupported,
+    ] {
+        app.report.reboot_hint = hint;
+        let screen = draw(&app, 80, 24);
+        let help: String = screen
+            .content
+            .chunks(80)
+            .skip(7)
+            .take(15)
+            .flat_map(|row| &row[37..79])
+            .map(|cell| cell.symbol())
+            .collect();
+        let help: String = help.chars().filter(|ch| !ch.is_whitespace()).collect();
+        let expected: String = crate::i18n::reboot_hint(hint)
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect();
+        assert!(help.contains(&expected), "missing hint: {}", text(&screen));
+    }
 }
 
 #[test]
