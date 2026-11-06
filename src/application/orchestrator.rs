@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::domain::audit::AuditReport;
 use crate::domain::errors::DomainError;
+use crate::domain::ssh_context::{SshAuthentication, SshContext};
 use crate::infrastructure::logger::FileLogger;
 use crate::infrastructure::system;
 
@@ -33,6 +34,13 @@ impl HardeningOrchestrator {
             &crate::i18n::tr("log_audit_done").replace("{n}", &report.items.len().to_string()),
         );
         Ok(report)
+    }
+
+    pub fn audit_ssh_context(
+        &self,
+        context: &SshContext,
+    ) -> Result<SshAuthentication, DomainError> {
+        crate::infrastructure::ssh::SshConfig::default().effective_for(context)
     }
 
     /// 检查 root 权限

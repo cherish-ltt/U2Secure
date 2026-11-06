@@ -112,6 +112,10 @@ struct PendingRun {
 
 /// TUI 弹窗状态（支持多步流程）
 enum Popup {
+    SshContextResult {
+        text: String,
+        scroll: u16,
+    },
     PlanReview {
         selected: usize,
         scroll: u16,
@@ -189,6 +193,7 @@ enum SelectAction {
     Collect(Vec<StepKind>),
     Audit,
     SelectKeyUser,
+    SshContext,
 }
 
 enum PopupAction {
@@ -504,6 +509,12 @@ fn handle_select_mode(
             begin_or_ask_mirror(app, terminal);
         },
         SelectAction::SelectKeyUser => open_key_user_popup(app, system::detect_sudo_users()),
+        SelectAction::SshContext => {
+            let text = suspend_for_dialog(terminal, || {
+                super::ssh_context::interactive(|context| orchestrator.audit_ssh_context(context))
+            });
+            app.popup = Some(Popup::SshContextResult { text, scroll: 0 });
+        },
         SelectAction::Audit => {
             app.status = crate::i18n::tr("tui_reauditing").into();
             terminal.draw(|f| render(f, app))?;
@@ -609,6 +620,7 @@ fn select_action(app: &mut TuiApp, event: Event) -> SelectAction {
             return SelectAction::Collect(vec![kind]);
         },
         KeyCode::Char('r') => return SelectAction::Audit,
+        KeyCode::Char('c') => return SelectAction::SshContext,
         KeyCode::Char('q') => return SelectAction::Quit,
         _ => {},
     }
@@ -719,6 +731,14 @@ fn popup_action(
 
     let mut action = PopupAction::Redraw;
     match *p {
+        Popup::SshContextResult { ref mut scroll, .. } => match key.code {
+            KeyCode::Up => *scroll = scroll.saturating_sub(1),
+            KeyCode::Down => *scroll = scroll.saturating_add(1),
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+            KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+            KeyCode::Esc | KeyCode::Enter => app.popup = None,
+            _ => {},
+        },
         Popup::PlanReview {
             ref mut selected,
             ref mut scroll,
@@ -1492,6 +1512,10 @@ fn render_right_help(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiAp
             Span::raw(format!("  {}", crate::i18n::tr("tui_help_reauth"))),
         ]),
         Line::from(vec![
+            Span::styled(" c", Style::default().bold()),
+            Span::raw(format!("  {}", crate::i18n::tr("ssh_context_title"))),
+        ]),
+        Line::from(vec![
             Span::styled(" q", Style::default().bold()),
             Span::raw(format!("  {}", crate::i18n::tr("tui_help_quit"))),
         ]),
@@ -1832,9 +1856,25 @@ fn render_popup(
         return;
     }
 
+    if let Popup::SshContextResult { text, scroll } = popup {
+        frame.render_widget(Clear, area);
+        let block = Block::default()
+            .title(crate::i18n::tr("ssh_context_title"))
+            .borders(Borders::ALL)
+            .title_bottom(crate::i18n::tr("ssh_context_scroll"));
+        frame.render_widget(
+            Paragraph::new(text.as_str())
+                .block(block)
+                .wrap(Wrap { trim: false })
+                .scroll((*scroll, 0)),
+            area,
+        );
+        return;
+    }
+
     // 统一弹窗尺寸逻辑
     let (title, height, content_lines, hint_line) = match popup {
-        Popup::PlanReview { .. } => return,
+        Popup::SshContextResult { .. } | Popup::PlanReview { .. } => return,
         Popup::MirrorSelect { items, selected } => (
             format!(" {} ", crate::i18n::tr("tui_mirror_title")),
             (items.len() + 5).clamp(6, 14) as u16,

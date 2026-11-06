@@ -51,6 +51,7 @@
 - **CLI 模式**：传统 dialoguer 向导式交互，兼容原版体验
 - **执行计划预览**：单项与批量在参数、镜像齐备后统一核对步骤顺序、目标及 SSH 生效授权，可返回修改或取消。
 - **只读审计**：`audit` 无需 TTY，输出文本或稳定 JSON，不创建操作日志或报告文件
+- **SSH 连接上下文**：CLI/TUI 可查询显式用户和连接条件对应的认证值，保留全局未验证结论
 - 每步执行前检测状态，不重复配置
 - 同批次创建用户与设置密钥时，同一用户只生成一次密钥，执行器会明确报告跳过重复生成。
 - 支持自动备份与回退；SSH 生效尝试是整批提交边界，其后失败或中断保留修改并要求人工检查
@@ -294,6 +295,32 @@ u2secure audit --help                   # 查看用法，无需 root
 标记约定参见 [Debian Policy §9.12](https://www.debian.org/doc/debian-policy/ch-opersys.html#signaling-that-a-reboot-is-required)
 和 [Ubuntu Server 文档](https://ubuntu.com/server/docs/how-to/software/automatic-updates/#reboots)。
 
+## SSH 连接上下文检查
+
+CLI 在初次审计后提供只读查询选择，TUI 在步骤选择页按 `c` 进入；两者共用输入确认。
+每次需显式填写目标 `user`、来源 IP `addr`、来源主机名或 IP `host`、服务器本地 IP `laddr`
+和本地端口 `lport`。不自动从当前会话猜测值；任意一项留空或拒绝最后确认即可取消查询。
+TUI 查询完成后显示可滚动结果页，`Enter` / `Esc` 返回，原来的步骤勾选保持不变。
+
+查询只运行 `sshd -T -f /etc/ssh/sshd_config -C <连接条件>`，由 OpenSSH 处理 Include/Match，
+不启动服务；每条命令限时 5 秒、stdout/stderr 合计不超过 1 MiB。输入拒绝分隔符注入，
+未安装或不支持 `-C`、无效配置、非零退出、超时及不完整输出明确报告未能判断，保留原始诊断。
+结果显示输入条件与 `PasswordAuthentication`、`KbdInteractiveAuthentication`、`PermitRootLogin`
+原值，只判断这三项是否符合既有认证限制基线；`prohibit-password` 仍允许 root 密钥登录。
+
+此结果仅是指定连接条件下的配置求值，**不改变全局 `Partial`、`ssh_config_verified`、
+默认加固选择或独立 `audit` 的 JSON 契约**，也不验证运行中服务加载、真实登录、账户、PAM、
+密钥、网络、防火墙或云安全组。查询本身不保存上下文或配置；交互式工具原有启动日志仍按既有流程创建。
+
+测试使用临时配置与假 `sshd`。隔离 Linux 环境可执行真实 OpenSSH 对照（只使用测试生成的主机密钥）：
+
+```bash
+U2SECURE_TEST_SSHD=/usr/sbin/sshd U2SECURE_TEST_SSH_KEYGEN=/usr/bin/ssh-keygen \
+  cargo test --locked --test ssh_context_tests linux_openssh_matches_included_connection_rules -- --exact --ignored
+```
+
+仅在明确隔离的 Linux 环境设置这两个变量；测试不会启动监听服务，也不使用宿主主机密钥。
+
 ## TUI 界面
 
 ```
@@ -323,6 +350,7 @@ u2secure audit --help                   # 查看用法，无需 root
 | `Enter` | 收集所有勾选步骤的参数，复核计划后批量执行（**后台线程执行，界面不阻塞**） |
 | `e` | 准备当前单项步骤，复核计划后执行（不依赖勾选状态） |
 | `r` | 重新执行环境审计 |
+| `c` | 只读查询一组 SSH 连接上下文，独立显示认证值 |
 | `Ctrl+C` | 中断当前命令 → SSH 生效边界前回滚本批修改，边界后保留并报告 → 停止后续步骤 |
 | `q` | 退出（执行中不可用，需先 `Ctrl+C`） |
 | `↑` / `↓`（结果页） | 滚动查看完整结果 |
