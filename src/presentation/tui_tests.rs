@@ -91,6 +91,212 @@ fn collected(action: SelectAction) -> Vec<StepKind> {
     selected.unwrap()
 }
 
+#[test]
+fn selected_mirror_requires_plan_review_before_start() {
+    let mut app = app();
+    app.pending = Some(PendingRun {
+        selected: vec![StepKind::SystemUpdate],
+        params: ExecuteParams::default(),
+    });
+    app.popup = Some(Popup::MirrorSelect {
+        items: vec!["original".into(), "selected-mirror".into()],
+        selected: 1,
+    });
+    assert!(!matches!(
+        press(&mut app, KeyCode::Enter),
+        PopupAction::StartPending
+    ));
+    assert!(matches!(
+        app.popup,
+        Some(Popup::PlanReview { selected: 2, .. })
+    ));
+    assert!(app.job.is_none());
+}
+
+#[test]
+fn plan_cancel_and_edit_do_not_start_a_batch() {
+    let mut app = app();
+    for choice in [1, 2] {
+        app.pending = Some(PendingRun {
+            selected: vec![StepKind::SshPortChange],
+            params: ExecuteParams {
+                new_ssh_port: Some(2201),
+                ..Default::default()
+            },
+        });
+        app.popup = Some(Popup::PlanReview {
+            selected: choice,
+            scroll: 0,
+        });
+        assert!(matches!(
+            press(&mut app, KeyCode::Enter),
+            PopupAction::Redraw
+        ));
+        assert!(app.pending.is_none());
+        assert!(app.popup.is_none());
+        assert!(app.job.is_none());
+        start_pending_with(&mut app, |_, _, _| {
+            panic!("cancel/edit must not spawn or warm up")
+        });
+        if choice == 1 {
+            assert_eq!(
+                app.steps
+                    .iter()
+                    .filter(|step| step.checked)
+                    .map(|step| step.kind)
+                    .collect::<Vec<_>>(),
+                [StepKind::SshPortChange]
+            );
+            assert_eq!(app.status, crate::i18n::tr("plan_edit_hint"));
+        }
+    }
+    app.pending = Some(PendingRun {
+        selected: vec![StepKind::Ufw],
+        params: ExecuteParams::default(),
+    });
+    show_plan(&mut app);
+    press(&mut app, KeyCode::Esc);
+    assert!(app.pending.is_none());
+    assert_eq!(app.status, crate::i18n::tr("plan_cancelled"));
+}
+
+#[test]
+fn edited_single_and_batch_plans_execute_the_reviewed_inputs() {
+    let mut app = app();
+    let dir = tempfile::tempdir().unwrap();
+    for selected in [
+        vec![StepKind::SshPortChange],
+        vec![
+            StepKind::SshPortChange,
+            StepKind::SystemUpdate,
+            StepKind::SshPortChange,
+        ],
+    ] {
+        let params = ExecuteParams {
+            new_ssh_port: Some(2202),
+            apply_ssh_changes: true,
+            ..Default::default()
+        };
+        app.pending = Some(PendingRun {
+            selected: selected.clone(),
+            params,
+        });
+        app.mirror = PackageMirror::Ustc;
+        show_plan(&mut app);
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Up);
+        assert!(matches!(
+            press(&mut app, KeyCode::Enter),
+            PopupAction::StartPending
+        ));
+        start_pending_with(&mut app, |actual, params, mirror| {
+            assert_eq!(actual, crate::application::job::execution_plan(&selected));
+            assert_eq!(params.new_ssh_port, Some(2202));
+            assert!(params.apply_ssh_changes);
+            assert_eq!(mirror, PackageMirror::Ustc);
+            let logger = std::sync::Arc::new(crate::infrastructure::logger::FileLogger::with_path(
+                dir.path().join("fixture.log"),
+            ));
+            StepRunner::new(logger)
+                .with_report_dir(dir.path().to_string_lossy())
+                .spawn_steps(vec![], params)
+        });
+        assert!(matches!(app.mode, AppMode::Executing));
+        assert_eq!(
+            app.progress.1,
+            crate::application::job::execution_plan(&selected).len()
+        );
+        app.job.take().unwrap().join();
+    }
+}
+
+#[test]
+fn changed_mirror_requires_new_review_and_cancel_keeps_prior_effects_explicit() {
+    let mut app = app();
+    app.pending = Some(PendingRun {
+        selected: vec![StepKind::SystemUpdate],
+        params: ExecuteParams::default(),
+    });
+    app.mirror = PackageMirror::Tsinghua;
+    app.popup = Some(Popup::MirrorFailedDialog {
+        reason: "fixture-offline".into(),
+        selected: 1,
+    });
+    assert!(matches!(
+        press(&mut app, KeyCode::Enter),
+        PopupAction::AskMirror
+    ));
+    app.popup = Some(Popup::MirrorSelect {
+        items: PackageMirror::all()
+            .iter()
+            .map(PackageMirror::label)
+            .collect(),
+        selected: 2,
+    });
+    assert!(matches!(
+        press(&mut app, KeyCode::Enter),
+        PopupAction::Redraw
+    ));
+    assert!(matches!(
+        app.popup,
+        Some(Popup::PlanReview { selected: 2, .. })
+    ));
+    let screen = text(&draw(&app, 180, 32));
+    assert!(screen.contains("mirrors.ustc.edu.cn"));
+    assert!(!screen.contains("mirrors.tuna.tsinghua.edu.cn"));
+    assert!(screen.contains(crate::i18n::tr("plan_cancel_scope")));
+    press(&mut app, KeyCode::Enter);
+    start_pending_with(&mut app, |_, _, _| {
+        panic!("cancel must not warm up the replacement mirror")
+    });
+}
+
+#[test]
+fn preview_renders_shared_lines_and_scrolls_in_small_terminals() {
+    let mut app = app();
+    let params = ExecuteParams {
+        new_username: Some("operator-fixture".into()),
+        ssh_key_username: Some("deploy-fixture".into()),
+        ssh_key_action: Some(SshKeyAction::PasteKey("key-body-fixture".into())),
+        new_ssh_port: Some(2208),
+        ..Default::default()
+    };
+    let plan = RunPlan::new(StepKind::all(), params.clone(), PackageMirror::Original);
+    app.pending = Some(PendingRun {
+        selected: StepKind::all().to_vec(),
+        params,
+    });
+    show_plan(&mut app);
+    let screen = text(&draw(&app, 240, 60));
+    for line in plan.lines() {
+        assert!(screen.contains(&line), "missing {line}");
+    }
+    assert!(!screen.contains("key-body-fixture"));
+    for (width, height) in [(1, 1), (20, 6), (80, 24)] {
+        assert_eq!(draw(&app, width, height).area.width, width);
+    }
+    let before = text(&draw(&app, 80, 12));
+    for _ in 0..30 {
+        press(&mut app, KeyCode::PageDown);
+    }
+    let after = text(&draw(&app, 80, 12));
+    assert_ne!(before, after);
+    assert!(after.contains(crate::i18n::tr("plan_execute")));
+    assert!(after.contains(crate::i18n::tr("plan_cancel")));
+    for _ in 0..30 {
+        press(&mut app, KeyCode::PageUp);
+    }
+    assert_eq!(text(&draw(&app, 80, 12)), before);
+    press(&mut app, KeyCode::Down);
+    assert!(matches!(
+        app.popup,
+        Some(Popup::PlanReview { selected: 2, .. })
+    ));
+    app.pending = None;
+    let _ = draw(&app, 80, 12);
+}
+
 fn draw(app: &TuiApp, width: u16, height: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
@@ -561,7 +767,7 @@ fn mirror_selection_custom_validation_and_failure_decisions_are_explicit() {
     }
     assert!(matches!(
         press(&mut app, KeyCode::Enter),
-        PopupAction::StartPending
+        PopupAction::Redraw
     ));
     assert!(matches!(app.mirror, PackageMirror::Custom(_)));
     app.popup = Some(Popup::MirrorCustomInput {
@@ -596,14 +802,11 @@ fn mirror_selection_custom_validation_and_failure_decisions_are_explicit() {
     });
     assert!(matches!(
         press(&mut app, KeyCode::Enter),
-        PopupAction::StartPending
+        PopupAction::Redraw
     ));
     assert_eq!(app.mirror, PackageMirror::all()[1]);
     app.popup = Some(Popup::MirrorSelect { items, selected: 1 });
-    assert!(matches!(
-        press(&mut app, KeyCode::Esc),
-        PopupAction::StartPending
-    ));
+    assert!(matches!(press(&mut app, KeyCode::Esc), PopupAction::Redraw));
     assert_eq!(app.mirror, PackageMirror::Original);
     assert_eq!(app.status, crate::i18n::tr("tui_mirror_use_original"));
     for selected in 0..3 {
@@ -616,7 +819,7 @@ fn mirror_selection_custom_validation_and_failure_decisions_are_explicit() {
             selected,
         });
         match (selected, press(&mut app, KeyCode::Enter)) {
-            (0, PopupAction::StartPending) | (1, PopupAction::AskMirror) => {
+            (0, PopupAction::Redraw) | (1, PopupAction::AskMirror) => {
                 assert!(app.pending.is_some())
             },
             (2, PopupAction::Redraw) => assert!(app.pending.is_none()),
