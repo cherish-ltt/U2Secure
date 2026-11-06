@@ -429,3 +429,9 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 - UFW 审计使用 `iptables-save` / `ip6tables-save` 并传 `-M /bin/false`，不得使用 `-t` / `-f` 或会创建锁文件的 `ufw status`；只检查 filter 表的 UFW 用户链存在性，必须说明不验证完整规则或并发重载时的原子一致快照。
 - 审计测试注入报告与 writer，系统采集使用临时配置及独立子进程私有 PATH 的假命令；三语在隔离子进程初始化。覆盖无 TTY、无默认文件、稳定 JSON、错误不输出报告和写入失败，不调用宿主真实审计或加固，继续遵守 10.9 的 macOS 沙箱约束。
 
+### 10.11 SSH 连接上下文
+
+- `SshContext` 校验显式 user/addr/host/laddr/lport，argv 调用 `sshd -T -f -C`，继续使用 5 秒/1 MiB 内存有界采集，不编写 Include/Match 解释器，不启动或修改服务。
+- CLI/TUI 共用可取消输入及结果渲染；成功结果仅适用于已展示连接条件，保留原认证值和未验证运行时/登录的范围说明，不修改 `AuditReport`、全局 Partial 或默认勾选。
+- 上下文查询不创建额外日志或报告；失败不得回退全局值。测试默认注入临时路径及假命令；真实 OpenSSH 测试必须同时显式提供 `U2SECURE_TEST_SSHD` / `U2SECURE_TEST_SSH_KEYGEN`，仅在隔离 Linux 环境使用临时配置及临时主机密钥。
+

@@ -198,6 +198,75 @@ fn selection_defaults_and_navigation_preserve_opt_in_choices() {
 }
 
 #[test]
+fn ssh_context_entry_and_result_preserve_global_choices() {
+    let mut app = app();
+    app.report.ssh_config_verified = false;
+    let before: Vec<_> = app.steps.iter().map(|step| step.checked).collect();
+    assert!(matches!(
+        select_action(&mut app, key(KeyCode::Char('c'))),
+        SelectAction::SshContext
+    ));
+    assert!(app.pending.is_none() && app.job.is_none());
+    let context = crate::domain::ssh_context::SshContext::parse(
+        "admin",
+        "192.0.2.10",
+        "client.example",
+        "192.0.2.20",
+        "22",
+    )
+    .unwrap();
+    let result = crate::domain::ssh_context::SshAuthentication {
+        password_authentication: "no".into(),
+        kbd_interactive_authentication: "no".into(),
+        permit_root_login: "no".into(),
+    };
+    app.popup = Some(Popup::SshContextResult {
+        text: super::super::ssh_context::render(&context, Ok(result)),
+        scroll: 0,
+    });
+    let rendered = text(&draw(&app, 120, 35));
+    for expected in [
+        "user=admin",
+        "PasswordAuthentication: no",
+        "KbdInteractiveAuthentication: no",
+        "PermitRootLogin: no",
+        "Partial",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "missing {expected}: {rendered}"
+        );
+    }
+    for code in [
+        KeyCode::Down,
+        KeyCode::PageDown,
+        KeyCode::Up,
+        KeyCode::PageUp,
+    ] {
+        assert!(matches!(press(&mut app, code), PopupAction::Redraw));
+    }
+    assert!(matches!(
+        app.popup,
+        Some(Popup::SshContextResult { scroll: 0, .. })
+    ));
+    press(&mut app, KeyCode::Esc);
+    assert!(app.popup.is_none());
+    assert!(!app.report.ssh_config_verified);
+    assert_eq!(
+        app.report.status_for(StepKind::SshPasswordAuth),
+        AuditStatus::Partial
+    );
+    assert_eq!(
+        before,
+        app.steps
+            .iter()
+            .map(|step| step.checked)
+            .collect::<Vec<_>>()
+    );
+    assert!(app.pending.is_none() && app.job.is_none());
+}
+
+#[test]
 fn single_step_selection_opens_inputs_without_running_steps() {
     let mut app = app();
     for (index, kind) in StepKind::all().iter().enumerate() {

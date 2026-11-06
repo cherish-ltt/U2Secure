@@ -38,6 +38,19 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
 
     render_audit_report(&report);
 
+    match Confirm::new()
+        .with_prompt(crate::i18n::tr("ssh_context_offer"))
+        .default(false)
+        .interact()
+    {
+        Ok(true) => println!(
+            "{}",
+            super::ssh_context::interactive(|context| orchestrator.audit_ssh_context(context))
+        ),
+        Ok(false) => {},
+        Err(error) => eprintln!("{error}"),
+    }
+
     // ── 步骤选择 ──
     let selected_steps = step_selection(&report);
 
