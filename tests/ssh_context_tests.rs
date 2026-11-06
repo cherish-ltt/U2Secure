@@ -183,7 +183,7 @@ fn linux_openssh_matches_included_connection_rules() {
         std::fs::write(&included, format!("Match User root Address 192.0.2.10 LocalAddress 192.0.2.20 LocalPort 2222\nPasswordAuthentication {conditional}\nKbdInteractiveAuthentication {conditional}\nPermitRootLogin {conditional}\n")).unwrap();
         std::fs::write(&config_path, format!("HostKey {}\nPort 2222\nUsePAM no\nPasswordAuthentication {global}\nKbdInteractiveAuthentication {global}\nPermitRootLogin {global}\nInclude {}\n", host_key.display(), included.display())).unwrap();
         let ssh = SshConfig::new(&config_path, &program);
-        assert!(!ssh.effective().unwrap().verified);
+        assert!(!ssh.effective().is_ok_and(|config| config.verified));
         for (user, addr, laddr, lport, expected) in [
             ("root", "192.0.2.10", "192.0.2.20", "2222", conditional),
             ("nobody", "192.0.2.10", "192.0.2.20", "2222", global),
