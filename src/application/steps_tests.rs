@@ -114,6 +114,16 @@ exit 0"#,
         if mode == "spawn-fails" {
             fs::remove_file(fixture.bin.join("sshd")).unwrap();
         }
+        if step == "update" && !matches!(mode, "yum" | "dnf" | "unknown") {
+            fs::create_dir(fixture.root().join("etc")).unwrap();
+            fs::write(fixture.root().join("etc/os-release"), "ID=debian\n").unwrap();
+            if matches!(mode, "hint-error" | "update-fails" | "upgrade-fails") {
+                fs::write(fixture.root().join("run"), "not a directory").unwrap();
+            } else if mode == "reboot" {
+                fs::create_dir(fixture.root().join("run")).unwrap();
+                fs::write(fixture.root().join("run/reboot-required"), "").unwrap();
+            }
+        }
         fixture
     }
 
@@ -172,6 +182,8 @@ fn update_checks_each_command_and_package_manager_environment() {
             "dnf",
             "update-fails",
             "upgrade-fails",
+            "reboot",
+            "hint-error",
         ],
     );
 }
@@ -280,7 +292,7 @@ fn isolated_step_child() {
 }
 
 fn check_update(params: &ExecuteParams, root: &Path, mode: &str) {
-    let result = SystemUpdateStep.execute(params).unwrap();
+    let result = SystemUpdateStep.execute_at(params, root).unwrap();
     let calls = fs::read_to_string(root.join("calls")).unwrap();
     if mode == "unknown" {
         assert_eq!(result.outcome, StepOutcome::Skipped);
@@ -297,6 +309,32 @@ fn check_update(params: &ExecuteParams, root: &Path, mode: &str) {
     }
     if result.is_failed() {
         assert!(result.message.contains(params.live_log.as_ref().unwrap()));
+        assert!(!result.message.contains("reboot-required"));
+    } else {
+        assert_eq!(result.outcome, StepOutcome::Changed);
+        assert!(
+            result
+                .message
+                .contains(crate::i18n::tr("result_sys_updated"))
+        );
+        let expected = match mode {
+            "reboot" => crate::i18n::reboot_hint(crate::domain::audit::RebootHint::Found(
+                "/run/reboot-required",
+            )),
+            "ok" => crate::i18n::reboot_hint(crate::domain::audit::RebootHint::NotFound(
+                "/run/reboot-required",
+            )),
+            "hint-error" => {
+                assert!(result.message.contains("/run/reboot-required"));
+                crate::i18n::tr("reboot_probe_failed")
+                    .split("{err}")
+                    .next()
+                    .unwrap()
+                    .into()
+            },
+            _ => crate::i18n::reboot_hint(crate::domain::audit::RebootHint::Unsupported),
+        };
+        assert!(result.message.contains(&expected));
     }
 }
 

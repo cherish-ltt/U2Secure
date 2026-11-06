@@ -26,6 +26,7 @@ fn report() -> AuditReport {
         ufw_enabled: false,
         auto_updates_enabled: false,
         system_up_to_date: false,
+        reboot_hint: crate::domain::audit::RebootHint::Unsupported,
         lynis_installed: false,
         logwatch_installed: false,
         aide_installed: false,
@@ -106,6 +107,19 @@ fn audit_output_includes_every_status_and_detail() {
 }
 
 #[test]
+fn audit_output_preserves_the_collected_reboot_hint_and_scope() {
+    use crate::domain::audit::RebootHint;
+    let text = rendered("reboot-hints");
+    for hint in [
+        RebootHint::Found("/run/reboot-required"),
+        RebootHint::NotFound("/var/run/reboot-required"),
+        RebootHint::Unsupported,
+    ] {
+        assert!(text.contains(&crate::i18n::reboot_hint(hint)));
+    }
+}
+
+#[test]
 fn summary_preserves_details_artifacts_and_correct_totals() {
     let text = rendered("summary");
     for marker in [
@@ -164,6 +178,77 @@ fn noninteractive_steps_keep_safe_defaults_and_original_mirror() {
 }
 
 #[test]
+fn cli_plan_cancel_and_edit_never_approve_stale_inputs() {
+    let original = RunPlan::new(
+        &[StepKind::SshPortChange],
+        ExecuteParams {
+            new_ssh_port: Some(2201),
+            ..Default::default()
+        },
+        PackageMirror::Original,
+    );
+    assert!(review_plan(original.clone(), |_| 2, |_| panic!("cancel must not edit")).is_none());
+    assert!(review_plan(original.clone(), |_| 1, |_| None).is_none());
+    let mut review_count = 0;
+    let approved = review_plan(
+        original,
+        |plan| {
+            review_count += 1;
+            if review_count == 1 {
+                assert_eq!(plan.params.new_ssh_port, Some(2201));
+                1
+            } else {
+                assert_eq!(plan.params.new_ssh_port, Some(2202));
+                assert_eq!(plan.mirror, PackageMirror::Ustc);
+                0
+            }
+        },
+        |selected| {
+            assert_eq!(selected, [StepKind::SshPortChange, StepKind::RestartSsh]);
+            Some(RunPlan::new(
+                &[StepKind::SystemUpdate, StepKind::SshPortChange],
+                ExecuteParams {
+                    new_ssh_port: Some(2202),
+                    apply_ssh_changes: true,
+                    ..Default::default()
+                },
+                PackageMirror::Ustc,
+            ))
+        },
+    )
+    .unwrap();
+    assert_eq!(review_count, 2);
+    assert_eq!(approved.params.new_ssh_port, Some(2202));
+    assert!(approved.params.apply_ssh_changes);
+    assert_eq!(
+        approved.selected,
+        [
+            StepKind::SystemUpdate,
+            StepKind::SshPortChange,
+            StepKind::RestartSsh
+        ]
+    );
+}
+
+#[test]
+fn cli_plan_output_uses_shared_preview_without_sensitive_fields() {
+    let text = rendered("plan");
+    let plan = RunPlan::new(
+        &[StepKind::SshKeySetup],
+        ExecuteParams {
+            ssh_key_username: Some("deploy-fixture".into()),
+            ssh_key_action: Some(SshKeyAction::PasteKey("key-body-fixture".into())),
+            ..Default::default()
+        },
+        PackageMirror::Original,
+    );
+    for line in plan.lines() {
+        assert!(text.contains(&line), "missing {line}");
+    }
+    assert!(!text.contains("key-body-fixture"));
+}
+
+#[test]
 fn isolated_render_child() {
     let Ok(mode) = std::env::var("U2SECURE_CLI_RENDER") else {
         return;
@@ -175,6 +260,15 @@ fn isolated_render_child() {
         StepResult::failed(StepKind::AutoUpdates, "failed-first"),
     ];
     match mode.as_str() {
+        "plan" => print_plan(&RunPlan::new(
+            &[StepKind::SshKeySetup],
+            ExecuteParams {
+                ssh_key_username: Some("deploy-fixture".into()),
+                ssh_key_action: Some(SshKeyAction::PasteKey("key-body-fixture".into())),
+                ..Default::default()
+            },
+            PackageMirror::Original,
+        )),
         "events" => {
             print_event(&JobEvent::StepStarted {
                 kind: StepKind::Ufw,
@@ -203,6 +297,23 @@ fn isolated_render_child() {
             print_event(&JobEvent::AllFinished);
         },
         "audit" => render_audit_report(&report()),
+        "reboot-hints" => {
+            use crate::domain::audit::RebootHint;
+            let mut report = report();
+            for hint in [
+                RebootHint::Found("/run/reboot-required"),
+                RebootHint::NotFound("/var/run/reboot-required"),
+                RebootHint::Unsupported,
+            ] {
+                report.reboot_hint = hint;
+                report.items = vec![AuditItem::new(
+                    crate::i18n::tr("audit_sys_update"),
+                    report.status_for(StepKind::SystemUpdate),
+                    crate::i18n::reboot_hint(hint),
+                )];
+                render_audit_report(&report);
+            }
+        },
         "summary" => render_summary(&results, "/fixture/app.log", "/fixture/reports"),
         "empty-summary" => render_summary(&[], "/fixture/app.log", "/fixture/reports"),
         _ => panic!("unknown render fixture"),
