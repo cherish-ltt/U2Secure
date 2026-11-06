@@ -24,6 +24,8 @@
 
 > 面向 Linux 运维人员的安全加固工具。支持 **TUI 终端图形界面**与**传统 CLI** 交互式加固，以及独立的 **`audit` 只读报告**。加固流程涵盖系统更新、用户创建、SSH、防火墙、入侵防御、审计与自动更新。
 
+当前版本：[v0.7.0](docs/versions/v0.7.0.md)。
+
 ## 目录
 
 - [概述](#概述)
@@ -31,7 +33,9 @@
 - [快速开始](#快速开始)
 - [启动模式](#启动模式)
 - [只读审计报告](#只读审计报告)
+- [SSH 连接上下文检查](#ssh-连接上下文检查)
 - [TUI 界面](#tui-界面)
+  - [执行前复核](#执行前复核)
 - [功能详解](#功能详解)
   - [Step 0：环境审计](#step-0环境审计)
   - [Step 1 ~ Step 12：加固步骤](#step-1--step-12加固步骤)
@@ -52,6 +56,8 @@
 - **执行计划预览**：单项与批量在参数、镜像齐备后统一核对步骤顺序、目标及 SSH 生效授权，可返回修改或取消。
 - **只读审计**：`audit` 无需 TTY，输出文本或稳定 JSON，不创建操作日志或报告文件
 - **SSH 连接上下文**：CLI/TUI 可查询显式用户和连接条件对应的认证值，保留全局未验证结论
+- **批次记录**：执行后保存独立 JSON，关联步骤结局、已登记撤销和配置备份；保存失败单独报告
+- **系统待重启提示**：更新后及审计时只读检查 Debian/Ubuntu 标记，区分发现、未发现和不支持
 - 每步执行前检测状态，不重复配置
 - 同批次创建用户与设置密钥时，同一用户只生成一次密钥，执行器会明确报告跳过重复生成。
 - 支持自动备份与回退；SSH 生效尝试是整批提交边界，其后失败或中断保留修改并要求人工检查
@@ -75,7 +81,7 @@ npm 安装仅在下载完整且落盘成功后替换本地二进制；下载或�
 `python3 tests/release_tag_test.py` 验证标签传递，不触发真实发布。
 crates.io Trusted Publishing 不支持 `workflow_run`，当前 crates.io 自动路径不可用；
 维护者确认 Binary Build 成功且该版本矩阵中的 Linux 资产齐全后，须手动派发 `cargo-publish.yml`。
-npm 仍在 Binary Build 成功后自动发布，具体命令及升级兼容说明见 [v0.6.0](docs/versions/v0.6.0.md)。
+npm 仍在 Binary Build 成功后自动发布，具体命令及升级兼容说明见 [v0.7.0](docs/versions/v0.7.0.md)。
 
 | 项目 | 支持情况 |
 |------|---------|
@@ -94,6 +100,7 @@ src/
 │   ├── audit.rs            # AuditReport（全项目唯一状态真值）、AuditStatus、PackageManager
 │   ├── steps.rs            # StepKind、HardeningStep trait、ExecuteParams、StepResult/StepOutcome
 │   ├── mirror.rs           # PackageMirror（临时软件源值对象）
+│   ├── ssh_context.rs      # 显式 SSH 连接条件与输入校验
 │   ├── errors.rs           # DomainError
 │   └── undo.rs             # UndoAction（可撤销操作值对象）
 ├── application/            # 应用层
@@ -105,6 +112,8 @@ src/
 │   ├── audit.rs            # 共用只读探测，区分正常发现与采集失败
 │   ├── capture.rs          # 命令输出内存采集（限时、限量、进程组清理）
 │   ├── artifacts.rs        # 报告目录（扫描产物持久化）
+│   ├── batch_record.rs     # 批次结果、已登记撤销及配置备份索引
+│   ├── reboot.rs           # Debian/Ubuntu 系统待重启标记
 │   ├── package_mirror.rs   # 临时软件源：主机改写 / 延迟探测 / apt -o 覆盖
 │   ├── lynis.rs            # lynis-report.dat 解析
 │   ├── aide.rs             # aide 配置探测/兜底生成、数据库初始化与验证
@@ -113,6 +122,8 @@ src/
 └── presentation/           # 表示层
     ├── audit.rs            # 独立 text / JSON 审计报告
     ├── cli.rs              # dialoguer 交互式 CLI
+    ├── plan.rs             # CLI/TUI 共用执行计划预览
+    ├── ssh_context.rs      # SSH 连接条件输入与结果展示
     └── tui.rs              # ratatui 终端图形界面（TUI）
 ```
 
@@ -135,8 +146,8 @@ U2Secure 通过**环境审计 → 五大防护域 12 步加固 → 生效校验*
 > **仅支持 Linux**：U2Secure 依赖 apt/dnf、ufw、sshd、systemd 与 `/var/log` 等 Linux 专有组件，
 > 只发布 Linux 二进制；在 macOS/Windows 上请通过 Docker 或 Linux 服务器/虚拟机使用。
 
-后续 Binary Build 在原有 GNU 目标外增加 musl，共生成以下四个 Release 资产；
-已发布的 v0.5.0 仍只有 GNU 资产，本次 CI 更新不自动补发或改写该版本：
+自 v0.6.0 起，Binary Build 生成以下四个 Release 资产；
+已发布的 v0.5.0 仍只有 GNU 资产：
 
 | 架构 | GNU 资产 | musl 资产 |
 |------|----------|-----------|
@@ -324,7 +335,7 @@ U2SECURE_TEST_SSHD=/usr/sbin/sshd U2SECURE_TEST_SSH_KEYGEN=/usr/bin/ssh-keygen \
 ## TUI 界面
 
 ```
-┌─ U2Secure v0.4.0 — Linux 服务器安全加固工具 ──────────┐
+┌─ U2Secure v0.7.0 — Linux 服务器安全加固工具 ──────────┐
 ├─ 审计报告 ────────────────────────────────────────────┤
 │ ✅root ❌SSH:22 ❌sudo用户 ❌UFW ❌fail2ban ...       │
 ├──────────────────────┬────────────────────────────────┤
@@ -427,18 +438,18 @@ sudo u2secure
 
 | 步骤 | 功能 | 幂等检查 | 交互需求 | 回退操作 |
 |------|------|---------|---------|---------|
-| 1. 系统更新 | `apt update && apt upgrade -y` | 检查缓存是否过期 | 无 | 不可回退（仅记录日志） |
+| 1. 系统更新 | `apt update && apt upgrade -y` | 检查缓存是否过期 | 无 | 已发生的软件包更新不可回退，保留结果与日志 |
 | 2. 非 root 用户创建 | `useradd` + `usermod -aG sudo` + `passwd -l` + 自动生成 ED25519 密钥 | 检查是否有 sudo 用户 | 用户名、是否锁定密码 | `userdel -r <username>` |
 | 3. 禁止 root SSH 登录 | `sshd_config` 中 `PermitRootLogin prohibit-password` | 检查当前配置值 | 无 | 从 `.bak` 恢复 |
-| 4. SSH 端口修改 | 修改 `Port` 指令，UFW 放行新端口 | 端口是否为 22 | 新端口号 | 恢复备份 + 删除 UFW 规则 |
+| 4. SSH 端口修改 | 已启用的 UFW 先放行新端口，再修改 `Port` 指令 | 端口是否为 22 | 新端口号 | SSH 生效边界前恢复配置及 UFW 快照 |
 | 5. 禁止密码登录 | 修改 `PasswordAuthentication` 和 `ChallengeResponseAuthentication` | 检查当前配置值 | **前置条件**：必须有 sudo 用户 | 从 `.bak` 恢复 |
-| 6. ED25519 密钥设置 | 生成新密钥对 / 粘贴已有公钥到 `authorized_keys` | 检查 `authorized_keys` 是否存在 | 用户选择 + 密钥内容 | 删除生成的文件 |
-| 7. UFW 防火墙配置 | `ufw allow {port}` + `ufw --force enable` | 检查 UFW 是否已启用 | 无 | 删除规则 + 关闭 UFW（如之前未启用） |
+| 6. ED25519 密钥设置 | 生成新密钥对 / 粘贴已有公钥到 `authorized_keys` | 检查 `authorized_keys` 是否存在 | 用户选择 + 密钥内容 | 边界前恢复旧文件或移除本次新建文件，恢复失败保留备份 |
+| 7. UFW 防火墙配置 | `ufw allow {port}` + `ufw --force enable` | 检查 UFW 是否已启用 | 无 | 边界前恢复 IPv4/IPv6 规则、配置与原启用状态 |
 | 8. Fail2ban 安装配置 | 安装 fail2ban，配置监狱规则（用当前 SSH 端口） | 检查 `fail2ban-server` 路径 | 无 | `systemctl stop` + `apt remove` |
 | 9. 自动安全更新 🕒 | 安装 `unattended-upgrades`，写入 APT 定时配置 | 检查服务或配置文件 | 无 | `systemctl stop` + `apt remove` |
 | 10. 安全扫描 🕒 | 安装 lynis（发行版官方源）并执行 `lynis audit system --quick --cronjob`，完整输出落盘 | 检查 `which lynis` | 无 | `apt remove lynis` |
 | 11. 日志与审计增强 🕒 | 安装 logwatch + aide（apt 系并装 `aide-common`），生成日志报告，探测并校验 aide 配置后初始化数据库，确保每日完整性检查 | 检查 `which logwatch/aide`、aide 数据库是否已存在 | 无 | `apt remove logwatch aide aide-common` |
-| 12. SSH 服务重启 | `sshd -t` 验证语法 → 选择存在的 `sshd.service` / `ssh.service` 并重启 → 确认 `active` | **配置未变更时直接跳过**（比较配置文件与 sshd 进程启动时间） | 无 | 从 `.bak` 恢复后重启 |
+| 12. SSH 服务重启 | `sshd -t` 验证语法 → 选择存在的 `sshd.service` / `ssh.service` 并重启 → 确认 `active` | 本批无配置写入且无待生效提示时跳过 | 必须事先授权生效，否则仅报告待生效 | 语法或服务探测失败可回退；开始尝试重启后保留整批修改 |
 
 > 🕒 标记的步骤（9/10/11）为**可选步骤**：需要联网安装软件、耗时较长，**默认不勾选**，只有用户主动勾选才会执行。
 
@@ -467,12 +478,13 @@ passwd -l deploy                        # 锁定密码（强制密钥登录）
 
 ```bash
 # 工具内部逻辑：
-# 1. 读取当前端口（默认 22）
+# 1. 读取当前端口设置，准备新端口输入
 # 2. 随机生成建议端口（1024-65535，避开常见服务端口）
 # 3. 用户确认或输入新端口
-# 4. 备份 /etc/ssh/sshd_config → /etc/ssh/sshd_config.bak.{时间戳}
-# 5. 写入 Port {新端口}
-# 6. 如果 UFW 已启用，执行 ufw allow {新端口}
+# 4. 如果 UFW 已启用，快照规则及配置并登记撤销，成功放行新端口后继续
+# 5. 验证临时候选 SSH 配置的语法与有效目标值
+# 6. 备份 /etc/ssh/sshd_config → /etc/ssh/sshd_config.bak.{随机唯一后缀}
+# 7. 写入已验证候选；是否重启生效由本批授权与执行结果决定
 ```
 
 #### 步骤 6 详解：ED25519 密钥设置
@@ -500,6 +512,7 @@ passwd -l deploy                        # 锁定密码（强制密钥登录）
 
 ```
 /var/log/u2secure/
+├── batch-<批次标识>.json          # 批次结果与配置备份索引（不含配置或密钥正文）
 ├── steps/12-log-audit.log        # 当前步骤的实时命令输出（UI 尾随显示的就是它）
 ├── mirror-<时间戳>.log            # 临时软件源的 apt update 输出
 ├── lynis-<时间戳>.log            # lynis 完整扫描输出（人类可读）
@@ -575,7 +588,7 @@ aide 每日脚本会显式带上步骤 11 探测到的 `--config`，并按 AIDE 
 - 只替换已知上游主机（`archive.ubuntu.com`、`deb.debian.org`、`security.ubuntu.com` 等），
   自建/内网源不会被改动；仅配置了 `mirrorlist` 的 repo 会跳过并在结果中说明。
 - 临时目录随运行结束（含中断、异常）自动清理。
-- 若镜像预热（`apt update`）失败，自动回退到原始源继续执行，不阻塞流程。
+- 镜像预热（`apt update`）连接失败时先重试三次，再交由用户决定，不自动回退原始源。
 
 > 只有当本次勾选的步骤会改动软件包（步骤 1/8/9/10/11）时才会弹出选择。
 
@@ -591,9 +604,9 @@ aide 每日脚本会显式带上步骤 11 探测到的 `--config`，并按 AIDE 
 
 | 选项 | 说明 |
 |------|------|
-| 重试 | 沿用当前源重新执行（尚未执行任何步骤，无副作用） |
+| 重试 | 沿用当前源，复核计划后重新预热；尚未执行加固步骤，但先前预热可能已更新缓存 |
 | 更换源 | 重新选择预设镜像或输入自定义源 |
-| 取消执行 | 终止本次运行，未做任何修改 |
+| 取消执行 | 停止后续预热和加固步骤，不撤销先前预热或缓存更新 |
 
 超时判定为"连续 30 秒命令没有任何新输出"，避免镜像站挂起时无限等待；每次尝试最长 5 分钟。
 
@@ -626,13 +639,13 @@ aide 每日脚本会显式带上步骤 11 探测到的 `--config`，并按 AIDE 
 
 用户删除撤销同样检查 `userdel` 是否启动及退出成功；失败时报告用户名、原始错误与命令输出，不会误报用户已删除，其他独立撤销仍继续执行。
 
-回退按 **后进先出（LIFO）** 顺序执行。例如，如果用户依次执行了"创建用户"→"修改 SSH 端口"→"启用 UFW"，回退顺序为：
+回退按实际登记动作的 **后进先出（LIFO）** 顺序执行。例如，已启用 UFW 时，用户创建后修改 SSH 端口，
+先登记 UFW 快照恢复，再登记 SSH 配置恢复；若在 SSH 生效边界前失败，相关动作顺序为：
 
 ```
-1. 关闭 UFW（如果之前未启用）
-2. 删除 UFW 端口放行规则
-3. 从备份恢复 sshd_config（撤销端口修改）
-4. 删除用户
+1. 从备份恢复 sshd_config
+2. 恢复 UFW 原规则、配置与启用状态
+3. 逆序执行用户创建期间登记的密钥清理、用户删除等动作
 ```
 
 每个回退操作输出到 stderr：
@@ -739,14 +752,15 @@ UFW 操作前快照 IPv4/IPv6 规则与启用配置，撤销恢复原状态，�
 全项目行覆盖率，不排除入口、界面或系统模块来满足门槛。CLI 输出和 TUI 内存画布测试
 不启动真实交互入口；系统命令使用子进程私有 PATH 中的假程序，配置、日志与报告使用临时目录。
 macOS 开发机不得运行实际加固；即使只测试渲染，也须隔离可能创建报告目录或探测系统的调用。
-v0.6.0 发布前实测：全项目行覆盖率 **86.31%（6771/7845）**，211 项 Rust 测试通过，
-无失败或忽略项；隔离 Linux 的 26 个审计及探测场景通过，含真实 OpenSSH/UFW 与无落盘跟踪。
+v0.7.0 四项功能集成实测：全项目行覆盖率 **87.40%（7839/8969）**，253 项 Rust 测试通过，
+无失败或忽略项；隔离 Linux OpenSSH 的 10 组连接条件、每组三项认证值与直接查询结果一致。
 覆盖率和审计验收不证明远程连通性或实际加固后的服务可用性。
 
 ## 版本历史
 
 | 版本 | 日期 | 亮点 |
 |------|------|------|
+| [v0.7.0](docs/versions/v0.7.0.md) | 2026-11-06 | 执行前计划复核、SSH 连接上下文检查、批次结果与配置备份索引、系统待重启提示；全项目行覆盖率 87.40% |
 | [v0.6.0](docs/versions/v0.6.0.md) | 2026-11 | 新增无需 TTY 的只读 text/JSON 审计、稳定报告契约与有界探测；UFW 检测不写锁；Linux GNU/musl 四目标资产；全项目行覆盖率 86.31% |
 | [v0.5.0](docs/versions/v0.5.0.md) | 2026-11 | 修复全部已报告问题及 SSH 密钥安全边界；明确 SSH 生效提交边界、批次回退和命令取消语义；npm 下载完整性与发布标签修复；全项目行覆盖率 85.50% |
 | [v0.4.1](docs/versions/v0.4.1.md) | 2026-09 | 修复步骤 11 AIDE 数据库初始化失败（退出码 17）：安装 aide-common、探测并校验配置、生成不覆盖基线的兜底配置；发布流水线改为二进制构建成功后再发包；构建目标收敛为 Linux x86_64/ARM64 |
