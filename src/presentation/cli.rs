@@ -7,6 +7,7 @@ use crate::domain::audit::{AuditReport, AuditStatus};
 use crate::domain::mirror::PackageMirror;
 use crate::domain::steps::{ExecuteParams, SshKeyAction, StepKind, StepOutcome, StepResult};
 use crate::infrastructure::{artifacts, package_mirror, system};
+use crate::presentation::plan::{self, RunPlan};
 
 /// 运行交互式 CLI
 pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
@@ -51,60 +52,26 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
         Err(error) => eprintln!("{error}"),
     }
 
-    // ── 步骤选择 ──
-    let selected_steps = step_selection(&report);
-
-    if selected_steps.is_empty() {
+    let Some(mut plan) = collect_run_plan(&report, None) else {
         println!(
             "\n{} {}",
             "ℹ️".yellow(),
             crate::i18n::tr("cli_no_selection")
         );
         return;
-    }
-
-    // ── 确认执行清单 ──
-    println!(
-        "\n{} {}",
-        "📋".bright_blue(),
-        crate::i18n::tr("cli_will_execute")
-    );
-    for s in &selected_steps {
-        let status = s.check_default_status(&report);
-        println!("  {} {}", status.icon(), s.label());
-    }
-
-    if !Confirm::new()
-        .with_prompt(crate::i18n::tr("cli_confirm"))
-        .default(false)
-        .interact()
-        .unwrap_or(false)
-    {
-        println!("\n{} {}", "ℹ️".yellow(), crate::i18n::tr("cli_cancelled"));
-        return;
-    }
-
-    // ── 收集交互式步骤的参数 ──
-    println!(
-        "\n{} {}\n",
-        "📝".bright_blue(),
-        crate::i18n::tr("cli_collecting")
-    );
-    let params = collect_step_params(&selected_steps, &report);
-
-    // ── 临时软件源（涉及安装软件包时才询问）──
-    let mut mirror = select_mirror(&selected_steps);
-
-    // ── 执行（实时输出，长耗时步骤不会"假卡住"）──
-    println!(
-        "\n{} {}\n",
-        "⚙️".bright_green(),
-        crate::i18n::tr("cli_executing")
-    );
+    };
 
     let log_path = orchestrator.logger().path().to_string();
     loop {
-        let runner = StepRunner::new(orchestrator.logger()).with_mirror(mirror.clone());
+        let Some(reviewed) = review_plan(plan, prompt_plan, |selected| {
+            collect_run_plan(&report, Some(selected))
+        }) else {
+            println!("\n{}", crate::i18n::tr("plan_cancelled"));
+            return;
+        };
+        plan = reviewed;
+        println!("\n{}\n", crate::i18n::tr("cli_executing"));
+        let runner = StepRunner::new(orchestrator.logger()).with_mirror(plan.mirror.clone());
         let mut mirror_failure = None;
         let mut on_event = |event: JobEvent| {
             if let JobEvent::MirrorFailed { reason } = &event {
@@ -112,7 +79,7 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
             }
             print_event(&event);
         };
-        let results = runner.run(&selected_steps, &params, &mut on_event);
+        let results = runner.run(&plan.selected, &plan.params, &mut on_event);
 
         let Some(reason) = mirror_failure else {
             // ── 总结报告 ──
@@ -132,7 +99,7 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
         match choice {
             0 => continue,
             1 => {
-                mirror = select_mirror(&selected_steps);
+                plan.mirror = select_mirror(&plan.selected);
                 continue;
             },
             _ => {
@@ -145,6 +112,48 @@ pub fn run_interactive(orchestrator: &HardeningOrchestrator) {
             },
         }
     }
+}
+
+fn collect_run_plan(report: &AuditReport, previous: Option<&[StepKind]>) -> Option<RunPlan> {
+    let selected = step_selection(report, previous);
+    if selected.is_empty() {
+        return None;
+    }
+    println!("\n{}\n", crate::i18n::tr("cli_collecting"));
+    let params = collect_step_params(&selected, report);
+    let mirror = select_mirror(&selected);
+    Some(RunPlan::new(&selected, params, mirror))
+}
+
+fn review_plan(
+    mut plan: RunPlan,
+    mut choose: impl FnMut(&RunPlan) -> usize,
+    mut edit: impl FnMut(&[StepKind]) -> Option<RunPlan>,
+) -> Option<RunPlan> {
+    loop {
+        match choose(&plan) {
+            0 => return Some(plan),
+            1 => plan = edit(&plan.selected)?,
+            _ => return None,
+        }
+    }
+}
+
+fn print_plan(plan: &RunPlan) {
+    println!("\n{}", crate::i18n::tr("plan_title"));
+    for line in plan.lines() {
+        println!("{line}");
+    }
+}
+
+fn prompt_plan(plan: &RunPlan) -> usize {
+    print_plan(plan);
+    Select::new()
+        .with_prompt(crate::i18n::tr("plan_decision"))
+        .items(plan::choices())
+        .default(2)
+        .interact()
+        .unwrap_or(2)
 }
 
 /// 实时事件输出
@@ -505,7 +514,7 @@ fn render_audit_report(report: &AuditReport) {
 }
 
 /// 步骤选择 UI
-fn step_selection(report: &AuditReport) -> Vec<StepKind> {
+fn step_selection(report: &AuditReport, previous: Option<&[StepKind]>) -> Vec<StepKind> {
     let all_steps = StepKind::all();
 
     let items: Vec<String> = all_steps
@@ -534,7 +543,12 @@ fn step_selection(report: &AuditReport) -> Vec<StepKind> {
         .defaults(
             &all_steps
                 .iter()
-                .map(|step| step.default_checked(report))
+                .map(|step| {
+                    previous.map_or_else(
+                        || step.default_checked(report),
+                        |selected| selected.contains(step),
+                    )
+                })
                 .collect::<Vec<_>>(),
         )
         .interact()

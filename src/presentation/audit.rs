@@ -37,7 +37,7 @@ struct Document<'a> {
     schema_version: u32,
     tool_version: &'static str,
     collected_at: &'a str,
-    check_scope: [&'static str; 8],
+    check_scope: [&'static str; 9],
     is_root: bool,
     package_manager: &'static str,
     checks: Vec<Check>,
@@ -107,6 +107,7 @@ fn document<'a>(report: &AuditReport, collected_at: &'a str) -> Document<'a> {
         check_scope: [
             "local-read-only",
             "apt-cache-age-not-package-upgrades",
+            "debian-ubuntu-reboot-marker-not-complete-patch-activation",
             "sudo-wheel-members-not-complete-sudo-policy",
             "ssh-global-only-no-connection-or-key-verification",
             "ssh-include-match-multiple-ports-unverified",
@@ -138,7 +139,13 @@ fn status_code(status: AuditStatus) -> &'static str {
 
 fn details(report: &AuditReport, kind: StepKind) -> Value {
     match kind {
-        StepKind::SystemUpdate => json!({"apt_cache_recent": report.system_up_to_date}),
+        StepKind::SystemUpdate => json!({
+            "apt_cache_recent": report.system_up_to_date,
+            "reboot_hint": {
+                "status": report.reboot_hint.status(),
+                "source": report.reboot_hint.source(),
+            },
+        }),
         StepKind::UserCreation => json!({"sudo_users": report.sudo_users}),
         StepKind::SshRootLogin => json!({
             "global_config_verified": report.ssh_config_verified,
@@ -218,10 +225,14 @@ fn text_detail(report: &AuditReport, kind: StepKind) -> String {
     let yes_no = |value| tr(if value { "audit_yes" } else { "audit_no" });
     let flag = |value, yes, no| tr(if value { yes } else { no }).to_string();
     match kind {
-        StepKind::SystemUpdate => flag(
-            report.system_up_to_date,
-            "audit_detail_sys_uptodate",
-            "audit_detail_cache_not_recent",
+        StepKind::SystemUpdate => format!(
+            "{}; {}",
+            flag(
+                report.system_up_to_date,
+                "audit_detail_sys_uptodate",
+                "audit_detail_cache_not_recent",
+            ),
+            crate::i18n::reboot_hint(report.reboot_hint),
         ),
         StepKind::UserCreation => {
             if report.sudo_users.is_empty() {

@@ -49,6 +49,7 @@
 - 首次运行自动审计系统当前安全状态，对已加固项目标记"安全可靠"（**幂等**）
 - **TUI 模式**：ratatui 终端图形界面，步骤列表 + 日志面板 + 进度条，支持单项强制执行
 - **CLI 模式**：传统 dialoguer 向导式交互，兼容原版体验
+- **执行计划预览**：单项与批量在参数、镜像齐备后统一核对步骤顺序、目标及 SSH 生效授权，可返回修改或取消。
 - **只读审计**：`audit` 无需 TTY，输出文本或稳定 JSON，不创建操作日志或报告文件
 - **SSH 连接上下文**：CLI/TUI 可查询显式用户和连接条件对应的认证值，保留全局未验证结论
 - 每步执行前检测状态，不重复配置
@@ -245,7 +246,7 @@ u2secure audit --help                   # 查看用法，无需 root
 
 | 检查 ID | `details` 字段 |
 |---------|------------------|
-| `system-update` | `apt_cache_recent`：布尔值 |
+| `system-update` | `apt_cache_recent`：布尔值；`reboot_hint`：对象，见下文 |
 | `user-creation` | `sudo_users`：用户名字符串数组 |
 | `ssh-root-login` | `global_config_verified`：布尔值；`root_login_restricted`：布尔值或 `null` |
 | `ssh-port-change` | `global_config_verified`：布尔值；`port`：端口整数或 `null` |
@@ -258,12 +259,17 @@ u2secure audit --help                   # 查看用法，无需 root
 | `log-audit` | `logwatch_installed`、`aide_installed`：布尔值；`scan_executed`：固定 `false` |
 | `restart-ssh` | `restart_needed_hint`：布尔值；`live_settings_verified`：固定 `false` |
 
+`reboot_hint` 是 schema 1 的兼容新增字段：`status` 为 `found`（发现提示）、
+`not_found`（未发现受支持提示）或 `unsupported`（无法判断）；`source` 为检查的绝对路径，
+不支持时为 `null`。它只补充维护信息，不改变 `apt_cache_recent`、检查状态或 SSH 重启含义。
+
 ### 检查范围与限制
 
 | `check_scope` 代码 | 含义 |
 |--------------------|------|
 | `local-read-only` | 本机只读检查，不安装软件、修改配置、重启服务或执行扫描 |
 | `apt-cache-age-not-package-upgrades` | 仅按 APT 缓存是否小于 7 天判断，不查询待升级包；缓存缺失也可提示更新 |
+| `debian-ubuntu-reboot-marker-not-complete-patch-activation` | 仅检查 Debian/Ubuntu 重启标记；缺失不保证无需重启，也不验证补丁完整生效 |
 | `sudo-wheel-members-not-complete-sudo-policy` | 检查 sudo（缺失时 wheel）组中 UID ≥ 1000 的成员，不解析完整 sudo 策略 |
 | `ssh-global-only-no-connection-or-key-verification` | 使用 `sshd -T -f` 的全局配置，不验证连接上下文、实际远程登录或密钥 |
 | `ssh-include-match-multiple-ports-unverified` | Include、Match、多端口或无法取得有效 SSH 配置时，三个 SSH 配置项保持 `partial`，未验证值为 `null` |
@@ -274,6 +280,20 @@ u2secure audit --help                   # 查看用法，无需 root
 `root_login_restricted: true` 可能对应 `PermitRootLogin prohibit-password`，仍可允许密钥登录。
 配置文件缺失或 `sshd` 不存在、返回普通非零退出码时可报告 SSH 未验证；被信号终止属于采集失败。配置不可读取、不是普通文件、
 超过读取限制或不是 UTF-8 则属于采集失败。任何状态都不能替代从另一终端建立真实 SSH 连接的验证。
+
+### 系统待重启提示
+
+系统更新成功后、交互审计和独立 text/JSON 审计均使用同一只读探测。TUI 选中“系统更新”时，
+右栏显示提示、来源和限制。按 `/etc/os-release` 的精确 `ID` 识别平台，文件缺失时才读取
+`/usr/lib/os-release`；Debian 检查 `/run/reboot-required`，Ubuntu 检查
+`/var/run/reboot-required`。其他发行版（含仅声明 `ID_LIKE` 的衍生版）明确显示不支持。
+
+仅检查标记存在性，不读取包清单、不安装诊断软件、不执行或安排系统重启。
+“未发现发行版提示”不保证无需重启，不能证明内核、服务或补丁均已生效。
+独立审计遇到配置读取或标记检查错误时显式失败；包更新已成功后若提示探测失败，
+保留更新成功结果并显示诊断，不因此触发回退。
+标记约定参见 [Debian Policy §9.12](https://www.debian.org/doc/debian-policy/ch-opersys.html#signaling-that-a-reboot-is-required)
+和 [Ubuntu Server 文档](https://ubuntu.com/server/docs/how-to/software/automatic-updates/#reboots)。
 
 ## SSH 连接上下文检查
 
@@ -327,8 +347,8 @@ U2SECURE_TEST_SSHD=/usr/sbin/sshd U2SECURE_TEST_SSH_KEYGEN=/usr/bin/ssh-keygen \
 | `↑` / `↓` | 移动步骤光标 |
 | `Space` | 切换选中/取消 |
 | `a` | 全选 / 取消全选（可选步骤 9/10/11 除外，需手动勾选） |
-| `Enter` | 批量执行所有勾选步骤（**后台线程执行，界面不阻塞**） |
-| `e` | **立即执行当前步骤**（不依赖勾选状态） |
+| `Enter` | 收集所有勾选步骤的参数，复核计划后批量执行（**后台线程执行，界面不阻塞**） |
+| `e` | 准备当前单项步骤，复核计划后执行（不依赖勾选状态） |
 | `r` | 重新执行环境审计 |
 | `c` | 只读查询一组 SSH 连接上下文，独立显示认证值 |
 | `Ctrl+C` | 中断当前命令 → SSH 生效边界前回滚本批修改，边界后保留并报告 → 停止后续步骤 |
@@ -340,7 +360,20 @@ U2SECURE_TEST_SSHD=/usr/sbin/sshd U2SECURE_TEST_SSH_KEYGEN=/usr/bin/ssh-keygen \
 
 后台状态检查不会消费业务事件；步骤结果、镜像失败原因与正常完成信号都先交给界面处理，只有排空队列后仍缺少完成信号的断连才报告异常。
 
-### TUI 弹窗操作
+### 执行前复核
+
+CLI 与 TUI 共用执行器的排序和去重规则；选择 SSH 配置步骤时，预览会显示末尾自动加入的
+SSH 生效检查。输入与镜像选择完成后，核对目标用户、账户密码锁定选择、SSH 端口、密钥动作类型、
+软件源及 SSH 生效授权，再选择“执行 / 返回修改 / 取消”。公钥正文、凭据和内部日志参数不出现在计划中。
+
+“返回修改”回到步骤选择，重新收集参数和镜像后必须再次复核。TUI 预览用 `PgUp` / `PgDn`
+滚动内容，`↑` / `↓` 选择操作，`Enter` 确认，`Esc` 或 `Ctrl+C` 取消，默认选中取消。
+首次确认前不会启动本批步骤或首次镜像预热；预热失败后重试或更换镜像也要复核，取消仅阻止下一次预热
+和后续步骤，不撤销先前可能发生的缓存更新。镜像选择中的延迟探测仍可能联网。
+
+预览表示计划和输入，并不预言结果：SSH 重启取决于授权与实际待生效配置，UFW 可能因运行时条件延后；
+创建用户也会生成密钥，只有本批成功创建同一用户后，相同目标的重复密钥生成才跳过。未提供的参数明确标示，
+执行器仍负责前置条件、失败与跳过判定。
 
 ### TUI 弹窗操作
 

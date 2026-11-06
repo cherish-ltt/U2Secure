@@ -6,6 +6,7 @@ mod capture;
 pub mod logger;
 pub mod lynis;
 pub mod package_mirror;
+pub mod reboot;
 pub mod rollback;
 pub mod ssh;
 #[cfg(unix)]

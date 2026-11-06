@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod cli;
+mod plan;
 mod ssh_context;
 pub mod tui;
 

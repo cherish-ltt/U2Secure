@@ -44,6 +44,7 @@ use crate::infrastructure::rollback;
 use crate::infrastructure::system;
 use crate::infrastructure::{artifacts, package_mirror};
 use crate::presentation::cli;
+use crate::presentation::plan::{self, RunPlan};
 
 // ---------------------------------------------------------------------------
 // 类型别名与常量
@@ -102,7 +103,7 @@ struct CurrentStep {
     live_log: String,
 }
 
-/// 等待启动的运行（镜像源选择完成后启动）
+/// 等待完整计划确认的运行
 #[derive(Clone)]
 struct PendingRun {
     selected: Vec<StepKind>,
@@ -113,6 +114,10 @@ struct PendingRun {
 enum Popup {
     SshContextResult {
         text: String,
+        scroll: u16,
+    },
+    PlanReview {
+        selected: usize,
         scroll: u16,
     },
     /// SSH 密钥：输入用户名
@@ -317,9 +322,7 @@ fn run_app(
                     request_cancel(app);
                 } else if app.popup.is_some() {
                     // 弹窗中按 Ctrl+C 视为取消弹窗，避免误退出丢失已选步骤
-                    app.popup = None;
-                    app.pending = None;
-                    app.status = crate::i18n::tr("tui_mirror_cancelled").into();
+                    cancel_pending(app);
                 } else {
                     return Ok(());
                 }
@@ -494,7 +497,7 @@ fn handle_select_mode(
         SelectAction::Collect(selected) => {
             let params = suspend_for_params(terminal, &selected, &app.report);
             app.pending = Some(PendingRun { selected, params });
-            begin_or_ask_mirror(app, terminal, orchestrator);
+            begin_or_ask_mirror(app, terminal);
         },
         SelectAction::SelectKeyUser => open_key_user_popup(app, system::detect_sudo_users()),
         SelectAction::SshContext => {
@@ -695,11 +698,9 @@ fn handle_popup(
     match action {
         PopupAction::Redraw => {},
         PopupAction::StartPending => start_pending(app, orchestrator),
-        PopupAction::AskMirror => begin_or_ask_mirror(app, terminal, orchestrator),
+        PopupAction::AskMirror => begin_or_ask_mirror(app, terminal),
         PopupAction::OpenMirror => open_mirror_popup(app),
-        PopupAction::Queue(kind, params) => {
-            queue_single_run(app, terminal, kind, *params, orchestrator)
-        },
+        PopupAction::Queue(kind, params) => queue_single_run(app, terminal, kind, *params),
     }
     terminal.draw(|f| render(f, app))?;
     Ok(())
@@ -729,6 +730,31 @@ fn popup_action(
             KeyCode::Esc | KeyCode::Enter => app.popup = None,
             _ => {},
         },
+        Popup::PlanReview {
+            ref mut selected,
+            ref mut scroll,
+        } => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => *selected = selected.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => *selected = selected.saturating_add(1).min(2),
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(5),
+            KeyCode::PageDown => *scroll = scroll.saturating_add(5),
+            KeyCode::Enter if *selected == 0 => {
+                app.popup = None;
+                action = PopupAction::StartPending;
+            },
+            KeyCode::Enter if *selected == 1 => {
+                if let Some(pending) = app.pending.take() {
+                    for step in &mut app.steps {
+                        step.checked = pending.selected.contains(&step.kind);
+                    }
+                }
+                app.popup = None;
+                app.mode = AppMode::Select;
+                app.status = crate::i18n::tr("plan_edit_hint").into();
+            },
+            KeyCode::Enter | KeyCode::Esc => cancel_pending(app),
+            _ => {},
+        },
         Popup::MirrorSelect {
             ref items,
             ref mut selected,
@@ -746,8 +772,7 @@ fn popup_action(
                 match PackageMirror::all().get(index).cloned() {
                     Some(mirror) => {
                         app.mirror = mirror;
-                        app.popup = None;
-                        action = PopupAction::StartPending;
+                        show_plan(app);
                     },
                     // 列表最后一项为"自定义输入源"
                     None => {
@@ -758,12 +783,11 @@ fn popup_action(
                     },
                 }
             },
-            // 取消选择 → 回退原始软件源并继续执行
+            // 取消选择 → 回退原始软件源并复核计划
             KeyCode::Esc => {
-                app.popup = None;
                 app.mirror = PackageMirror::Original;
                 app.status = crate::i18n::tr("tui_mirror_use_original").into();
-                action = PopupAction::StartPending;
+                show_plan(app);
             },
             _ => {},
         },
@@ -784,8 +808,7 @@ fn popup_action(
             KeyCode::Enter if !value.is_empty() => match PackageMirror::custom(value) {
                 Ok(mirror) => {
                     app.mirror = mirror;
-                    app.popup = None;
-                    action = PopupAction::StartPending;
+                    show_plan(app);
                 },
                 Err(e) => *error = Some(e.message().to_string()),
             },
@@ -804,15 +827,14 @@ fn popup_action(
             KeyCode::Enter => match *selected {
                 // 重试（沿用当前源）
                 0 => {
-                    app.popup = None;
-                    action = PopupAction::StartPending;
+                    show_plan(app);
                 },
                 // 更换源
                 1 => {
                     app.popup = None;
                     action = PopupAction::AskMirror;
                 },
-                // 取消执行（未做任何修改）
+                // 取消下一次尝试，已有预热不属于可撤销修改
                 _ => {
                     app.popup = None;
                     app.pending = None;
@@ -1061,19 +1083,16 @@ fn popup_action(
 // 执行启动
 // ---------------------------------------------------------------------------
 
-/// 需要询问临时软件源时先弹窗，否则直接启动
-fn begin_or_ask_mirror(
-    app: &mut TuiApp,
-    terminal: &mut TuiTerminal,
-    orchestrator: &HardeningOrchestrator,
-) {
+/// 需要询问临时软件源时先弹窗，否则直接复核计划
+fn begin_or_ask_mirror(app: &mut TuiApp, terminal: &mut TuiTerminal) {
     let needs_mirror = app
         .pending
         .as_ref()
         .is_some_and(|p| p.selected.iter().any(|s| s.touches_package_manager()));
 
     if !needs_mirror {
-        start_pending(app, orchestrator);
+        app.mirror = PackageMirror::Original;
+        show_plan(app);
         return;
     }
 
@@ -1082,6 +1101,19 @@ fn begin_or_ask_mirror(
     let _ = terminal.draw(|f| render(f, app));
     open_mirror_popup(app);
     app.status.clear();
+}
+
+fn show_plan(app: &mut TuiApp) {
+    app.popup = Some(Popup::PlanReview {
+        selected: 2,
+        scroll: 0,
+    });
+}
+
+fn cancel_pending(app: &mut TuiApp) {
+    app.popup = None;
+    app.pending = None;
+    app.status = crate::i18n::tr("plan_cancelled").into();
 }
 
 /// 打开镜像源选择弹窗（默认选中上次使用的镜像）
@@ -1119,13 +1151,12 @@ fn mirror_items() -> Vec<String> {
     items
 }
 
-/// 单项执行：直接排队并启动（若涉及包管理器则先询问镜像源）
+/// 单项执行：收集授权与镜像后统一复核计划
 fn queue_single_run(
     app: &mut TuiApp,
     terminal: &mut TuiTerminal,
     kind: StepKind,
     mut params: ExecuteParams,
-    orchestrator: &HardeningOrchestrator,
 ) {
     if kind.modifies_ssh_config() || kind == StepKind::RestartSsh {
         suspend_for_dialog(terminal, || {
@@ -1140,12 +1171,24 @@ fn queue_single_run(
         open_mirror_popup(app);
         app.status.clear();
     } else {
-        start_pending(app, orchestrator);
+        app.mirror = PackageMirror::Original;
+        show_plan(app);
     }
 }
 
 /// 启动排队中的运行（后台线程）
 fn start_pending(app: &mut TuiApp, orchestrator: &HardeningOrchestrator) {
+    start_pending_with(app, |selected, params, mirror| {
+        StepRunner::new(orchestrator.logger())
+            .with_mirror(mirror)
+            .spawn(selected, params)
+    });
+}
+
+fn start_pending_with(
+    app: &mut TuiApp,
+    spawn: impl FnOnce(Vec<StepKind>, ExecuteParams, PackageMirror) -> JobHandle,
+) {
     // 保留 pending：源连接失败后用户可能重试或更换源
     let Some(pending) = app.pending.clone() else {
         return;
@@ -1155,7 +1198,8 @@ fn start_pending(app: &mut TuiApp, orchestrator: &HardeningOrchestrator) {
     app.results.clear();
     app.live_tail.clear();
     app.summary_scroll = 0;
-    app.progress = (0, pending.selected.len());
+    let plan = RunPlan::new(&pending.selected, pending.params, app.mirror.clone());
+    app.progress = (0, plan.selected.len());
     for step in &mut app.steps {
         step.state = StepExecState::Idle;
     }
@@ -1163,8 +1207,7 @@ fn start_pending(app: &mut TuiApp, orchestrator: &HardeningOrchestrator) {
     app.mode = AppMode::Executing;
     app.status.clear();
 
-    let runner = StepRunner::new(orchestrator.logger()).with_mirror(app.mirror.clone());
-    app.job = Some(runner.spawn(pending.selected, pending.params));
+    app.job = Some(spawn(plan.selected, plan.params, plan.mirror));
 }
 
 /// 标记某个步骤的执行状态
@@ -1481,6 +1524,17 @@ fn render_right_help(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiAp
         )]),
     ];
 
+    if app
+        .steps
+        .get(app.cursor)
+        .is_some_and(|step| step.kind == StepKind::SystemUpdate)
+    {
+        lines.insert(
+            0,
+            Line::from(crate::i18n::reboot_hint(app.report.reboot_hint)),
+        );
+    }
+
     if !app.status.is_empty() {
         lines.push(Line::from(vec![Span::styled(
             format!(" {} ", app.status),
@@ -1770,6 +1824,10 @@ fn render_popup(
     suggested_port: u16,
 ) {
     let popup = app.popup.as_ref().unwrap();
+    if let Popup::PlanReview { selected, scroll } = popup {
+        render_plan(frame, area, app, *selected, *scroll);
+        return;
+    }
 
     if let Popup::SshContextResult { text, scroll } = popup {
         frame.render_widget(Clear, area);
@@ -1789,7 +1847,7 @@ fn render_popup(
 
     // 统一弹窗尺寸逻辑
     let (title, height, content_lines, hint_line) = match popup {
-        Popup::SshContextResult { .. } => return,
+        Popup::SshContextResult { .. } | Popup::PlanReview { .. } => return,
         Popup::MirrorSelect { items, selected } => (
             format!(" {} ", crate::i18n::tr("tui_mirror_title")),
             (items.len() + 5).clamp(6, 14) as u16,
@@ -1914,6 +1972,47 @@ fn render_popup(
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(hint_line, Style::default().dim()))),
         hint_area,
+    );
+}
+
+fn render_plan(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    app: &TuiApp,
+    selected: usize,
+    scroll: u16,
+) {
+    let Some(pending) = &app.pending else {
+        return;
+    };
+    let plan = RunPlan::new(
+        &pending.selected,
+        pending.params.clone(),
+        app.mirror.clone(),
+    );
+    frame.render_widget(Clear, area);
+    let block = Block::bordered().title(crate::i18n::tr("plan_title"));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let sections = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+    let text = plan.lines().join("\n");
+    let body = Paragraph::new(text).wrap(Wrap { trim: false });
+    frame.render_widget(body.scroll((scroll, 0)), sections[0]);
+    frame.render_widget(
+        Paragraph::new(Text::from(render_select_options(
+            &plan::choices(),
+            selected,
+        ))),
+        sections[1],
+    );
+    frame.render_widget(
+        Paragraph::new(crate::i18n::tr("plan_keys")).style(Style::default().dim()),
+        sections[2],
     );
 }
 
