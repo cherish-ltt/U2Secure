@@ -115,6 +115,16 @@ impl HardeningStep for SystemUpdateStep {
     }
 
     fn execute(&self, params: &ExecuteParams) -> Result<StepResult, DomainError> {
+        self.execute_at(params, std::path::Path::new("/"))
+    }
+}
+
+impl SystemUpdateStep {
+    fn execute_at(
+        &self,
+        params: &ExecuteParams,
+        root: &std::path::Path,
+    ) -> Result<StepResult, DomainError> {
         let pm = system::detect_package_manager();
         if pm == PackageManager::Unknown {
             return Ok(StepResult::skipped(
@@ -150,10 +160,17 @@ impl HardeningStep for SystemUpdateStep {
             ));
         }
 
-        Ok(
-            StepResult::changed(self.kind(), crate::i18n::tr("result_sys_updated"))
-                .with_artifacts(vec![log]),
+        let hint = match crate::infrastructure::reboot::detect(root) {
+            Ok(hint) => crate::i18n::reboot_hint(hint),
+            Err(error) => {
+                crate::i18n::tr("reboot_probe_failed").replace("{err}", &error.to_string())
+            },
+        };
+        Ok(StepResult::changed(
+            self.kind(),
+            format!("{}; {hint}", crate::i18n::tr("result_sys_updated")),
         )
+        .with_artifacts(vec![log]))
     }
 }
 

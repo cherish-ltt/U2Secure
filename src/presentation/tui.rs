@@ -1430,6 +1430,17 @@ fn render_right_help(frame: &mut Frame, area: ratatui::layout::Rect, app: &TuiAp
         )]),
     ];
 
+    if app
+        .steps
+        .get(app.cursor)
+        .is_some_and(|step| step.kind == StepKind::SystemUpdate)
+    {
+        lines.insert(
+            0,
+            Line::from(crate::i18n::reboot_hint(app.report.reboot_hint)),
+        );
+    }
+
     if !app.status.is_empty() {
         lines.push(Line::from(vec![Span::styled(
             format!(" {} ", app.status),

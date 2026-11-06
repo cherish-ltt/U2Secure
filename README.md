@@ -244,7 +244,7 @@ u2secure audit --help                   # 查看用法，无需 root
 
 | 检查 ID | `details` 字段 |
 |---------|------------------|
-| `system-update` | `apt_cache_recent`：布尔值 |
+| `system-update` | `apt_cache_recent`：布尔值；`reboot_hint`：对象，见下文 |
 | `user-creation` | `sudo_users`：用户名字符串数组 |
 | `ssh-root-login` | `global_config_verified`：布尔值；`root_login_restricted`：布尔值或 `null` |
 | `ssh-port-change` | `global_config_verified`：布尔值；`port`：端口整数或 `null` |
@@ -257,12 +257,17 @@ u2secure audit --help                   # 查看用法，无需 root
 | `log-audit` | `logwatch_installed`、`aide_installed`：布尔值；`scan_executed`：固定 `false` |
 | `restart-ssh` | `restart_needed_hint`：布尔值；`live_settings_verified`：固定 `false` |
 
+`reboot_hint` 是 schema 1 的兼容新增字段：`status` 为 `found`（发现提示）、
+`not_found`（未发现受支持提示）或 `unsupported`（无法判断）；`source` 为检查的绝对路径，
+不支持时为 `null`。它只补充维护信息，不改变 `apt_cache_recent`、检查状态或 SSH 重启含义。
+
 ### 检查范围与限制
 
 | `check_scope` 代码 | 含义 |
 |--------------------|------|
 | `local-read-only` | 本机只读检查，不安装软件、修改配置、重启服务或执行扫描 |
 | `apt-cache-age-not-package-upgrades` | 仅按 APT 缓存是否小于 7 天判断，不查询待升级包；缓存缺失也可提示更新 |
+| `debian-ubuntu-reboot-marker-not-complete-patch-activation` | 仅检查 Debian/Ubuntu 重启标记；缺失不保证无需重启，也不验证补丁完整生效 |
 | `sudo-wheel-members-not-complete-sudo-policy` | 检查 sudo（缺失时 wheel）组中 UID ≥ 1000 的成员，不解析完整 sudo 策略 |
 | `ssh-global-only-no-connection-or-key-verification` | 使用 `sshd -T -f` 的全局配置，不验证连接上下文、实际远程登录或密钥 |
 | `ssh-include-match-multiple-ports-unverified` | Include、Match、多端口或无法取得有效 SSH 配置时，三个 SSH 配置项保持 `partial`，未验证值为 `null` |
@@ -273,6 +278,20 @@ u2secure audit --help                   # 查看用法，无需 root
 `root_login_restricted: true` 可能对应 `PermitRootLogin prohibit-password`，仍可允许密钥登录。
 配置文件缺失或 `sshd` 不存在、返回普通非零退出码时可报告 SSH 未验证；被信号终止属于采集失败。配置不可读取、不是普通文件、
 超过读取限制或不是 UTF-8 则属于采集失败。任何状态都不能替代从另一终端建立真实 SSH 连接的验证。
+
+### 系统待重启提示
+
+系统更新成功后、交互审计和独立 text/JSON 审计均使用同一只读探测。TUI 选中“系统更新”时，
+右栏显示提示、来源和限制。按 `/etc/os-release` 的精确 `ID` 识别平台，文件缺失时才读取
+`/usr/lib/os-release`；Debian 检查 `/run/reboot-required`，Ubuntu 检查
+`/var/run/reboot-required`。其他发行版（含仅声明 `ID_LIKE` 的衍生版）明确显示不支持。
+
+仅检查标记存在性，不读取包清单、不安装诊断软件、不执行或安排系统重启。
+“未发现发行版提示”不保证无需重启，不能证明内核、服务或补丁均已生效。
+独立审计遇到配置读取或标记检查错误时显式失败；包更新已成功后若提示探测失败，
+保留更新成功结果并显示诊断，不因此触发回退。
+标记约定参见 [Debian Policy §9.12](https://www.debian.org/doc/debian-policy/ch-opersys.html#signaling-that-a-reboot-is-required)
+和 [Ubuntu Server 文档](https://ubuntu.com/server/docs/how-to/software/automatic-updates/#reboots)。
 
 ## TUI 界面
 
