@@ -154,6 +154,77 @@ fn noninteractive_steps_keep_safe_defaults_and_original_mirror() {
 }
 
 #[test]
+fn cli_plan_cancel_and_edit_never_approve_stale_inputs() {
+    let original = RunPlan::new(
+        &[StepKind::SshPortChange],
+        ExecuteParams {
+            new_ssh_port: Some(2201),
+            ..Default::default()
+        },
+        PackageMirror::Original,
+    );
+    assert!(review_plan(original.clone(), |_| 2, |_| panic!("cancel must not edit")).is_none());
+    assert!(review_plan(original.clone(), |_| 1, |_| None).is_none());
+    let mut review_count = 0;
+    let approved = review_plan(
+        original,
+        |plan| {
+            review_count += 1;
+            if review_count == 1 {
+                assert_eq!(plan.params.new_ssh_port, Some(2201));
+                1
+            } else {
+                assert_eq!(plan.params.new_ssh_port, Some(2202));
+                assert_eq!(plan.mirror, PackageMirror::Ustc);
+                0
+            }
+        },
+        |selected| {
+            assert_eq!(selected, [StepKind::SshPortChange, StepKind::RestartSsh]);
+            Some(RunPlan::new(
+                &[StepKind::SystemUpdate, StepKind::SshPortChange],
+                ExecuteParams {
+                    new_ssh_port: Some(2202),
+                    apply_ssh_changes: true,
+                    ..Default::default()
+                },
+                PackageMirror::Ustc,
+            ))
+        },
+    )
+    .unwrap();
+    assert_eq!(review_count, 2);
+    assert_eq!(approved.params.new_ssh_port, Some(2202));
+    assert!(approved.params.apply_ssh_changes);
+    assert_eq!(
+        approved.selected,
+        [
+            StepKind::SystemUpdate,
+            StepKind::SshPortChange,
+            StepKind::RestartSsh
+        ]
+    );
+}
+
+#[test]
+fn cli_plan_output_uses_shared_preview_without_sensitive_fields() {
+    let text = rendered("plan");
+    let plan = RunPlan::new(
+        &[StepKind::SshKeySetup],
+        ExecuteParams {
+            ssh_key_username: Some("deploy-fixture".into()),
+            ssh_key_action: Some(SshKeyAction::PasteKey("key-body-fixture".into())),
+            ..Default::default()
+        },
+        PackageMirror::Original,
+    );
+    for line in plan.lines() {
+        assert!(text.contains(&line), "missing {line}");
+    }
+    assert!(!text.contains("key-body-fixture"));
+}
+
+#[test]
 fn isolated_render_child() {
     let Ok(mode) = std::env::var("U2SECURE_CLI_RENDER") else {
         return;
@@ -165,6 +236,15 @@ fn isolated_render_child() {
         StepResult::failed(StepKind::AutoUpdates, "failed-first"),
     ];
     match mode.as_str() {
+        "plan" => print_plan(&RunPlan::new(
+            &[StepKind::SshKeySetup],
+            ExecuteParams {
+                ssh_key_username: Some("deploy-fixture".into()),
+                ssh_key_action: Some(SshKeyAction::PasteKey("key-body-fixture".into())),
+                ..Default::default()
+            },
+            PackageMirror::Original,
+        )),
         "events" => {
             print_event(&JobEvent::StepStarted {
                 kind: StepKind::Ufw,

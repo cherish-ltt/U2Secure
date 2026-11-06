@@ -70,6 +70,36 @@ pub fn tr(key: &'static str) -> &'static str {
 
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
+        "plan_title" => "执行计划预览",
+        "plan_decision" => "核对后选择操作",
+        "plan_execute" => "执行",
+        "plan_edit" => "返回修改",
+        "plan_cancel" => "取消",
+        "plan_unset" => "未提供（执行时仍会校验）",
+        "plan_new_user" => "新管理员用户：{user}",
+        "plan_user_locked" => "账户密码：锁定",
+        "plan_user_unlocked" => "账户密码：不额外锁定",
+        "plan_user_key" => "创建用户步骤还会为该用户生成 ED25519 密钥并添加公钥。",
+        "plan_ssh_port" => "目标 SSH 端口：{port}",
+        "plan_ssh_key" => "密钥目标用户：{user}；操作：{action}",
+        "plan_key_generate" => "生成新密钥对",
+        "plan_key_replace" => "已授权替换已有密钥对",
+        "plan_key_paste" => "追加提供的公钥（正文不展示）",
+        "plan_key_duplicate" => "仅在本批成功创建同一用户并生成密钥后，重复生成步骤才会跳过。",
+        "plan_mirror" => "软件源：{mirror}",
+        "plan_mirror_unused" => "本批不涉及软件包安装或更新",
+        "plan_ssh_authorized" => {
+            "SSH 生效：已授权；仅有待生效配置时才尝试重启与验证，不保证一定重启。"
+        },
+        "plan_ssh_not_authorized" => "SSH 生效：未授权；有配置变化时保留待生效状态，不尝试重启。",
+        "plan_ufw_conditional" => "UFW：遇 SSH 配置待生效等运行时条件可能延后，预览不代表已放行。",
+        "plan_conditions" => "这是执行顺序和输入复核；前置条件、可选步骤失败及跳过仍由执行时判断。",
+        "plan_cancel_scope" => {
+            "首次确认前不启动步骤或镜像预热；重试或换源后取消，不会撤销此前发生的预热。"
+        },
+        "plan_cancelled" => "已取消本次执行；不会启动下一次镜像预热或后续步骤。",
+        "plan_edit_hint" => "请修改步骤选择，再按 Enter 重新收集参数和镜像并复核计划。",
+        "plan_keys" => "↑↓ 选择操作  PgUp/PgDn 滚动计划  Enter 确认  Esc 取消",
         "err_audit_failed" => "审计失败: {msg}",
         "err_command_unavailable" => "命令不可用: {program}",
         "audit_probe_failed" => "{program}: 探测失败或输出无效",
@@ -278,8 +308,6 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "cli_select_steps" => "请选择要执行的加固步骤（已安全配置的默认不勾选）：",
         "cli_hint_nav" => "提示：方向键上下移动，空格选择，回车确认",
         "cli_collecting" => "开始收集配置参数...",
-        "cli_will_execute" => "以下步骤将被执行：",
-        "cli_confirm" => "是否继续？",
         "cli_cancelled" => "用户取消。",
         "cli_no_selection" => "未选择任何步骤，退出。",
         "cli_executing" => "开始执行加固步骤...",
@@ -430,7 +458,6 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "tui_mirror_title" => "选择临时软件源",
         "tui_mirror_hint" => "仅本次运行生效，系统原始源不做改动",
         "tui_mirror_probing" => "正在探测镜像源延迟...",
-        "tui_mirror_cancelled" => "已取消镜像源选择",
         "tui_result_artifact" => "报告:",
         "tui_result_report_dir" => "报告目录:",
         "tui_result_view" => "查看完整结果:",
@@ -448,7 +475,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "mirror_action_retry" => "重试",
         "mirror_action_change" => "更换源",
         "mirror_action_abort" => "取消执行",
-        "mirror_abort_hint" => "已取消执行，未做任何修改",
+        "mirror_abort_hint" => "已取消后续执行；此前的镜像预热可能已更新缓存。",
         "tui_mirror_use_original" => "已取消选择，使用原始软件源继续",
         "cli_mirror_failed_prompt" => "软件源不可用，请选择下一步操作",
         "result_cmd_no_response" => "连接无响应（30 秒内没有任何数据）",
@@ -460,6 +487,48 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
+        "plan_title" => "Execution plan review",
+        "plan_decision" => "Choose after reviewing the plan",
+        "plan_execute" => "Execute",
+        "plan_edit" => "Return to edit",
+        "plan_cancel" => "Cancel",
+        "plan_unset" => "Not provided (validated at execution)",
+        "plan_new_user" => "New administrator: {user}",
+        "plan_user_locked" => "Account password: lock",
+        "plan_user_unlocked" => "Account password: do not additionally lock",
+        "plan_user_key" => {
+            "User creation also generates an ED25519 key pair and adds its public key for that user."
+        },
+        "plan_ssh_port" => "Target SSH port: {port}",
+        "plan_ssh_key" => "Key target user: {user}; action: {action}",
+        "plan_key_generate" => "Generate a new key pair",
+        "plan_key_replace" => "Replace an existing key pair (authorized)",
+        "plan_key_paste" => "Append the supplied public key (contents hidden)",
+        "plan_key_duplicate" => {
+            "Duplicate generation is skipped only after this batch successfully creates the same user and key pair."
+        },
+        "plan_mirror" => "Package source: {mirror}",
+        "plan_mirror_unused" => "No package installation or update in this batch",
+        "plan_ssh_authorized" => {
+            "SSH activation: authorized; restart and verification are attempted only for pending changes, not guaranteed."
+        },
+        "plan_ssh_not_authorized" => {
+            "SSH activation: not authorized; configuration changes remain pending without a restart attempt."
+        },
+        "plan_ufw_conditional" => {
+            "UFW may be deferred by runtime conditions such as pending SSH changes; this preview does not mean traffic is allowed."
+        },
+        "plan_conditions" => {
+            "This reviews order and inputs; prerequisites, optional failures and skipped steps are still evaluated at execution."
+        },
+        "plan_cancel_scope" => {
+            "No steps or mirror warm-up start before the first confirmation; cancelling a retry or mirror change does not undo earlier warm-up."
+        },
+        "plan_cancelled" => "Run cancelled; no next mirror warm-up or subsequent steps will start.",
+        "plan_edit_hint" => {
+            "Edit step selection, then press Enter to collect parameters and mirror again and review the updated plan."
+        },
+        "plan_keys" => "Up/Down: choice  PgUp/PgDn: scroll  Enter: confirm  Esc: cancel",
         "err_audit_failed" => "Audit failed: {msg}",
         "err_command_unavailable" => "Command unavailable: {program}",
         "audit_probe_failed" => "{program}: probe failed or returned invalid output",
@@ -685,8 +754,6 @@ fn en(key: &str) -> Option<&'static str> {
         },
         "cli_hint_nav" => "Hint: arrow keys to move, space to select, enter to confirm",
         "cli_collecting" => "Collecting configuration parameters...",
-        "cli_will_execute" => "The following steps will be executed:",
-        "cli_confirm" => "Continue?",
         "cli_cancelled" => "Cancelled.",
         "cli_no_selection" => "No steps selected, exiting.",
         "cli_executing" => "Starting hardening steps...",
@@ -852,7 +919,6 @@ fn en(key: &str) -> Option<&'static str> {
         "tui_mirror_title" => "Temporary repository mirror",
         "tui_mirror_hint" => "Applies to this run only; system repositories are not modified",
         "tui_mirror_probing" => "Probing mirror latency...",
-        "tui_mirror_cancelled" => "Mirror selection cancelled",
         "tui_result_artifact" => "Report:",
         "tui_result_report_dir" => "Report dir:",
         "tui_result_view" => "View full results:",
@@ -872,7 +938,9 @@ fn en(key: &str) -> Option<&'static str> {
         "mirror_action_retry" => "Retry",
         "mirror_action_change" => "Change source",
         "mirror_action_abort" => "Abort run",
-        "mirror_abort_hint" => "Run aborted, no changes were made",
+        "mirror_abort_hint" => {
+            "Further execution cancelled; earlier mirror warm-up may already have updated caches."
+        },
         "tui_mirror_use_original" => {
             "Selection cancelled, continuing with the original repositories"
         },
@@ -887,6 +955,36 @@ fn en(key: &str) -> Option<&'static str> {
 
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
+        "plan_title" => "執行計畫預覽",
+        "plan_decision" => "核對後選擇操作",
+        "plan_execute" => "執行",
+        "plan_edit" => "返回修改",
+        "plan_cancel" => "取消",
+        "plan_unset" => "未提供（執行時仍會驗證）",
+        "plan_new_user" => "新管理員使用者：{user}",
+        "plan_user_locked" => "帳號密碼：鎖定",
+        "plan_user_unlocked" => "帳號密碼：不額外鎖定",
+        "plan_user_key" => "建立使用者步驟還會為該使用者產生 ED25519 金鑰並新增公鑰。",
+        "plan_ssh_port" => "目標 SSH 連接埠：{port}",
+        "plan_ssh_key" => "金鑰目標使用者：{user}；操作：{action}",
+        "plan_key_generate" => "產生新金鑰對",
+        "plan_key_replace" => "已授權替換現有金鑰對",
+        "plan_key_paste" => "附加提供的公鑰（不顯示內容）",
+        "plan_key_duplicate" => "僅在本批成功建立同一使用者並產生金鑰後，重複產生步驟才會跳過。",
+        "plan_mirror" => "軟體來源：{mirror}",
+        "plan_mirror_unused" => "本批不涉及軟體套件安裝或更新",
+        "plan_ssh_authorized" => {
+            "SSH 生效：已授權；僅有待生效設定時才嘗試重啟與驗證，不保證一定重啟。"
+        },
+        "plan_ssh_not_authorized" => "SSH 生效：未授權；有設定變更時保留待生效狀態，不嘗試重啟。",
+        "plan_ufw_conditional" => "UFW：遇 SSH 設定待生效等執行時條件可能延後，預覽不代表已放行。",
+        "plan_conditions" => "這是執行順序與輸入核對；前置條件、可選步驟失敗與略過仍由執行時判斷。",
+        "plan_cancel_scope" => {
+            "首次確認前不啟動步驟或鏡像預熱；重試或換源後取消，不會撤銷先前發生的預熱。"
+        },
+        "plan_cancelled" => "已取消本次執行；不會啟動下一次鏡像預熱或後續步驟。",
+        "plan_edit_hint" => "請修改步驟選擇，再按 Enter 重新收集參數與鏡像並核對計畫。",
+        "plan_keys" => "↑↓ 選擇操作  PgUp/PgDn 捲動計畫  Enter 確認  Esc 取消",
         "err_audit_failed" => "稽核失敗: {msg}",
         "err_command_unavailable" => "命令無法使用: {program}",
         "audit_probe_failed" => "{program}: 探測失敗或輸出無效",
@@ -1081,8 +1179,6 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "cli_select_steps" => "請選擇要執行的強化步驟（已安全配置的預設不勾選）：",
         "cli_hint_nav" => "提示：方向鍵上下移動，空格選擇，回車確認",
         "cli_collecting" => "開始收集配置參數...",
-        "cli_will_execute" => "以下步驟將被執行：",
-        "cli_confirm" => "是否繼續？",
         "cli_cancelled" => "用戶取消。",
         "cli_no_selection" => "未選擇任何步驟，退出。",
         "cli_executing" => "開始執行強化步驟...",
@@ -1230,7 +1326,6 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "tui_mirror_title" => "選擇臨時軟體源",
         "tui_mirror_hint" => "僅本次執行生效，系統原始源不做改動",
         "tui_mirror_probing" => "正在偵測鏡像源延遲...",
-        "tui_mirror_cancelled" => "已取消鏡像源選擇",
         "tui_result_artifact" => "報告:",
         "tui_result_report_dir" => "報告目錄:",
         "tui_result_view" => "查看完整結果:",
@@ -1248,7 +1343,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "mirror_action_retry" => "重試",
         "mirror_action_change" => "更換源",
         "mirror_action_abort" => "取消執行",
-        "mirror_abort_hint" => "已取消執行，未做任何修改",
+        "mirror_abort_hint" => "已取消後續執行；先前的鏡像預熱可能已更新快取。",
         "tui_mirror_use_original" => "已取消選擇，使用原始軟體源繼續",
         "cli_mirror_failed_prompt" => "軟體源不可用，請選擇下一步操作",
         "result_cmd_no_response" => "連線無回應（30 秒內沒有任何資料）",
