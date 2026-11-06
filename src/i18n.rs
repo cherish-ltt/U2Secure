@@ -66,6 +66,16 @@ pub fn tr(key: &'static str) -> &'static str {
     translate(key)
 }
 
+pub fn reboot_hint(hint: crate::domain::audit::RebootHint) -> String {
+    use crate::domain::audit::RebootHint;
+    let detail = match hint {
+        RebootHint::Found(source) => tr("reboot_found").replace("{source}", source),
+        RebootHint::NotFound(source) => tr("reboot_not_found").replace("{source}", source),
+        RebootHint::Unsupported => tr("reboot_unsupported").into(),
+    };
+    format!("{detail} {}", tr("reboot_scope"))
+}
+
 // 简体中文翻译表（原始语言）
 
 fn zh_cn(key: &str) -> Option<&'static str> {
@@ -124,6 +134,14 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "audit_status_missing" => "未配置",
         "audit_status_needs_update" => "需要更新",
         "audit_scope_cache" => "仅检查 APT 缓存是否小于 7 天，不验证软件包已升级。",
+        "reboot_found" => "发现发行版系统重启请求（{source}），请自行安排维护。",
+        "reboot_not_found" => "未发现发行版系统重启提示（{source}）。",
+        "reboot_unsupported" => "系统待重启提示无法判断：未识别为受支持的 Debian/Ubuntu。",
+        "reboot_scope" => {
+            "仅检查 Debian/Ubuntu 约定标记；未发现不保证无需重启，不验证补丁完整生效。"
+        },
+        "reboot_probe_failed" => "系统更新已完成，但系统待重启提示探测失败：{err}",
+        "reboot_os_release_invalid" => "os-release 中的发行版 ID 无效",
         "audit_scope_accounts" => "仅检查 sudo/wheel 组中的普通用户，不验证完整 sudo 策略。",
         "audit_scope_ssh" => {
             "仅全局 SSH 配置；Include/Match、多端口或无法取得有效配置时未验证，不代表实际登录安全。"
@@ -555,6 +573,20 @@ fn en(key: &str) -> Option<&'static str> {
         "audit_scope_cache" => {
             "Checks only whether the APT cache is less than 7 days old, not whether packages have been upgraded."
         },
+        "reboot_found" => {
+            "Distribution system reboot request found ({source}); arrange maintenance as needed."
+        },
+        "reboot_not_found" => "No distribution system reboot hint found ({source}).",
+        "reboot_unsupported" => {
+            "System reboot hint unknown: not identified as supported Debian/Ubuntu."
+        },
+        "reboot_scope" => {
+            "Checks only Debian/Ubuntu marker conventions; absence does not guarantee no reboot is needed or that all patches are active."
+        },
+        "reboot_probe_failed" => {
+            "System update completed, but the system reboot hint probe failed: {err}"
+        },
+        "reboot_os_release_invalid" => "Invalid distribution ID in os-release",
         "audit_scope_accounts" => {
             "Checks regular users in the sudo/wheel groups, not the complete sudo policy."
         },
@@ -1009,6 +1041,14 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "audit_status_missing" => "未設定",
         "audit_status_needs_update" => "需要更新",
         "audit_scope_cache" => "僅檢查 APT 快取是否小於 7 天，不驗證軟體套件已升級。",
+        "reboot_found" => "發現發行版系統重新啟動請求（{source}），請自行安排維護。",
+        "reboot_not_found" => "未發現發行版系統重新啟動提示（{source}）。",
+        "reboot_unsupported" => "系統待重新啟動提示無法判斷：未識別為支援的 Debian/Ubuntu。",
+        "reboot_scope" => {
+            "僅檢查 Debian/Ubuntu 約定標記；未發現不保證無需重新啟動，不驗證修補程式完整生效。"
+        },
+        "reboot_probe_failed" => "系統更新已完成，但系統待重新啟動提示探測失敗：{err}",
+        "reboot_os_release_invalid" => "os-release 中的發行版 ID 無效",
         "audit_scope_accounts" => "僅檢查 sudo/wheel 群組中的一般使用者，不驗證完整 sudo 原則。",
         "audit_scope_ssh" => {
             "僅全域 SSH 設定；Include/Match、多連接埠或無法取得有效設定時未驗證，不代表實際登入安全。"

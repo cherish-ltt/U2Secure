@@ -26,6 +26,7 @@ fn report() -> AuditReport {
         ufw_enabled: false,
         auto_updates_enabled: false,
         system_up_to_date: false,
+        reboot_hint: crate::domain::audit::RebootHint::Unsupported,
         lynis_installed: false,
         logwatch_installed: false,
         aide_installed: false,
@@ -92,6 +93,19 @@ fn audit_output_includes_every_status_and_detail() {
     {
         assert!(text.contains(status.icon()));
         assert!(text.contains(&format!("detail-{index}")));
+    }
+}
+
+#[test]
+fn audit_output_preserves_the_collected_reboot_hint_and_scope() {
+    use crate::domain::audit::RebootHint;
+    let text = rendered("reboot-hints");
+    for hint in [
+        RebootHint::Found("/run/reboot-required"),
+        RebootHint::NotFound("/var/run/reboot-required"),
+        RebootHint::Unsupported,
+    ] {
+        assert!(text.contains(&crate::i18n::reboot_hint(hint)));
     }
 }
 
@@ -267,6 +281,23 @@ fn isolated_render_child() {
             print_event(&JobEvent::AllFinished);
         },
         "audit" => render_audit_report(&report()),
+        "reboot-hints" => {
+            use crate::domain::audit::RebootHint;
+            let mut report = report();
+            for hint in [
+                RebootHint::Found("/run/reboot-required"),
+                RebootHint::NotFound("/var/run/reboot-required"),
+                RebootHint::Unsupported,
+            ] {
+                report.reboot_hint = hint;
+                report.items = vec![AuditItem::new(
+                    crate::i18n::tr("audit_sys_update"),
+                    report.status_for(StepKind::SystemUpdate),
+                    crate::i18n::reboot_hint(hint),
+                )];
+                render_audit_report(&report);
+            }
+        },
         "summary" => render_summary(&results, "/fixture/app.log", "/fixture/reports"),
         "empty-summary" => render_summary(&[], "/fixture/app.log", "/fixture/reports"),
         _ => panic!("unknown render fixture"),

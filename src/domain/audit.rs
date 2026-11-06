@@ -105,6 +105,30 @@ impl fmt::Display for PackageManager {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RebootHint {
+    Found(&'static str),
+    NotFound(&'static str),
+    Unsupported,
+}
+
+impl RebootHint {
+    pub fn status(self) -> &'static str {
+        match self {
+            Self::Found(_) => "found",
+            Self::NotFound(_) => "not_found",
+            Self::Unsupported => "unsupported",
+        }
+    }
+
+    pub fn source(self) -> Option<&'static str> {
+        match self {
+            Self::Found(source) | Self::NotFound(source) => Some(source),
+            Self::Unsupported => None,
+        }
+    }
+}
+
 /// 系统审计报告 —— 领域实体
 #[derive(Debug, Clone)]
 pub struct AuditReport {
@@ -134,6 +158,7 @@ pub struct AuditReport {
     pub auto_updates_enabled: bool,
     /// 系统包列表是否已是最新
     pub system_up_to_date: bool,
+    pub reboot_hint: RebootHint,
     /// 是否已安装 lynis（步骤 10）
     pub lynis_installed: bool,
     /// 是否已安装 logwatch（步骤 11）

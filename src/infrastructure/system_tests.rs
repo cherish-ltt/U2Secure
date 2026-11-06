@@ -139,6 +139,11 @@ fn isolated_system_detection() {
     )
     .unwrap();
     std::fs::write(dir.join("etc/ufw/ufw.conf"), "ENABLED=no\n").unwrap();
+    std::fs::write(dir.join("etc/os-release"), "ID=debian\n").unwrap();
+    if mode == "active" {
+        std::fs::create_dir(dir.join("run")).unwrap();
+        std::fs::write(dir.join("run/reboot-required"), "").unwrap();
+    }
     let report = run_full_audit_with(ssh::SshConfig::new(&config, "sshd"), &dir, false);
     if mode == "broken" {
         assert!(matches!(report, Err(DomainError::AuditFailed(_))));
@@ -146,6 +151,24 @@ fn isolated_system_detection() {
     }
     let report = report.unwrap();
     assert_eq!(report.items.len(), 10);
+    assert_eq!(
+        report.reboot_hint,
+        if mode == "active" {
+            crate::domain::audit::RebootHint::Found("/run/reboot-required")
+        } else {
+            crate::domain::audit::RebootHint::NotFound("/run/reboot-required")
+        }
+    );
+    let update = report.items.last().unwrap();
+    assert!(
+        update
+            .detail
+            .contains(&crate::i18n::reboot_hint(report.reboot_hint))
+    );
+    assert_eq!(
+        update.status,
+        report.status_for(crate::domain::steps::StepKind::SystemUpdate)
+    );
     assert_eq!(report.is_root, mode == "active");
     assert_eq!(report.ufw_enabled, mode == "active");
     assert_eq!(report.password_auth_disabled, mode == "active");
@@ -165,6 +188,12 @@ fn isolated_system_detection() {
             .unwrap()
             .ssh_config_verified
     );
+    std::fs::remove_file(dir.join("etc/os-release")).unwrap();
+    std::fs::create_dir(dir.join("etc/os-release")).unwrap();
+    assert!(matches!(
+        run_full_audit_with(ssh::SshConfig::new(&config, "sshd"), &dir, false),
+        Err(DomainError::AuditFailed(_))
+    ));
 
     let keys = dir.join("authorized_keys");
     assert!(key_fingerprint_at(&keys).is_none());
