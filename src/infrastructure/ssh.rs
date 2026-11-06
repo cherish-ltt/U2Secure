@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::domain::errors::DomainError;
+use crate::domain::ssh_context::{SshAuthentication, SshContext};
 use crate::infrastructure::{backup, rollback};
 
 pub const CONFIG_PATH: &str = "/etc/ssh/sshd_config";
@@ -102,11 +103,53 @@ impl SshConfig {
         self.effective_at(&self.path, &content)
     }
 
+    pub fn effective_for(&self, context: &SshContext) -> Result<SshAuthentication, DomainError> {
+        super::audit::read_config(&self.path)?.ok_or_else(|| invalid_config("sshd_config"))?;
+        let mut command = Command::new(&self.program);
+        command
+            .arg("-T")
+            .arg("-f")
+            .arg(&self.path)
+            .arg("-C")
+            .arg(context.connection_spec());
+        let output = self.read_output(&mut command, "-T -C")?;
+        let value = |key: &str, allowed: &[&str]| {
+            let values: Vec<_> = output
+                .lines()
+                .filter_map(|line| line.split_once(' '))
+                .filter(|(name, _)| *name == key)
+                .map(|(_, value)| value.trim())
+                .collect();
+            match values.as_slice() {
+                [value] if allowed.contains(value) => Ok((*value).to_string()),
+                _ => Err(invalid_config(key)),
+            }
+        };
+        Ok(SshAuthentication {
+            password_authentication: value("passwordauthentication", &["yes", "no"])?,
+            kbd_interactive_authentication: value("kbdinteractiveauthentication", &["yes", "no"])?,
+            permit_root_login: value(
+                "permitrootlogin",
+                &[
+                    "yes",
+                    "no",
+                    "prohibit-password",
+                    "without-password",
+                    "forced-commands-only",
+                ],
+            )?,
+        })
+    }
+
     fn check(&self, path: &Path, flag: &str) -> Result<String, DomainError> {
-        let output = super::capture::output(
+        self.read_output(
             Command::new(&self.program).arg(flag).arg("-f").arg(path),
-            super::audit::PROBE_TIMEOUT,
-        )?;
+            flag,
+        )
+    }
+
+    fn read_output(&self, command: &mut Command, flag: &str) -> Result<String, DomainError> {
+        let output = super::capture::output(command, super::audit::PROBE_TIMEOUT)?;
         if output.status.code().is_none() {
             return Err(DomainError::AuditFailed(
                 crate::i18n::tr("audit_probe_failed").replace("{program}", "sshd"),

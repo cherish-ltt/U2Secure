@@ -442,3 +442,9 @@ ast-grep 规则（`joshuadavidthomas/ast-grep-rules`）中以下告警为**项�
 - 计划只展示明确字段与密钥动作类型，禁止输出完整参数 Debug、公钥正文或凭据；SSH 生效、UFW 延后与同批重复密钥生成必须说明运行时条件，不能显示为已完成结果。
 - 计划渲染和交互测试使用注入输入、假执行器与内存 TestBackend，不运行真实终端、审计或加固命令。
 
+### 10.13 SSH 连接上下文
+
+- `SshContext` 校验显式 user/addr/host/laddr/lport，argv 调用 `sshd -T -f -C`，继续使用 5 秒/1 MiB 内存有界采集，不编写 Include/Match 解释器，不启动或修改服务。
+- CLI/TUI 共用可取消输入及结果渲染；成功结果仅适用于已展示连接条件，保留原认证值和未验证运行时/登录的范围说明，不修改 `AuditReport`、全局 Partial 或默认勾选。
+- 上下文查询不创建额外日志或报告；失败不得回退全局值。测试默认注入临时路径及假命令；真实 OpenSSH 测试必须同时显式提供 `U2SECURE_TEST_SSHD` / `U2SECURE_TEST_SSH_KEYGEN`，仅在隔离 Linux 环境使用临时配置及临时主机密钥。
+

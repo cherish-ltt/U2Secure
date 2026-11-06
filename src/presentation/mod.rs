@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod cli;
 mod plan;
+mod ssh_context;
 pub mod tui;
 
 /// 软件源连接失败后的决策项：重试 / 更换源 / 取消执行

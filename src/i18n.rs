@@ -80,6 +80,29 @@ pub fn reboot_hint(hint: crate::domain::audit::RebootHint) -> String {
 
 fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
+        "ssh_context_title" => "SSH 连接上下文检查",
+        "ssh_context_offer" => "检查一组 SSH 连接上下文？（只读）",
+        "ssh_context_input_hint" => {
+            "请显式填写全部五项；任意一项留空取消，不自动推测用户、主机或地址。"
+        },
+        "ssh_context_user" => "目标用户名 (user)",
+        "ssh_context_addr" => "来源 IP (addr)",
+        "ssh_context_host" => "来源主机名或 IP (host，按要验证的连接填写)",
+        "ssh_context_laddr" => "服务器本地 IP (laddr)",
+        "ssh_context_lport" => "服务器本地端口 (lport)",
+        "ssh_context_invalid" => {
+            "SSH 上下文 {field} 缺失或格式无效；不接受逗号、等号、空白或控制字符"
+        },
+        "ssh_context_confirm" => "使用以上连接条件执行只读查询？",
+        "ssh_context_cancelled" => "SSH 上下文检查已取消，未查询或修改系统",
+        "ssh_context_read" => "已读取此上下文的有效认证配置",
+        "ssh_context_baseline_matches" => "这三项值符合现有认证限制基线；不代表所有认证路径安全。",
+        "ssh_context_baseline_differs" => "这三项值未全部符合现有认证限制基线；请按原值核查策略。",
+        "ssh_context_failed" => "SSH 上下文未能判断：{reason}",
+        "ssh_context_scope" => {
+            "范围：仅 OpenSSH 对以上连接条件的配置求值，不改变全局未验证/Partial 或默认步骤选择。不验证运行中服务已加载、真实登录、账户、PAM、密钥、网络、防火墙或云安全组；root 的 prohibit-password 仍允许密钥登录。"
+        },
+        "ssh_context_scroll" => "↑↓ / PgUp / PgDn 滚动；Enter / Esc 返回",
         "plan_title" => "执行计划预览",
         "plan_decision" => "核对后选择操作",
         "plan_execute" => "执行",
@@ -376,7 +399,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "tui_result_summary" => "总计: {ok} 成功, {skip} 跳过, {fail} 失败",
         "tui_result_return" => "↑↓ 滚动查看 | 其他键返回步骤列表",
         "tui_footer_select" => {
-            "↑↓/jk 移动 | Space 选择 | a 全选 | Enter 批量执行 | e 单项执行 | r 重新审计 | q 退出"
+            "↑↓/jk 移动 | Space 选择 | a 全选 | Enter 批量执行 | e 单项执行 | c SSH 上下文 | r 重新审计 | q 退出"
         },
         "tui_footer_exec" => "执行中... 按 Ctrl+C 中断",
         "tui_footer_summary" => "执行完毕 | ↑↓ 滚动 | 其他键返回步骤列表",
@@ -505,6 +528,35 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
 fn en(key: &str) -> Option<&'static str> {
     Some(match key {
+        "ssh_context_title" => "SSH connection context check",
+        "ssh_context_offer" => "Check one SSH connection context? (read-only)",
+        "ssh_context_input_hint" => {
+            "Enter all five fields explicitly; leave any field empty to cancel. No user, host or address is inferred."
+        },
+        "ssh_context_user" => "Target username (user)",
+        "ssh_context_addr" => "Source IP (addr)",
+        "ssh_context_host" => {
+            "Source hostname or IP (host, as used by the connection being checked)"
+        },
+        "ssh_context_laddr" => "Server local IP (laddr)",
+        "ssh_context_lport" => "Server local port (lport)",
+        "ssh_context_invalid" => {
+            "SSH context {field} is missing or invalid; commas, equals signs, whitespace and control characters are not accepted"
+        },
+        "ssh_context_confirm" => "Run the read-only query with these connection parameters?",
+        "ssh_context_cancelled" => "SSH context check cancelled; no query or system changes made",
+        "ssh_context_read" => "Read effective authentication settings for this context",
+        "ssh_context_baseline_matches" => {
+            "These three settings match the existing authentication restrictions; this does not certify all authentication paths."
+        },
+        "ssh_context_baseline_differs" => {
+            "These three settings do not all match the existing authentication restrictions; review the raw values against your policy."
+        },
+        "ssh_context_failed" => "SSH context could not be evaluated: {reason}",
+        "ssh_context_scope" => {
+            "Scope: only OpenSSH configuration evaluation for the supplied connection. Global unverified/Partial status and default step choices are unchanged. Live service configuration, actual login, account, PAM, keys, network, firewall and cloud security groups are not verified; prohibit-password still permits root key login."
+        },
+        "ssh_context_scroll" => "Up/Down / PgUp / PgDn to scroll; Enter / Esc to return",
         "plan_title" => "Execution plan review",
         "plan_decision" => "Choose after reviewing the plan",
         "plan_execute" => "Execute",
@@ -835,7 +887,7 @@ fn en(key: &str) -> Option<&'static str> {
         "tui_result_summary" => "Total: {ok} done, {skip} skipped, {fail} failed",
         "tui_result_return" => "↑↓ scroll | any other key returns to the step list",
         "tui_footer_select" => {
-            "↑↓/jk Move | Space Toggle | a Select all | Enter Batch | e Single | r Re-audit | q Quit"
+            "↑↓/jk Move | Space Toggle | a Select all | Enter Batch | e Single | c SSH context | r Re-audit | q Quit"
         },
         "tui_footer_exec" => "Running... Press Ctrl+C to interrupt",
         "tui_footer_summary" => "Done | ↑↓ scroll | any other key returns",
@@ -987,6 +1039,29 @@ fn en(key: &str) -> Option<&'static str> {
 
 fn zh_tw(key: &str) -> Option<&'static str> {
     Some(match key {
+        "ssh_context_title" => "SSH 連線上下文檢查",
+        "ssh_context_offer" => "檢查一組 SSH 連線上下文？（唯讀）",
+        "ssh_context_input_hint" => {
+            "請明確填寫全部五項；任意一項留空取消，不自動推測使用者、主機或位址。"
+        },
+        "ssh_context_user" => "目標使用者名稱 (user)",
+        "ssh_context_addr" => "來源 IP (addr)",
+        "ssh_context_host" => "來源主機名稱或 IP (host，依要驗證的連線填寫)",
+        "ssh_context_laddr" => "伺服器本機 IP (laddr)",
+        "ssh_context_lport" => "伺服器本機連接埠 (lport)",
+        "ssh_context_invalid" => {
+            "SSH 上下文 {field} 缺失或格式無效；不接受逗號、等號、空白或控制字元"
+        },
+        "ssh_context_confirm" => "使用以上連線條件執行唯讀查詢？",
+        "ssh_context_cancelled" => "SSH 上下文檢查已取消，未查詢或修改系統",
+        "ssh_context_read" => "已讀取此上下文的有效認證設定",
+        "ssh_context_baseline_matches" => "這三項值符合現有認證限制基線；不代表所有認證路徑安全。",
+        "ssh_context_baseline_differs" => "這三項值未全部符合現有認證限制基線；請按原值核查策略。",
+        "ssh_context_failed" => "SSH 上下文無法判斷：{reason}",
+        "ssh_context_scope" => {
+            "範圍：僅 OpenSSH 對以上連線條件的設定求值，不改變全域未驗證/Partial 或預設步驟選擇。不驗證執行中服務已載入、真實登入、帳戶、PAM、金鑰、網路、防火牆或雲端安全群組；root 的 prohibit-password 仍允許金鑰登入。"
+        },
+        "ssh_context_scroll" => "↑↓ / PgUp / PgDn 捲動；Enter / Esc 返回",
         "plan_title" => "執行計畫預覽",
         "plan_decision" => "核對後選擇操作",
         "plan_execute" => "執行",
@@ -1268,7 +1343,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "tui_result_summary" => "總計: {ok} 成功, {skip} 跳過, {fail} 失敗",
         "tui_result_return" => "↑↓ 捲動檢視 | 其他鍵返回步驟列表",
         "tui_footer_select" => {
-            "↑↓/jk 移動 | Space 選擇 | a 全選 | Enter 批次執行 | e 單項執行 | r 重新稽核 | q 退出"
+            "↑↓/jk 移動 | Space 選擇 | a 全選 | Enter 批次執行 | e 單項執行 | c SSH 上下文 | r 重新稽核 | q 退出"
         },
         "tui_footer_exec" => "執行中... 按 Ctrl+C 中斷",
         "tui_footer_summary" => "執行完畢 | ↑↓ 捲動 | 其他鍵返回步驟清單",
