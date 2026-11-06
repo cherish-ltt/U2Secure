@@ -25,7 +25,9 @@ pub fn backup_file(path: &Path) -> Result<Option<PathBuf>, DomainError> {
         let (_, path) = target.keep().map_err(|e| e.error)?;
         Ok(Some(path))
     };
-    backup().map_err(|e| {
+    let result = backup();
+    super::batch_record::backup_captured(path, &result);
+    result.map_err(|e| {
         DomainError::SystemCommandFailed(format!(
             "{} {}: {e}",
             crate::i18n::tr("err_backup"),

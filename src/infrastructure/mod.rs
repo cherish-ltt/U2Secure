@@ -2,6 +2,7 @@ pub mod aide;
 pub mod artifacts;
 mod audit;
 pub mod backup;
+pub(crate) mod batch_record;
 mod capture;
 pub mod logger;
 pub mod lynis;

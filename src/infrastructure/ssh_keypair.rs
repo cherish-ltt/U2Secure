@@ -97,10 +97,14 @@ fn install_pair(dir: Arc<KeyDirectory>, generated: &Path, replace: bool) -> io::
         backup,
     };
     let result = update.write(&contents);
-    rollback::register_undo(UndoAction::try_new(
-        crate::i18n::tr("undo_key_restore").into(),
-        Box::new(move || update.restore().map_err(key_error)),
-    ));
+    rollback::register_tracked(
+        UndoAction::try_new(
+            crate::i18n::tr("undo_key_restore").into(),
+            Box::new(move || update.restore().map_err(key_error)),
+        ),
+        "key_restore_temporary",
+        &[],
+    );
     result
 }
 

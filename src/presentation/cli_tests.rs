@@ -34,7 +34,7 @@ fn report() -> AuditReport {
     }
 }
 
-fn rendered(mode: &str) -> String {
+fn rendered_output(mode: &str) -> std::process::Output {
     let dir = tempfile::tempdir().unwrap();
     let output = Command::new(std::env::current_exe().unwrap())
         .args([
@@ -55,12 +55,18 @@ fn rendered(mode: &str) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
-    String::from_utf8(output.stdout).unwrap()
+    output
+}
+
+fn rendered(mode: &str) -> String {
+    String::from_utf8(rendered_output(mode).stdout).unwrap()
 }
 
 #[test]
 fn event_output_distinguishes_outcomes_and_shows_only_first_result_line() {
-    let text = rendered("events");
+    let output = rendered_output("events");
+    let text = String::from_utf8(output.stdout).unwrap();
+    let diagnostic = String::from_utf8(output.stderr).unwrap();
     assert!(text.contains("2/3"));
     assert!(text.contains(StepKind::Ufw.label()));
     assert!(text.contains("/fixture/live.log"));
@@ -70,10 +76,14 @@ fn event_output_distinguishes_outcomes_and_shows_only_first_result_line() {
         "failed-first",
         "fixture-log",
         "mirror-failure",
+        "/fixture/batch.json",
     ] {
         assert!(text.contains(marker), "missing {marker}: {text}");
     }
     assert!(!text.contains("result-second-line"));
+    assert!(!text.contains("fixture-record-failed"));
+    assert!(diagnostic.contains("fixture-record-failed"));
+    assert!(!diagnostic.contains("/fixture/batch.json"));
     assert!(text.contains(crate::i18n::tr("cli_interrupted")));
 }
 
@@ -278,6 +288,12 @@ fn isolated_render_child() {
                 reason: "mirror-failure".into(),
             });
             print_event(&JobEvent::Interrupted);
+            print_event(&JobEvent::BatchRecord {
+                result: Ok("/fixture/batch.json".into()),
+            });
+            print_event(&JobEvent::BatchRecord {
+                result: Err("fixture-record-failed".into()),
+            });
             print_event(&JobEvent::AllFinished);
         },
         "audit" => render_audit_report(&report()),

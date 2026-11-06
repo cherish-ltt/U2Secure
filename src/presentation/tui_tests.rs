@@ -38,6 +38,7 @@ fn app() -> TuiApp {
         mode: AppMode::Select,
         logs: vec![],
         results: vec![],
+        batch_record: None,
         progress: (0, 0),
         popup: None,
         job: None,
@@ -1164,6 +1165,34 @@ fn headless_summary_renders_all_outcomes_artifacts_and_scroll() {
         .replace("{skip}", "0")
         .replace("{fail}", "0");
     assert!(text(&draw(&app, 180, 44)).contains(&empty_stats));
+}
+
+#[test]
+fn completed_batch_record_and_save_error_are_visible_in_summary() {
+    for result in [
+        Ok("/fixture/batch.json".into()),
+        Err("fixture-record-failed".into()),
+    ] {
+        let mut app = app();
+        apply_job_events(
+            &mut app,
+            vec![
+                JobEvent::BatchRecord {
+                    result: result.clone(),
+                },
+                JobEvent::AllFinished,
+            ],
+            false,
+        );
+        assert_eq!(app.batch_record, Some(result.clone()));
+        let screen = text(&draw(&app, 180, 44));
+        let marker = match &result {
+            Ok(path) => path,
+            Err(error) => error,
+        };
+        assert!(screen.contains(marker), "{screen}");
+        assert!(app.logs.iter().any(|entry| entry.message.contains(marker)));
+    }
 }
 
 #[test]

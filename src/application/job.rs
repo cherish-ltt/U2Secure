@@ -20,6 +20,7 @@ use crate::domain::mirror::PackageMirror;
 use crate::domain::steps::{
     ExecuteParams, HardeningStep, SshKeyAction, StepKind, StepOutcome, StepResult,
 };
+use crate::infrastructure::batch_record::BatchRecord;
 use crate::infrastructure::logger::FileLogger;
 use crate::infrastructure::package_mirror::{self, MirrorSession};
 use crate::infrastructure::{artifacts, rollback, system};
@@ -109,7 +110,12 @@ pub enum JobEvent {
     /// 用户中断，回滚错误由步骤结果报告
     Interrupted,
     /// 临时软件源连接失败（重试耗尽，未执行任何步骤，等待用户决定重试/换源）
-    MirrorFailed { reason: String },
+    MirrorFailed {
+        reason: String,
+    },
+    BatchRecord {
+        result: Result<String, String>,
+    },
     /// 全部结束
     AllFinished,
 }
@@ -229,11 +235,29 @@ impl StepRunner {
         params: &ExecuteParams,
         on_event: &mut dyn FnMut(JobEvent),
     ) -> Vec<StepResult> {
+        self.run_steps_with_prepare(steps, params, on_event, |events| {
+            self.prepare_mirror(events)
+        })
+    }
+
+    fn run_steps_with_prepare(
+        &self,
+        steps: Vec<Box<dyn HardeningStep + Send>>,
+        params: &ExecuteParams,
+        on_event: &mut dyn FnMut(JobEvent),
+        prepare: impl FnOnce(&mut dyn FnMut(JobEvent)) -> Result<Option<MirrorSession>, String>,
+    ) -> Vec<StepResult> {
         static RUN_LOCK: Mutex<()> = Mutex::new(());
         // The undo stack and cancellation flag belong to one running batch at a time.
         let _batch = RUN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let checkpoint = rollback::undo_depth();
         let total = steps.len();
+        let mut record =
+            BatchRecord::begin(steps.iter().map(|step| step.kind()), self.logger.path());
+        if total == 0 {
+            record.status = "empty_plan";
+            record.disposition = "no_steps_executed";
+        }
         let report_dir = self
             .report_dir
             .clone()
@@ -251,11 +275,14 @@ impl StepRunner {
 
         // ── 临时软件源：仅在本次运行期间生效，TempDir 随作用域结束自动清理 ──
         let mut params = params.clone();
-        let mirror_session = match self.prepare_mirror(on_event) {
+        let mirror_session = match prepare(on_event) {
             Ok(session) => session,
             Err(reason) => {
                 // 源连不通：不自动回退、不执行任何步骤，交给用户决定重试/换源
                 on_event(JobEvent::MirrorFailed { reason });
+                record.status = "mirror_failed";
+                record.disposition = "no_steps_executed";
+                publish_record(record, &report_dir, on_event);
                 on_event(JobEvent::AllFinished);
                 return vec![];
             },
@@ -271,12 +298,15 @@ impl StepRunner {
             let kind = step.kind();
 
             if rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
+                record.status = "interrupted";
+                record.disposition = "registered_undo_attempted_other_changes_unknown";
                 let failures = self.rollback_on_interrupt(checkpoint, on_event);
                 if !failures.is_empty() {
                     let message = crate::i18n::tr("log_rollback_failed")
                         .replace("{errors}", &failures.join("\n"));
                     self.logger.log(&message);
                     let result = StepResult::failed(kind, message);
+                    record.step_reported(index, &result);
                     on_event(JobEvent::StepFinished(result.clone()));
                     results.push(result);
                 }
@@ -285,6 +315,7 @@ impl StepRunner {
 
             // 每个步骤独立的实时输出文件
             let live_log = format!("{steps_dir}/{:02}-{}.log", index + 1, kind.slug());
+            record.step_started(index, &live_log);
             let mut step_params = params.clone();
             step_params.report_dir = Some(report_dir.clone());
             step_params.live_log = Some(live_log.clone());
@@ -323,6 +354,17 @@ impl StepRunner {
             } else {
                 step.execute(&step_params)
             };
+            let execution_state = match &execution {
+                Err(_) => "returned_error",
+                Ok(_)
+                    if key_created
+                        || (kind == StepKind::RestartSsh
+                            && (!params.ssh_restart_required || !params.apply_ssh_changes)) =>
+                {
+                    "runner_skipped"
+                },
+                Ok(_) => "executed",
+            };
             let mut result = match execution {
                 Ok(result) => result,
                 Err(e) => StepResult::failed(
@@ -330,13 +372,25 @@ impl StepRunner {
                     crate::i18n::tr("log_step_failed_detail").replace("{err}", &e.to_string()),
                 ),
             };
+            record.step_returned(index, &result, execution_state);
             if result.is_changed() && result.ssh_restart_required {
                 params.ssh_restart_required = true;
             }
 
             // 中断发生在步骤执行中：回滚错误和步骤结果一起报告
             let interrupted = rollback::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst);
+            if interrupted {
+                record.status = "interrupted";
+            } else if result.is_failed() {
+                record.status = if kind.is_optional() {
+                    "completed_with_optional_failures"
+                } else {
+                    "failed"
+                };
+            }
             if result.ssh_activation_attempted {
+                record.ssh_activation_attempted = true;
+                record.disposition = "retained_after_ssh_activation_attempt";
                 // The service may already use the new port; reverting only files can lock users out.
                 rollback::discard_since(checkpoint);
                 if interrupted || result.is_failed() {
@@ -371,8 +425,10 @@ impl StepRunner {
                 }
                 vec![]
             } else if interrupted {
+                record.disposition = "registered_undo_attempted_other_changes_unknown";
                 self.rollback_on_interrupt(checkpoint, on_event)
             } else if stop {
+                record.disposition = "registered_undo_attempted_other_changes_unknown";
                 self.logger.log(crate::i18n::tr("log_rollback_auto"));
                 let failures = rollback::undo_since(checkpoint);
                 on_event(JobEvent::Log(crate::i18n::tr("log_rollback_auto").into()));
@@ -388,6 +444,7 @@ impl StepRunner {
                 result.message.push('\n');
                 result.message.push_str(&message);
             }
+            record.step_reported(index, &result);
             on_event(JobEvent::StepFinished(result.clone()));
             results.push(result);
             if stop {
@@ -398,6 +455,7 @@ impl StepRunner {
         rollback::discard_since(checkpoint);
         // 临时源文件随 TempDir 清理
         drop(mirror_session);
+        publish_record(record, &report_dir, on_event);
         on_event(JobEvent::AllFinished);
         results
     }
@@ -432,6 +490,7 @@ impl StepRunner {
 
         let mirror_label = self.mirror.label();
         let log_path = artifacts::path_for("mirror", "log");
+        crate::infrastructure::batch_record::mirror_log(&log_path);
         on_event(JobEvent::Log(
             crate::i18n::tr("mirror_warming")
                 .replace("{mirror}", &mirror_label)
@@ -473,3 +532,15 @@ impl StepRunner {
         failures
     }
 }
+
+fn publish_record(record: BatchRecord, report_dir: &str, on_event: &mut dyn FnMut(JobEvent)) {
+    let result = record
+        .finish(std::path::Path::new(report_dir))
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| error.to_string());
+    on_event(JobEvent::BatchRecord { result });
+}
+
+#[cfg(test)]
+#[path = "batch_record_tests.rs"]
+mod batch_tests;

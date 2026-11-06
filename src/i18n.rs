@@ -355,6 +355,10 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "cli_summary_title" => "本次加固总结报告",
         "cli_summary_total" => "总计: {ok} 成功, {skip} 跳过, {fail} 失败",
         "cli_log_saved" => "执行日志: {log}",
+        "batch_record_saved" => {
+            "批次结果记录: {path}（仅为收尾时的事实与路径引用，使用备份前请核对现状）"
+        },
+        "batch_record_failed" => "批次结果记录保存失败: {error}；加固与撤销决定未受影响。",
         "cli_create_user" => "是否创建新的管理用户？",
         "cli_username_prompt" => "请输入新用户名",
         "cli_username_empty" => "用户名不能为空",
@@ -844,6 +848,12 @@ fn en(key: &str) -> Option<&'static str> {
         "cli_summary_title" => "Hardening Summary Report",
         "cli_summary_total" => "Total: {ok} done, {skip} skipped, {fail} failed",
         "cli_log_saved" => "Run log: {log}",
+        "batch_record_saved" => {
+            "Batch record: {path} (facts and path references at completion; verify backups before use)"
+        },
+        "batch_record_failed" => {
+            "Failed to save batch record: {error}; hardening and rollback decisions are unchanged."
+        },
         "cli_create_user" => "Create a new admin user?",
         "cli_username_prompt" => "Enter new username",
         "cli_username_empty" => "Username cannot be empty",
@@ -1300,6 +1310,10 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "cli_summary_title" => "本次強化總結報告",
         "cli_summary_total" => "總計: {ok} 成功, {skip} 跳過, {fail} 失敗",
         "cli_log_saved" => "執行日誌: {log}",
+        "batch_record_saved" => {
+            "批次結果記錄: {path}（僅為收尾時的事實與路徑引用，使用備份前請核對現況）"
+        },
+        "batch_record_failed" => "批次結果記錄儲存失敗: {error}；加固與撤銷決定未受影響。",
         "cli_create_user" => "是否創建新的管理用戶？",
         "cli_username_prompt" => "請輸入新用戶名",
         "cli_username_empty" => "用戶名不能為空",
